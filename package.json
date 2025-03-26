@@ -1,0 +1,42 @@
+{
+    "dependencies": {
+        "@matter/main": "0.13.0-alpha.0-20250325-ddb67eace",
+        "@matter/nodejs-ble": "0.13.0-alpha.0-20250325-ddb67eace",
+        "@project-chip/matter.js": "0.13.0-alpha.0-20250325-ddb67eace",
+        "express": "^5.0.1",
+        "ws": "^8.18.1"
+    },
+    "devDependencies": {
+        "@eslint/compat": "^1.2.7",
+        "@eslint/eslintrc": "^3.3.0",
+        "@eslint/js": "^9.22.0",
+        "@typescript-eslint/eslint-plugin": "^8.26.1",
+        "@typescript-eslint/parser": "^8.26.1",
+        "@types/express": "^5.0.1",
+        "@types/node": "^22.13.11",
+        "@types/ws": "^8.18.0",
+        "eslint-import-resolver-typescript": "^4.1.0",
+        "eslint-plugin-import": "^2.31.0",
+        "eslint-plugin-node-import": "^1.0.4",
+        "eslint-plugin-regexp": "^2.7.0",
+        "prettier": "^3.5.3",
+        "prettier-plugin-organize-imports": "^4.1.0",
+        "typescript": "~5.8.2"
+    },
+    "name": "matterjs-server",
+    "version": "0.1.0",
+    "type": "module",
+    "scripts": {
+        "prepare": "tsc",
+        "build": "tsc",
+        "lint": "eslint \"**/*.ts\"",
+        "lint-fix": "eslint --fix \"**/*.ts\"",
+        "format": "prettier --write 'src/**/*.ts'",
+        "format-verify": "prettier --check 'src/**/*.ts'",
+        "server": "node --enable-source-maps dist/MatterServer.js",
+        "test": "echo \"Error: no test specified\" && exit 1",
+        "clean": "node -e 'fs.rmSync(\"dist\", { recursive: true, force: true })'"
+    },
+    "description": "matter.js based WebSocket Matter server",
+    "author": "Apollon77"
+}
