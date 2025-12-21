@@ -16,13 +16,15 @@
     "main": "dist/web/js/main.js",
     "scripts": {
         "clean": "matter-build clean",
-        "build": "matter-build && npm run bundle",
-        "build-clean": "matter-build --clean && npm run bundle",
+        "generate": "tsx scripts/generate-descriptions.ts",
+        "build": "npm run generate && matter-build && npm run bundle",
+        "build-clean": "npm run generate && matter-build --clean && npm run bundle",
         "test": "matter-test -w",
         "bundle": "rollup -c"
     },
     "devDependencies": {
         "@babel/preset-env": "^7.28.5",
+        "@matter/main": "0.16.0-alpha.0-20251221-21acf226d",
         "@rollup/plugin-babel": "^6.1.0",
         "@rollup/plugin-commonjs": "^29.0.0",
         "rollup-plugin-copy": "^3.5.0",

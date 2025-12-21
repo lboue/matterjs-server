@@ -38,7 +38,7 @@ export const ClusterMap: {
     [key: string]: ClusterMapEntry;
 } = {};
 
-// Remap the clusters from Model  to a more optimized form for direct access
+// Remap the clusters from Model to a more optimized form for direct access
 MatterModel.standard.clusters.forEach(cluster => {
     if (cluster.id === undefined) {
         return;

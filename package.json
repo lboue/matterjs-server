@@ -19,9 +19,9 @@
     "scripts": {
         "prepare": "npm run build-clean",
         "clean": "node packages/tools/bin/build.js clean",
-        "build": "node packages/tools/bin/build.js && npm run bundle --workspaces --if-present",
+        "build": "npm run generate --workspaces --if-present && node packages/tools/bin/build.js && npm run bundle --workspaces --if-present",
         "version": "node packages/tools/bin/version.js",
-        "build-clean": "node packages/tools/bin/build.js --clean && npm run bundle --workspaces --if-present",
+        "build-clean": "npm run clean && npm run build",
         "lint": "eslint",
         "lint-fix": "eslint --fix",
         "format": "prettier --write \"packages/**/*.ts\"",
