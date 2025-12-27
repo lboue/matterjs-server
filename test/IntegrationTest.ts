@@ -460,10 +460,18 @@ describe("Integration Test", function () {
     });
 
     it("should decommission node", async function () {
+        client.clearEvents();
+
         await client.removeNode(commissionedNodeId);
 
-        // Wait a moment for decommissioning to complete
-        await new Promise(r => setTimeout(r, 1000));
+        // Wait for node_removed event (compare with Number() to handle bigint)
+        const removeEvent = await client.waitForEvent(
+            "node_removed",
+            data => Number(data) === commissionedNodeId,
+            10_000,
+        );
+        expect(removeEvent).to.exist;
+        expect(Number(removeEvent.data)).to.equal(commissionedNodeId);
 
         // Verify no nodes remain
         const nodes = await client.startListening();

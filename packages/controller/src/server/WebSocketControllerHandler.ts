@@ -1,8 +1,7 @@
-import { AttributeId, camelize, ClusterId, FabricIndex, Logger, Millis, NodeId } from "@matter/main";
+import { AttributeId, camelize, ClusterBehavior, ClusterId, FabricIndex, Logger, Millis, NodeId } from "@matter/main";
 import { AggregatorEndpointDefinition } from "@matter/main/endpoints";
 import { ControllerCommissioningFlowOptions, DecodedAttributeReportValue } from "@matter/main/protocol";
 import { EndpointNumber, getClusterById, QrPairingCodeCodec } from "@matter/main/types";
-import { SupportedAttributeClient } from "@project-chip/matter.js/cluster";
 import { Endpoint, NodeStates } from "@project-chip/matter.js/device";
 import { WebSocketServer } from "ws";
 import { ControllerCommandHandler } from "../controller/ControllerCommandHandler.js";
@@ -91,6 +90,7 @@ export class WebSocketControllerHandler implements WebServerHandler {
                 sendNodeDetailsEvent("node_updated", nodeId);
             };
             const onNodeStructureChanged = (nodeId: NodeId) => sendNodeDetailsEvent("node_updated", nodeId);
+            const onNodeDecommissioned = (nodeId: NodeId) => sendNodeDetailsEvent("node_removed", nodeId);
 
             const onClose = () => {
                 this.#commandHandler.events.attributeChanged.off(onAttributeChanged);
@@ -98,6 +98,7 @@ export class WebSocketControllerHandler implements WebServerHandler {
                 this.#commandHandler.events.nodeAdded.off(onNodeAdded);
                 this.#commandHandler.events.nodeStateChanged.off(onNodeStateChanged);
                 this.#commandHandler.events.nodeStructureChanged.off(onNodeStructureChanged);
+                this.#commandHandler.events.nodeDecommissioned.off(onNodeDecommissioned);
             };
 
             ws.on(
@@ -128,6 +129,7 @@ export class WebSocketControllerHandler implements WebServerHandler {
             this.#commandHandler.events.nodeAdded.on(onNodeAdded);
             this.#commandHandler.events.nodeStateChanged.on(onNodeStateChanged);
             this.#commandHandler.events.nodeStructureChanged.on(onNodeStructureChanged);
+            this.#commandHandler.events.nodeDecommissioned.on(onNodeDecommissioned);
 
             this.#getServerInfo().then(
                 response => ws.send(toPythonJson(response)),
@@ -602,19 +604,21 @@ export class WebSocketControllerHandler implements WebServerHandler {
     async #collectAttributesFromEndpointStructure(nodeId: NodeId, endpoint: Endpoint, attributesData: AttributesData) {
         const endpointId = endpoint.number!;
         logger.debug(`Node ${nodeId}: Collecting attributes for endpoint ${endpointId}`);
-        for (const cluster of endpoint.getAllClusterClients()) {
+        for (const behavior of endpoint.endpoint.behaviors.active) {
+            if (!ClusterBehavior.is(behavior)) {
+                continue;
+            }
+            const cluster = behavior.cluster;
             const clusterId = cluster.id;
 
             const clusterData = ClusterMap[cluster.name.toLowerCase()];
+            const clusterState = endpoint.endpoint.stateOf(behavior);
             for (const attributeName in cluster.attributes) {
                 const attribute = cluster.attributes[attributeName];
                 if (attribute === undefined) {
                     continue;
                 }
-                if (!(attribute instanceof SupportedAttributeClient)) {
-                    continue;
-                }
-                const attributeValue = await attribute.get(false, false);
+                const attributeValue = (clusterState as Record<string, unknown>)[attributeName];
 
                 const { pathStr, value } = this.#convertAttributeDataToWebSocketTagBased(
                     { endpointId, clusterId, attributeId: attribute.id },
@@ -640,13 +644,12 @@ export class WebSocketControllerHandler implements WebServerHandler {
         const { endpointId, clusterId, attributeId } = path;
         if (!clusterData) {
             const cluster = getClusterById(clusterId);
-            // TODO
-            clusterData = clusterData ?? ClusterMap[cluster.name.toLowerCase()] ?? { attributes: {} };
+            clusterData = clusterData ?? ClusterMap[cluster.name.toLowerCase()];
         }
 
         return {
             pathStr: buildAttributePath(endpointId, clusterId, attributeId),
-            value: convertMatterToWebSocketTagBased(value, clusterData.attributes[attributeId], clusterData.model),
+            value: convertMatterToWebSocketTagBased(value, clusterData?.attributes[attributeId], clusterData?.model),
         };
     }
 
@@ -661,9 +664,17 @@ export class WebSocketControllerHandler implements WebServerHandler {
             clusterData = clusterData ?? ClusterMap[cluster.name.toLowerCase()];
         }
 
+        if (clusterData === undefined || clusterData.commands[commandName.toLowerCase()] === undefined) {
+            logger.warn(
+                `Cluster ${clusterId} does not have command ${commandName}. Do not convert data to WebSocket tag based`,
+                value,
+            );
+            return {};
+        }
+
         return convertMatterToWebSocketTagBased(
             value,
-            clusterData.commands[commandName.toLowerCase()].responseModel,
+            clusterData.commands[commandName.toLowerCase()]!.responseModel,
             clusterData.model,
         );
     }

@@ -664,6 +664,8 @@ export class ControllerCommandHandler {
         const node = this.getNode(nodeId);
         await this.#controller.removeNode(NodeId(BigInt(nodeId)), !!node?.isConnected);
         this.#nodes.delete(nodeId);
+        // Emit nodeDecommissioned event after successful removal
+        this.events.nodeDecommissioned.emit(nodeId);
     }
 
     async openCommissioningWindow(data: OpenCommissioningWindowRequest): Promise<OpenCommissioningWindowResponse> {
