@@ -259,6 +259,22 @@ export interface ServerInfoMessage {
     bluetooth_enabled: boolean;
 }
 
+/**
+ * Matter node event structure for node_event WebSocket event.
+ * Matches Python Matter Server's MatterNodeEvent.
+ */
+export interface MatterNodeEvent {
+    node_id: number | bigint;
+    endpoint_id: number;
+    cluster_id: number;
+    event_id: number;
+    event_number: number | bigint;
+    priority: number; // 0=Debug, 1=Info, 2=Critical
+    timestamp: number | bigint;
+    timestamp_type: number; // 0=System, 1=Epoch, 2=POSIX
+    data: unknown | null;
+}
+
 interface APIEvents {
     node_added: {
         data: MatterNode;
@@ -270,7 +286,7 @@ interface APIEvents {
         data: number | bigint;
     };
     node_event: {
-        data: {};
+        data: MatterNodeEvent;
     };
     attribute_updated: {
         data: [node_id: number | bigint, attribute_path: string, value: unknown];

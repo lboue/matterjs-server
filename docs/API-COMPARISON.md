@@ -7,8 +7,8 @@ This document compares the WebSocket API functionality between the original Pyth
 | Category | Python Server | Matter.js Server | Coverage |
 |----------|--------------|------------------|----------|
 | Commands | 26 | 23 implemented | ~88% |
-| Events | 9 | 5 | ~56% |
-| Full functionality | - | - | ~75% |
+| Events | 9 | 6 | ~67% |
+| Full functionality | - | - | ~80% |
 
 ---
 
@@ -100,7 +100,7 @@ This document compares the WebSocket API functionality between the original Pyth
 | `node_added` | ✅ | ✅ | New node commissioned |
 | `node_updated` | ✅ | ✅ | Node data/state changed |
 | `node_removed` | ✅ | ✅ | Node decommissioned |
-| `node_event` | ✅ | ❌ | Cluster events (e.g., button press) |
+| `node_event` | ✅ | ✅ | Cluster events (e.g., button press) |
 | `attribute_updated` | ✅ | ✅ | Attribute value changed |
 | `server_shutdown` | ✅ | ❌ | Server shutting down notification |
 | `server_info_updated` | ✅ | ❌ | Server info changed |
@@ -222,43 +222,28 @@ This command has been implemented. See `ControllerCommandHandler.setNodeBinding(
 
 ---
 
-### 5. `node_event` Event (Priority: High)
+### ~~5. `node_event` Event~~ ✅ IMPLEMENTED
 
-**Purpose:** Forward Matter events (not attribute changes) to WebSocket clients.
+This event has been implemented. See `WebSocketControllerHandler.onEventChanged()`.
 
-**Python Implementation:**
-```python
-class MatterNodeEvent:
-    node_id: int
-    endpoint_id: int
-    cluster_id: int
-    event_id: int
-    event_number: int
-    priority: int           # 0=Debug, 1=Info, 2=Critical
-    timestamp: int
-    timestamp_type: int     # 0=System, 1=Epoch, 2=POSIX
-    data: dict | None
+The implementation forwards Matter events to WebSocket clients with the following structure:
+```typescript
+{
+    node_id: number | bigint,
+    endpoint_id: number,
+    cluster_id: number,
+    event_id: number,
+    event_number: number | bigint,
+    priority: number,        // 0=Debug, 1=Info, 2=Critical
+    timestamp: number | bigint,
+    timestamp_type: number,  // 0=System, 1=Epoch, 2=POSIX
+    data: unknown | null
+}
 ```
-
-**Common Events:**
-- Button press/release (Switch cluster)
-- Startup/shutdown (Basic Information cluster)
-- Hardware fault (General Diagnostics cluster)
-- Network fault (WiFi/Thread Diagnostics clusters)
-
-**Use Cases:**
-- React to button presses on smart switches
-- Monitor device health events
-- Trigger automations on events
-
-**Implementation Notes:**
-- Subscribe to events during node setup
-- Convert Matter event format to WebSocket format
-- Include all event metadata
 
 ---
 
-### 6. `server_shutdown` Event (Priority: Low)
+### 5. `server_shutdown` Event (Priority: Low)
 
 **Purpose:** Notify clients that the server is shutting down gracefully.
 
@@ -374,20 +359,20 @@ Both implementations use compatible structures with attribute paths in `endpoint
 ## Implementation Priority Recommendations
 
 ### High Priority (Required for Home Assistant parity)
-1. `node_event` event - Button presses, device events
+All high-priority items have been implemented! ✅
 
 ### Medium Priority (Important features)
-2. `endpoint_added`/`endpoint_removed` events - Bridge support
-3. `interview_node` - Full re-interview capability
-4. `commission_on_network` - Alternative commissioning
+1. `endpoint_added`/`endpoint_removed` events - Bridge support
+2. `interview_node` - Full re-interview capability
+3. `commission_on_network` - Alternative commissioning
 
 ### Low Priority (Nice to have)
-5. `get_node` - Single node query
-6. `ping_node` - Full implementation
-7. `server_shutdown` event
-8. `server_info_updated` event
-9. OTA update support
-10. `import_test_node` - Testing support
+4. `get_node` - Single node query
+5. `ping_node` - Full implementation
+6. `server_shutdown` event
+7. `server_info_updated` event
+8. OTA update support
+9. `import_test_node` - Testing support
 
 ---
 

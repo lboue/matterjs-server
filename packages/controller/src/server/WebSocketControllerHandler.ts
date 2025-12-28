@@ -9,7 +9,11 @@ import {
     NodeId,
 } from "@matter/main";
 import { AggregatorEndpointDefinition } from "@matter/main/endpoints";
-import { ControllerCommissioningFlowOptions, DecodedAttributeReportValue } from "@matter/main/protocol";
+import {
+    ControllerCommissioningFlowOptions,
+    DecodedAttributeReportValue,
+    DecodedEventReportValue,
+} from "@matter/main/protocol";
 import { EndpointNumber, getClusterById, QrPairingCodeCodec } from "@matter/main/types";
 import { Endpoint, NodeStates } from "@project-chip/matter.js/device";
 import { WebSocketServer } from "ws";
@@ -23,6 +27,7 @@ import {
     ErrorResultMessage,
     EventTypes,
     MatterNode,
+    MatterNodeEvent,
     ResponseOf,
     ServerInfoMessage,
     SuccessResultMessage,
@@ -90,8 +95,45 @@ export class WebSocketControllerHandler implements WebServerHandler {
                     }),
                 );
             };
-            const onEventChanged = () => {
-                // Ignored for now??
+            const onEventChanged = (nodeId: NodeId, data: DecodedEventReportValue<any>) => {
+                if (this.#closed || !listening) return;
+
+                const { path, events } = data;
+                const { endpointId, clusterId, eventId } = path;
+
+                // Send one node_event for each event in the report
+                for (const event of events) {
+                    // Determine timestamp and type
+                    // Priority: epochTimestamp (type 1), systemTimestamp (type 0)
+                    let timestamp: number | bigint;
+                    let timestampType: number;
+
+                    if (event.epochTimestamp !== undefined) {
+                        timestamp = event.epochTimestamp;
+                        timestampType = 1; // Epoch
+                    } else if (event.systemTimestamp !== undefined) {
+                        timestamp = event.systemTimestamp;
+                        timestampType = 0; // System
+                    } else {
+                        timestamp = Date.now();
+                        timestampType = 2; // POSIX (fallback)
+                    }
+
+                    const nodeEvent: MatterNodeEvent = {
+                        node_id: nodeId,
+                        endpoint_id: endpointId,
+                        cluster_id: clusterId,
+                        event_id: eventId,
+                        event_number: event.eventNumber,
+                        priority: event.priority,
+                        timestamp,
+                        timestamp_type: timestampType,
+                        data: event.data ?? null,
+                    };
+
+                    logger.info(`Sending node_event for Node ${nodeId}`, nodeEvent);
+                    ws.send(toPythonJson({ event: "node_event", data: nodeEvent }));
+                }
             };
             const onNodeAdded = (nodeId: NodeId) => sendNodeDetailsEvent("node_added", nodeId);
             const onNodeStateChanged = (nodeId: NodeId, state: NodeStates) => {
