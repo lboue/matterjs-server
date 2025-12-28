@@ -8,12 +8,9 @@ import {
     Millis,
     NodeId,
 } from "@matter/main";
+import { ObserverGroup } from "@matter/general";
 import { AggregatorEndpointDefinition } from "@matter/main/endpoints";
-import {
-    ControllerCommissioningFlowOptions,
-    DecodedAttributeReportValue,
-    DecodedEventReportValue,
-} from "@matter/main/protocol";
+import { ControllerCommissioningFlowOptions } from "@matter/main/protocol";
 import { EndpointNumber, getClusterById, QrPairingCodeCodec } from "@matter/main/types";
 import { Endpoint, NodeStates } from "@project-chip/matter.js/device";
 import { WebSocketServer } from "ws";
@@ -62,6 +59,7 @@ export class WebSocketControllerHandler implements WebServerHandler {
             if (this.#closed) return;
 
             let listening = false;
+            const observers = new ObserverGroup();
 
             const sendNodeDetailsEvent = <E extends EventTypes>(eventName: E, nodeId: NodeId) => {
                 if (this.#closed || !listening) return;
@@ -84,28 +82,20 @@ export class WebSocketControllerHandler implements WebServerHandler {
                 }
             };
 
-            const onAttributeChanged = (nodeId: NodeId, data: DecodedAttributeReportValue<any>) => {
+            // Register all event listeners using ObserverGroup for easy cleanup
+            observers.on(this.#commandHandler.events.attributeChanged, (nodeId, data) => {
                 if (this.#closed) return;
-
                 const { pathStr, value } = this.#convertAttributeDataToWebSocketTagBased(data.path, data.value);
                 logger.info(`Sending attribute_updated event for Node ${nodeId}`, pathStr, value);
-                ws.send(
-                    toPythonJson({
-                        event: "attribute_updated",
-                        data: [nodeId, pathStr, value],
-                    }),
-                );
-            };
-            const onEventChanged = (nodeId: NodeId, data: DecodedEventReportValue<any>) => {
-                if (this.#closed || !listening) return;
+                ws.send(toPythonJson({ event: "attribute_updated", data: [nodeId, pathStr, value] }));
+            });
 
+            observers.on(this.#commandHandler.events.eventChanged, (nodeId, data) => {
+                if (this.#closed || !listening) return;
                 const { path, events } = data;
                 const { endpointId, clusterId, eventId } = path;
 
-                // Send one node_event for each event in the report
                 for (const event of events) {
-                    // Determine timestamp and type
-                    // Priority: epochTimestamp (type 1), systemTimestamp (type 0)
                     let timestamp: number | bigint;
                     let timestampType: number;
 
@@ -135,35 +125,38 @@ export class WebSocketControllerHandler implements WebServerHandler {
                     logger.info(`Sending node_event for Node ${nodeId}`, nodeEvent);
                     ws.send(toPythonJson({ event: "node_event", data: nodeEvent }));
                 }
-            };
-            const onNodeAdded = (nodeId: NodeId) => sendNodeDetailsEvent("node_added", nodeId);
-            const onNodeStateChanged = (nodeId: NodeId, state: NodeStates) => {
+            });
+
+            observers.on(this.#commandHandler.events.nodeAdded, nodeId => {
+                sendNodeDetailsEvent("node_added", nodeId);
+            });
+
+            observers.on(this.#commandHandler.events.nodeStateChanged, (nodeId, state) => {
                 if (state === NodeStates.Disconnected) return;
                 sendNodeDetailsEvent("node_updated", nodeId);
-            };
-            const onNodeStructureChanged = (nodeId: NodeId) => sendNodeDetailsEvent("node_updated", nodeId);
-            const onNodeDecommissioned = (nodeId: NodeId) => sendNodeDetailsEvent("node_removed", nodeId);
-            const onNodeEndpointAdded = (nodeId: NodeId, endpointId: EndpointNumber) => {
+            });
+
+            observers.on(this.#commandHandler.events.nodeStructureChanged, nodeId => {
+                sendNodeDetailsEvent("node_updated", nodeId);
+            });
+
+            observers.on(this.#commandHandler.events.nodeDecommissioned, nodeId => {
+                sendNodeDetailsEvent("node_removed", nodeId);
+            });
+
+            observers.on(this.#commandHandler.events.nodeEndpointAdded, (nodeId, endpointId) => {
                 if (this.#closed || !listening) return;
                 logger.info(`Sending endpoint_added event for Node ${nodeId} endpoint ${endpointId}`);
                 ws.send(toPythonJson({ event: "endpoint_added", data: { node_id: nodeId, endpoint_id: endpointId } }));
-            };
-            const onNodeEndpointRemoved = (nodeId: NodeId, endpointId: EndpointNumber) => {
+            });
+
+            observers.on(this.#commandHandler.events.nodeEndpointRemoved, (nodeId, endpointId) => {
                 if (this.#closed || !listening) return;
                 logger.info(`Sending endpoint_removed event for Node ${nodeId} endpoint ${endpointId}`);
                 ws.send(toPythonJson({ event: "endpoint_removed", data: { node_id: nodeId, endpoint_id: endpointId } }));
-            };
+            });
 
-            const onClose = () => {
-                this.#commandHandler.events.attributeChanged.off(onAttributeChanged);
-                this.#commandHandler.events.eventChanged.off(onEventChanged);
-                this.#commandHandler.events.nodeAdded.off(onNodeAdded);
-                this.#commandHandler.events.nodeStateChanged.off(onNodeStateChanged);
-                this.#commandHandler.events.nodeStructureChanged.off(onNodeStructureChanged);
-                this.#commandHandler.events.nodeDecommissioned.off(onNodeDecommissioned);
-                this.#commandHandler.events.nodeEndpointAdded.off(onNodeEndpointAdded);
-                this.#commandHandler.events.nodeEndpointRemoved.off(onNodeEndpointRemoved);
-            };
+            const onClose = () => observers.close();
 
             ws.on(
                 "message",
@@ -187,15 +180,6 @@ export class WebSocketControllerHandler implements WebServerHandler {
                 logger.error("Websocket error", err);
                 onClose();
             });
-
-            this.#commandHandler.events.attributeChanged.on(onAttributeChanged);
-            this.#commandHandler.events.eventChanged.on(onEventChanged);
-            this.#commandHandler.events.nodeAdded.on(onNodeAdded);
-            this.#commandHandler.events.nodeStateChanged.on(onNodeStateChanged);
-            this.#commandHandler.events.nodeStructureChanged.on(onNodeStructureChanged);
-            this.#commandHandler.events.nodeDecommissioned.on(onNodeDecommissioned);
-            this.#commandHandler.events.nodeEndpointAdded.on(onNodeEndpointAdded);
-            this.#commandHandler.events.nodeEndpointRemoved.on(onNodeEndpointRemoved);
 
             this.#getServerInfo().then(
                 response => ws.send(toPythonJson(response)),
