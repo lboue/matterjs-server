@@ -33,9 +33,8 @@ export interface APICommands {
         };
     };
     server_info: {
-        // ???
         requestArgs: {};
-        response: {};
+        response: ServerInfoMessage;
     };
     get_nodes: {
         requestArgs: {
@@ -97,7 +96,7 @@ export interface APICommands {
     };
     discover: {
         requestArgs: {};
-        response: {};
+        response: CommissionableNodeData[];
     };
     interview_node: {
         requestArgs: {

@@ -339,6 +339,12 @@ export class WebSocketControllerHandler implements WebServerHandler {
                 case "update_node":
                     result = await this.#handleUpdateNode(args);
                     break;
+                case "server_info":
+                    result = await this.#getServerInfo();
+                    break;
+                case "discover":
+                    result = await this.#handleDiscoverCommissionableNodes({});
+                    break;
                 default:
                     throw ServerError.invalidCommand(command);
             }
