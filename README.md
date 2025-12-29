@@ -21,3 +21,20 @@ So as example to do both use `npm run server -- --storage-path=.ha1 --mdns-netwo
 It was in general tested with a simply slight bulb on network.
 
 Ble and Wifi should work when server gets startes with `--ble` flag, but Wifi only will work. For Thread Mater.js currently requires a network Name which is not provided.
+
+## Differences from Python Matter Server
+
+This implementation aims to be API-compatible with the [Python Matter Server](https://github.com/home-assistant-libs/python-matter-server), but there are some intentional differences:
+
+### Test Node ID Range
+
+Test nodes (imported via `import_test_node` command) use different ID ranges:
+
+| Implementation | Test Node ID Range |
+|----------------|-------------------|
+| Python Matter Server | `>= 900000` (0xDBBA0) |
+| Matter.js Server | `>= 0xFFFF_FFFE_0000_0000` |
+
+The Matter.js implementation uses the high 64-bit range to ensure test node IDs never collide with real Matter node IDs, which can be assigned values up to 64-bit. This is a deliberate design choice for better separation between test and production nodes.
+
+**Note**: If you're importing diagnostics dumps from a Python Matter Server instance, the test node IDs will be preserved as-is from the dump.

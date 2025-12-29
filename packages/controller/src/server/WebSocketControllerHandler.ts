@@ -18,6 +18,8 @@ import {
     MatterNode,
     MatterNodeEvent,
     ResponseOf,
+    ServerError,
+    ServerErrorCode,
     ServerInfoMessage,
     SuccessResultMessage,
     TEST_NODE_START,
@@ -314,7 +316,7 @@ export class WebSocketControllerHandler implements WebServerHandler {
                     result = await this.#handleUpdateNode(args);
                     break;
                 default:
-                    throw new Error(`Unknown command: ${command}`);
+                    throw ServerError.invalidCommand(command);
             }
             if (result === undefined) {
                 throw new Error("No response");
@@ -329,10 +331,12 @@ export class WebSocketControllerHandler implements WebServerHandler {
             };
         } catch (err) {
             logger.error("Failed to handle websocket request", err);
+            const errorCode =
+                err instanceof ServerError ? err.code : ServerErrorCode.UnknownError;
             return {
                 response: {
                     message_id: messageId ?? "",
-                    error_code: -1,
+                    error_code: errorCode,
                     details: (err as Error).message,
                 },
             };
@@ -448,15 +452,18 @@ export class WebSocketControllerHandler implements WebServerHandler {
 
         switch (filter_type) {
             case 1: // Short discriminator
-                if (filter === undefined) throw new Error("filter required for filter_type 1 (short discriminator)");
+                if (filter === undefined)
+                    throw ServerError.invalidArguments("filter required for filter_type 1 (short discriminator)");
                 commissionRequest = { ...baseRequest, passcode: setup_pin_code, shortDiscriminator: filter };
                 break;
             case 2: // Long discriminator
-                if (filter === undefined) throw new Error("filter required for filter_type 2 (long discriminator)");
+                if (filter === undefined)
+                    throw ServerError.invalidArguments("filter required for filter_type 2 (long discriminator)");
                 commissionRequest = { ...baseRequest, passcode: setup_pin_code, longDiscriminator: filter };
                 break;
             case 3: // Vendor ID (requires product ID too, but Python server only passes vendor ID)
-                if (filter === undefined) throw new Error("filter required for filter_type 3 (vendor ID)");
+                if (filter === undefined)
+                    throw ServerError.invalidArguments("filter required for filter_type 3 (vendor ID)");
                 commissionRequest = { ...baseRequest, passcode: setup_pin_code, vendorId: filter, productId: 0 };
                 break;
             case 4: // Device type - not directly supported, fall back to no filter
@@ -493,7 +500,7 @@ export class WebSocketControllerHandler implements WebServerHandler {
         if (this.#isTestNode(node_id)) {
             const testNode = this.#getTestNode(node_id);
             if (testNode === undefined) {
-                throw new Error(`Test node ${node_id} not found`);
+                throw ServerError.nodeNotExists(node_id);
             }
             return testNode;
         }
@@ -501,7 +508,7 @@ export class WebSocketControllerHandler implements WebServerHandler {
         const nodeId = NodeId(node_id);
         const node = this.#commandHandler.getNode(nodeId);
         if (node === undefined) {
-            throw new Error(`Node ${nodeId} not found`);
+            throw ServerError.nodeNotExists(node_id);
         }
         return await this.#collectNodeDetails(nodeId);
     }
@@ -531,7 +538,7 @@ export class WebSocketControllerHandler implements WebServerHandler {
         if (this.#isTestNode(nodeId)) {
             const testNode = this.#getTestNode(nodeId);
             if (testNode === undefined) {
-                throw new Error(`Test node ${nodeId} not found`);
+                throw ServerError.nodeNotExists(nodeId);
             }
             logger.debug(`read_attribute called for test node ${nodeId} on path: ${attribute_path}`);
             const value = testNode.attributes[attribute_path];
@@ -657,7 +664,7 @@ export class WebSocketControllerHandler implements WebServerHandler {
         if (this.#isTestNode(node_id)) {
             const testNode = this.#getTestNode(node_id);
             if (testNode === undefined) {
-                throw new Error(`Test node ${node_id} not found`);
+                throw ServerError.nodeNotExists(node_id);
             }
             logger.debug(`interview_node called for test node ${node_id}`);
             // Broadcast node_updated event for test node
@@ -668,7 +675,7 @@ export class WebSocketControllerHandler implements WebServerHandler {
         const nodeId = NodeId(node_id);
         const node = this.#commandHandler.getNode(nodeId);
         if (node === undefined) {
-            throw new Error(`Node ${nodeId} not found`);
+            throw ServerError.nodeNotExists(node_id);
         }
 
         // Our nodes are kept up-to-date via attribute subscriptions, so we don't need
@@ -701,7 +708,7 @@ export class WebSocketControllerHandler implements WebServerHandler {
         if (this.#isTestNode(node_id)) {
             const bigId = typeof node_id === "bigint" ? node_id : BigInt(node_id);
             if (!this.#testNodes.has(bigId)) {
-                throw new Error(`Test node ${node_id} does not exist`);
+                throw ServerError.nodeNotExists(node_id);
             }
             logger.info(`Removing test node ${node_id}`);
             this.#testNodes.delete(bigId);
@@ -840,7 +847,7 @@ export class WebSocketControllerHandler implements WebServerHandler {
             // Alternative format: direct nodes array
             dumpNodes = Object.values(dumpData.data.nodes);
         } else {
-            throw new Error("Invalid dump format: cannot find node data");
+            throw ServerError.invalidArguments("Invalid dump format: cannot find node data");
         }
 
         // Find the next available test node ID (bigint)
@@ -895,7 +902,7 @@ export class WebSocketControllerHandler implements WebServerHandler {
         const node = this.#commandHandler.getNode(nodeId);
 
         if (node === undefined) {
-            throw new Error(`Node ${nodeId} not found`);
+            throw ServerError.nodeNotExists(nodeId);
         }
 
         let isBridge = false;
@@ -903,7 +910,7 @@ export class WebSocketControllerHandler implements WebServerHandler {
         if (node.initialized) {
             const rootEndpoint = node.getRootEndpoint();
             if (rootEndpoint === undefined) {
-                throw new Error(`Node ${nodeId} has no root endpoint or is not yet initialized`);
+                throw ServerError.nodeNotReady(nodeId);
             }
 
             await this.#collectAttributesFromEndpointStructure(nodeId, rootEndpoint, attributes);
