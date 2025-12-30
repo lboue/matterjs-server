@@ -12,7 +12,12 @@ import {
     WebSocketControllerHandler,
 } from "@matter-server/controller";
 import { getCliOptions, type LogLevel as CliLogLevel } from "./cli.js";
-import { type LegacyData, loadLegacyData } from "./converter/LegacyDataLoader.js";
+import {
+    addNodeToLegacyServerFile,
+    type LegacyData,
+    loadLegacyData,
+    removeNodeFromLegacyServerFile,
+} from "./converter/LegacyDataLoader.js";
 import { StaticFileHandler } from "./server/StaticFileHandler.js";
 import { WebServer } from "./server/WebServer.js";
 
@@ -146,6 +151,27 @@ async function start() {
         } else {
             await loadOtaFiles(cliOptions.otaProviderDir);
         }
+    }
+
+    // Subscribe to node events for legacy data file updates
+    if (legacyData.fabricConfig) {
+        const fabricConfig = legacyData.fabricConfig;
+        const storagePath = cliOptions.storagePath;
+
+        controller.commandHandler.events.nodeAdded.on(nodeId => {
+            const dateCommissioned = new Date().toISOString();
+            addNodeToLegacyServerFile(env, storagePath, fabricConfig, nodeId, dateCommissioned).catch(err => {
+                logger.warn(`Failed to update legacy data for commissioned node ${nodeId}:`, err);
+            });
+        });
+
+        controller.commandHandler.events.nodeDecommissioned.on(nodeId => {
+            removeNodeFromLegacyServerFile(env, storagePath, fabricConfig, nodeId).catch(err => {
+                logger.warn(`Failed to update legacy data for removed node ${nodeId}:`, err);
+            });
+        });
+
+        logger.info("Legacy data event handlers configured for node commissioning/decommissioning");
     }
 
     server = new WebServer({ listenAddresses: cliOptions.listenAddress, port: cliOptions.port }, [

@@ -14,10 +14,11 @@ import {
     Crypto,
     Environment,
     LegacyFabricConfigData,
+    LegacyNodeData,
     LegacyServerFile,
     Logger,
 } from "@matter-server/controller";
-import { access, readFile, writeFile } from "node:fs/promises";
+import { access, copyFile, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ChipConfigData } from "./index.js";
 import type { OperationalCredentials } from "./types.js";
@@ -174,6 +175,7 @@ export async function hasLegacyData(storagePath: string): Promise<boolean> {
 
 /**
  * Save the legacy server file back to disk.
+ * Creates a .bak backup of the existing file before overwriting.
  *
  * @param env Environment for crypto access
  * @param storagePath Path to the storage directory
@@ -190,6 +192,16 @@ export async function saveLegacyServerFile(
     const compressedFabricId = await computeCompressedNodeId(crypto, fabricConfig.fabricId, fabricConfig.rootPublicKey);
     const serverFileName = `${compressedFabricId}.json`;
     const serverFilePath = join(storagePath, serverFileName);
+    const backupFilePath = `${serverFilePath}.bak`;
+
+    // Create backup of existing file if it exists
+    try {
+        await access(serverFilePath);
+        await copyFile(serverFilePath, backupFilePath);
+        logger.debug(`Created backup: ${serverFileName}.bak`);
+    } catch {
+        // File doesn't exist yet, no backup needed
+    }
 
     const content = JSON.stringify(serverFile, null, 2);
     await writeFile(serverFilePath, content, "utf-8");
@@ -198,4 +210,112 @@ export async function saveLegacyServerFile(
     logger.info(
         `Saved server data to ${serverFileName}: ${nodeCount} node(s), last_node_id=${serverFile.last_node_id}`,
     );
+}
+
+/**
+ * Add a node to the legacy server file.
+ * Loads the file, adds the node entry, and saves it back with a backup.
+ *
+ * @param env Environment for crypto access
+ * @param storagePath Path to the storage directory
+ * @param fabricConfig Fabric configuration (needed to compute the file name)
+ * @param nodeId The node ID to add
+ * @param dateCommissioned The date the node was commissioned (ISO string)
+ */
+export async function addNodeToLegacyServerFile(
+    env: Environment,
+    storagePath: string,
+    fabricConfig: LegacyFabricConfigData,
+    nodeId: bigint | number,
+    dateCommissioned: string,
+): Promise<void> {
+    const crypto = env.get(Crypto);
+    const compressedFabricId = await computeCompressedNodeId(crypto, fabricConfig.fabricId, fabricConfig.rootPublicKey);
+    const serverFileName = `${compressedFabricId}.json`;
+    const serverFilePath = join(storagePath, serverFileName);
+
+    // Load existing file or create new structure
+    let serverFile: LegacyServerFile;
+    try {
+        const content = await readFile(serverFilePath, "utf-8");
+        serverFile = JSON.parse(content) as LegacyServerFile;
+    } catch {
+        // File doesn't exist, create new structure
+        serverFile = {
+            vendor_info: {},
+            last_node_id: 0,
+            nodes: {},
+        };
+    }
+
+    const nodeIdNum = typeof nodeId === "bigint" ? Number(nodeId) : nodeId;
+    const nodeIdStr = nodeIdNum.toString();
+
+    // Add the node entry (minimal data - just the ID and commissioned date)
+    const nodeData: LegacyNodeData = {
+        node_id: nodeIdNum,
+        date_commissioned: dateCommissioned,
+        last_interview: dateCommissioned,
+        interview_version: 6,
+        available: false,
+        is_bridge: false,
+        attributes: {},
+        attribute_subscriptions: [],
+    };
+
+    serverFile.nodes[nodeIdStr] = nodeData;
+
+    // Update last_node_id if this node is higher
+    if (nodeIdNum > serverFile.last_node_id) {
+        serverFile.last_node_id = nodeIdNum;
+    }
+
+    await saveLegacyServerFile(env, storagePath, fabricConfig, serverFile);
+    logger.info(`Added node ${nodeIdStr} to legacy server file`);
+}
+
+/**
+ * Remove a node from the legacy server file.
+ * Loads the file, removes the node entry, and saves it back with a backup.
+ *
+ * @param env Environment for crypto access
+ * @param storagePath Path to the storage directory
+ * @param fabricConfig Fabric configuration (needed to compute the file name)
+ * @param nodeId The node ID to remove
+ */
+export async function removeNodeFromLegacyServerFile(
+    env: Environment,
+    storagePath: string,
+    fabricConfig: LegacyFabricConfigData,
+    nodeId: bigint | number,
+): Promise<void> {
+    const crypto = env.get(Crypto);
+    const compressedFabricId = await computeCompressedNodeId(crypto, fabricConfig.fabricId, fabricConfig.rootPublicKey);
+    const serverFileName = `${compressedFabricId}.json`;
+    const serverFilePath = join(storagePath, serverFileName);
+
+    // Load existing file
+    let serverFile: LegacyServerFile;
+    try {
+        const content = await readFile(serverFilePath, "utf-8");
+        serverFile = JSON.parse(content) as LegacyServerFile;
+    } catch {
+        // File doesn't exist, nothing to remove
+        logger.debug(`No legacy server file found, nothing to remove for node ${nodeId}`);
+        return;
+    }
+
+    const nodeIdStr = (typeof nodeId === "bigint" ? Number(nodeId) : nodeId).toString();
+
+    // Check if node exists
+    if (!(nodeIdStr in serverFile.nodes)) {
+        logger.debug(`Node ${nodeIdStr} not found in legacy server file`);
+        return;
+    }
+
+    // Remove the node entry
+    delete serverFile.nodes[nodeIdStr];
+
+    await saveLegacyServerFile(env, storagePath, fabricConfig, serverFile);
+    logger.info(`Removed node ${nodeIdStr} from legacy server file`);
 }
