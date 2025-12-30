@@ -204,14 +204,18 @@ export namespace LegacyDataInjector {
             if (!(await nodesListStorage.has("commissionedNodes"))) {
                 await nodesListStorage.set("commissionedNodes", []);
             }
-            return;
+            return false;
         }
 
-        const commissionedNodes = [];
+        const commissionedNodes = new Array<[NodeId, any]>();
+        let injectedNodes = 0;
 
         for (const [nodeId, nodeDetails] of Object.entries(nodeData.nodes)) {
             const nodeStorage = baseStorage.createContext(`node-${nodeId}`);
-            commissionedNodes.push([BigInt(nodeDetails.node_id), {}]);
+            if (nodeId !== nodeDetails.node_id.toString()) {
+                logger.warn(`Node ID mismatch in node data: ${nodeId} != ${nodeDetails.node_id}`);
+            }
+            commissionedNodes.push([NodeId(BigInt(nodeId)), {}]);
             let newNode = true;
             logger.info(`Injecting node ${nodeId} into storage`);
             const nodeWrites = new Array<MaybePromise<void>>();
@@ -235,6 +239,7 @@ export namespace LegacyDataInjector {
                             break;
                         }
                         newNode = false;
+                        injectedNodes++;
                     }
                     nodeWrites.push(clusterStorage.set("__version__", 1));
                 }
@@ -263,6 +268,17 @@ export namespace LegacyDataInjector {
             await Promise.allSettled(nodeWrites);
             nodeWrites.length = 0;
         }
-        await nodesListStorage.set("commissionedNodes", commissionedNodes);
+
+        if (injectedNodes > 0) {
+            const knownNodes = await nodesListStorage.get<[bigint | number, any][]>("commissionedNodes", []);
+            for (const [nodeId] of commissionedNodes) {
+                if (!knownNodes.find(([knownNodeId]) => knownNodeId === nodeId)) {
+                    knownNodes.push([nodeId, {}]);
+                }
+            }
+            await nodesListStorage.set("commissionedNodes", knownNodes);
+        }
+
+        return injectedNodes > 0;
     }
 }

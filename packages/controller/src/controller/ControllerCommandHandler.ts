@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { AsyncObservable } from "@matter/general";
 import {
     FabricId,
     FabricIndex,
@@ -29,19 +30,6 @@ import {
     SignatureFromCommandSpec,
     SupportedTransportsSchema,
 } from "@matter/main/protocol";
-
-/**
- * Software update info from the OTA provider.
- * Matches the SoftwareUpdateInfo interface from @matter/node.
- */
-interface SoftwareUpdateInfo {
-    vendorId: VendorId;
-    productId: number;
-    softwareVersion: number;
-    softwareVersionString: string;
-    releaseNotesUrl?: string;
-    specificationVersion?: number;
-}
 import {
     Attribute,
     ClusterId,
@@ -68,7 +56,6 @@ import { CommissioningController, NodeCommissioningOptions } from "@project-chip
 import { NodeStates, PairedNode } from "@project-chip/matter.js/device";
 import { inspect } from "node:util";
 import { bytesToIpV4, bytesToIpV6 } from "../server/Converters.js";
-import { pingIp } from "../util/network.js";
 import {
     AttributeResponseStatus,
     CommissioningRequest,
@@ -99,6 +86,20 @@ import {
     NodePingResult,
     UpdateSource,
 } from "../types/WebSocketMessageTypes.js";
+import { pingIp } from "../util/network.js";
+
+/**
+ * Software update info from the OTA provider.
+ * Matches the SoftwareUpdateInfo interface from @matter/node.
+ */
+interface SoftwareUpdateInfo {
+    vendorId: VendorId;
+    productId: number;
+    softwareVersion: number;
+    softwareVersionString: string;
+    releaseNotesUrl?: string;
+    specificationVersion?: number;
+}
 
 const logger = Logger.get("ControllerCommandHandler");
 
@@ -111,6 +112,7 @@ export class ControllerCommandHandler {
     /** Cache of available updates keyed by nodeId */
     #availableUpdates = new Map<NodeId, SoftwareUpdateInfo>();
     events = {
+        started: new AsyncObservable(),
         attributeChanged: new Observable<[nodeId: NodeId, data: DecodedAttributeReportValue<any>]>(),
         eventChanged: new Observable<[nodeId: NodeId, data: DecodedEventReportValue<any>]>(),
         nodeAdded: new Observable<[nodeId: NodeId]>(),
@@ -145,6 +147,8 @@ export class ControllerCommandHandler {
 
             // Subscribe to OTA provider events to track available updates
             this.#setupOtaEventHandlers();
+
+            await this.events.started.emit();
         } catch (error) {
             const errorText = inspect(error, { depth: 10 });
             // Catch and log error, else the test framework hides issues here
@@ -1031,9 +1035,8 @@ export class ControllerCommandHandler {
             );
 
             // Find update for this specific node
-            const nodeUpdate = updatesAvailable.find(
-                (update: { peerAddress: PeerAddress; info: any }) =>
-                    PeerAddress.is(update.peerAddress, peerAddress),
+            const nodeUpdate = updatesAvailable.find((update: { peerAddress: PeerAddress; info: any }) =>
+                PeerAddress.is(update.peerAddress, peerAddress),
             );
 
             if (nodeUpdate) {
@@ -1096,12 +1099,9 @@ export class ControllerCommandHandler {
 
             // Trigger the update using forceUpdate via dynamic behavior access
             await otaProvider.act((agent: any) =>
-                agent.get("softwareupdates").forceUpdate(
-                    peerAddress,
-                    updateInfo.vendorId,
-                    updateInfo.productId,
-                    softwareVersion,
-                ),
+                agent
+                    .get("softwareupdates")
+                    .forceUpdate(peerAddress, updateInfo.vendorId, updateInfo.productId, softwareVersion),
             );
 
             // Return the update info
@@ -1115,10 +1115,7 @@ export class ControllerCommandHandler {
     /**
      * Convert SoftwareUpdateInfo to MatterSoftwareVersion format for WebSocket API.
      */
-    #convertToMatterSoftwareVersion(
-        updateInfo: SoftwareUpdateInfo,
-        updateSource: UpdateSource,
-    ): MatterSoftwareVersion {
+    #convertToMatterSoftwareVersion(updateInfo: SoftwareUpdateInfo, updateSource: UpdateSource): MatterSoftwareVersion {
         return {
             vid: updateInfo.vendorId,
             pid: updateInfo.productId,

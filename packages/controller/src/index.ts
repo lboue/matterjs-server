@@ -23,5 +23,5 @@ export * from "./types/WebSocketMessageTypes.js";
 // Export utilities
 export * from "./util/matterVersion.js";
 
-// Re-Export two classes from matter.js
-export { Crypto, Environment, Logger } from "@matter/main";
+// Re-Export classes from matter.js
+export { Crypto, Environment, LogDestination, LogFormat, LogLevel, Logger } from "@matter/main";

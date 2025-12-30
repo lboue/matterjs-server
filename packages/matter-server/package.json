@@ -23,7 +23,7 @@
     "node": ">=20.19.0 <22.0.0 || >=22.13.0"
   },
   "dependencies": {
-    "@matter/main": "0.16.0-alpha.0-20251228-8b11eb535",
+    "@matter/main": "0.16.0-alpha.0-20251230-22c86956b",
     "@matter-server/controller": "*",
     "@matter-server/dashboard": "*",
     "commander": "^14.0.2",

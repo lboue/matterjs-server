@@ -1,20 +1,70 @@
+import { open, readdir, unlink } from "node:fs/promises";
+import { join } from "node:path";
 import {
     ConfigStorage,
     Environment,
     LegacyServerData,
+    LogDestination,
+    LogFormat,
+    LogLevel,
     Logger,
     MatterController,
     WebSocketControllerHandler,
 } from "@matter-server/controller";
-import { getCliOptions } from "./cli.js";
+import { getCliOptions, type LogLevel as CliLogLevel } from "./cli.js";
 import { type LegacyData, loadLegacyData } from "./converter/LegacyDataLoader.js";
 import { StaticFileHandler } from "./server/StaticFileHandler.js";
 import { WebServer } from "./server/WebServer.js";
 
-const logger = Logger.get("MatterServer");
+/**
+ * Creates a file-based logger that appends to the given path.
+ * The file is opened on start and closed when the process shuts down.
+ */
+async function createFileLogger(path: string) {
+    const fileHandle = await open(path, "a");
+    const writer = fileHandle.createWriteStream();
+    process.on(
+        "beforeExit",
+        () => void fileHandle.close().catch(err => err && console.error(`Failed to close log file: ${err}`)),
+    );
 
-// Parse CLI options
+    return (formattedLog: string) => {
+        try {
+            writer.write(`${formattedLog}\n`);
+        } catch (error) {
+            console.error(`Failed to write to log file: ${error}`);
+        }
+    };
+}
+
+// Parse CLI options early for logging setup
 const cliOptions = getCliOptions();
+
+/**
+ * Map CLI log level strings to Matter.js LogLevel values.
+ */
+function mapLogLevel(level: CliLogLevel): LogLevel {
+    switch (level) {
+        case "critical":
+            return LogLevel.FATAL;
+        case "error":
+            return LogLevel.ERROR;
+        case "warning":
+            return LogLevel.WARN;
+        case "info":
+            return LogLevel.INFO;
+        case "debug":
+        case "verbose":
+            return LogLevel.DEBUG;
+        default:
+            return LogLevel.INFO;
+    }
+}
+
+// Configure logging before anything else
+Logger.level = mapLogLevel(cliOptions.logLevel);
+
+const logger = Logger.get("MatterServer");
 
 const env = Environment.default;
 
@@ -34,6 +84,21 @@ let config: ConfigStorage;
 let legacyData: LegacyData;
 
 async function start() {
+    // Set up file logging if configured
+    if (cliOptions.logFile) {
+        try {
+            const fileWriter = await createFileLogger(cliOptions.logFile);
+            Logger.destinations.file = LogDestination({
+                write: fileWriter,
+                level: mapLogLevel(cliOptions.logLevel),
+                format: LogFormat("plain"),
+            });
+            logger.info(`File logging enabled: ${cliOptions.logFile}`);
+        } catch (error) {
+            logger.error(`Failed to set up file logging: ${error}`);
+        }
+    }
+
     const legacyServerData: LegacyServerData = {
         vendorId: cliOptions.vendorId,
         fabricId: cliOptions.fabricId,
@@ -67,12 +132,61 @@ async function start() {
     config = await ConfigStorage.create(env);
     controller = await MatterController.create(env, config, legacyServerData);
 
+    // Configure OTA settings after controller is created
+    if (cliOptions.enableTestNetDcl) {
+        await controller.enableTestOtaImages();
+    }
+
+    // Load OTA files from provider directory if configured
+    if (cliOptions.otaProviderDir) {
+        if (!cliOptions.enableTestNetDcl) {
+            logger.warn(
+                `OTA provider directory (${cliOptions.otaProviderDir}) is configured but --enable-test-net-dcl is not set. Custom OTA files will be ignored.`,
+            );
+        } else {
+            await loadOtaFiles(cliOptions.otaProviderDir);
+        }
+    }
+
     server = new WebServer({ listenAddresses: cliOptions.listenAddress, port: cliOptions.port }, [
-        new WebSocketControllerHandler(controller.commandHandler, config),
+        new WebSocketControllerHandler(controller, config),
         new StaticFileHandler(),
     ]);
 
     await server.start();
+}
+
+/**
+ * Load OTA image files from a directory into the internal storage.
+ * Files with .json extension are skipped.
+ * Successfully loaded files are deleted from the directory.
+ */
+async function loadOtaFiles(directory: string) {
+    try {
+        const files = await readdir(directory);
+        for (const file of files) {
+            // Skip JSON files (metadata files)
+            if (file.toLowerCase().endsWith(".json")) {
+                continue;
+            }
+
+            const filePath = join(directory, file);
+            try {
+                const success = await controller.storeOtaImageFromFile(filePath, false);
+                if (success) {
+                    logger.info(`Loaded OTA file: ${file}`);
+                    // Delete the file after successful import
+                    await unlink(filePath);
+                    logger.debug(`Deleted OTA file after import: ${file}`);
+                }
+            } catch (error) {
+                logger.error(`Failed to load OTA file ${file}: ${error}`);
+                // Continue with next file
+            }
+        }
+    } catch (error) {
+        logger.error(`Failed to read OTA provider directory ${directory}: ${error}`);
+    }
 }
 
 async function stop() {

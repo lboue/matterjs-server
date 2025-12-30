@@ -5,6 +5,7 @@ import { EndpointNumber, getClusterById, QrPairingCodeCodec } from "@matter/main
 import { Endpoint, NodeStates } from "@project-chip/matter.js/device";
 import { WebSocketServer } from "ws";
 import { ControllerCommandHandler } from "../controller/ControllerCommandHandler.js";
+import { MatterController } from "../controller/MatterController.js";
 import { VendorIds } from "../data/VendorIDs.js";
 import { ClusterMap, ClusterMapEntry } from "../model/ModelMapper.js";
 import { CommissioningRequest } from "../types/CommandHandler.js";
@@ -40,6 +41,7 @@ const logger = Logger.get("WebSocketControllerHandler");
 const EVENT_HISTORY_SIZE = 25;
 
 export class WebSocketControllerHandler implements WebServerHandler {
+    #controller: MatterController;
     #commandHandler: ControllerCommandHandler;
     #config: ConfigStorage;
     #wss?: WebSocketServer;
@@ -47,9 +49,12 @@ export class WebSocketControllerHandler implements WebServerHandler {
     #testNodes = new Map<bigint, MatterNode>();
     /** Circular buffer for recent node events (max 25) */
     #eventHistory: MatterNodeEvent[] = [];
+    /** Track when each node was last interviewed (connected) - keyed by nodeId */
+    #lastInterviewDates = new Map<bigint, Date>();
 
-    constructor(commandHandler: ControllerCommandHandler, config: ConfigStorage) {
-        this.#commandHandler = commandHandler;
+    constructor(controller: MatterController, config: ConfigStorage) {
+        this.#controller = controller;
+        this.#commandHandler = controller.commandHandler;
         this.#config = config;
     }
 
@@ -169,6 +174,10 @@ export class WebSocketControllerHandler implements WebServerHandler {
 
             observers.on(this.#commandHandler.events.nodeStateChanged, (nodeId, state) => {
                 if (state === NodeStates.Disconnected) return;
+                // Track last interview time when node becomes connected
+                if (state === NodeStates.Connected) {
+                    this.#lastInterviewDates.set(BigInt(nodeId), new Date());
+                }
                 sendNodeDetailsEvent("node_updated", nodeId);
             });
 
@@ -275,6 +284,9 @@ export class WebSocketControllerHandler implements WebServerHandler {
                 case "get_node":
                     result = await this.#handleGetNode(args);
                     break;
+                case "get_nodes":
+                    result = await this.#handleGetNodes(args);
+                    break;
                 case "get_node_ip_addresses":
                     result = await this.#handleGetNodeIpAddresses(args);
                     break;
@@ -282,7 +294,7 @@ export class WebSocketControllerHandler implements WebServerHandler {
                     result = await this.#handleReadAttribute(args);
                     break;
                 case "get_vendor_names":
-                    result = this.#handleGetVendorNames(args);
+                    result = await this.#handleGetVendorNames(args);
                     break;
                 case "device_command":
                     result = await this.#handleDeviceCommand(args);
@@ -361,8 +373,7 @@ export class WebSocketControllerHandler implements WebServerHandler {
             };
         } catch (err) {
             logger.error("Failed to handle websocket request", err);
-            const errorCode =
-                err instanceof ServerError ? err.code : ServerErrorCode.UnknownError;
+            const errorCode = err instanceof ServerError ? err.code : ServerErrorCode.UnknownError;
             return {
                 response: {
                     message_id: messageId ?? "",
@@ -690,14 +701,34 @@ export class WebSocketControllerHandler implements WebServerHandler {
         ];
     }
 
-    #handleGetVendorNames(args: ArgsOf<"get_vendor_names">): ResponseOf<"get_vendor_names"> {
+    async #handleGetVendorNames(args: ArgsOf<"get_vendor_names">): Promise<ResponseOf<"get_vendor_names">> {
         const { filter_vendors } = args;
-        if (!filter_vendors || !filter_vendors.length) {
-            return VendorIds;
+
+        // Get vendor info from DCL service
+        const dclVendors = await this.#controller.getAllVendors();
+
+        // Build merged result: DCL vendors override static list, but include static entries not in DCL
+        const mergedVendors: { [key: string]: string } = {};
+
+        // First add all static vendor IDs
+        for (const [vendorIdStr, vendorName] of Object.entries(VendorIds)) {
+            mergedVendors[vendorIdStr] = vendorName;
         }
+
+        // Then override with DCL vendors (DCL wins)
+        for (const [vendorId, vendorInfo] of dclVendors) {
+            mergedVendors[vendorId] = vendorInfo.vendorName;
+        }
+
+        // If no filter, return all merged vendors
+        if (!filter_vendors || !filter_vendors.length) {
+            return mergedVendors;
+        }
+
+        // Filter to requested vendor IDs
         const result: { [key: string]: string } = {};
         for (const vendorId of filter_vendors) {
-            const vendorName = VendorIds[vendorId];
+            const vendorName = mergedVendors[vendorId];
             if (vendorName) {
                 result[vendorId] = vendorName;
             }
@@ -1010,10 +1041,17 @@ export class WebSocketControllerHandler implements WebServerHandler {
             logger.info(`Waiting for node ${nodeId} to be initialized ${NodeStates[node.connectionState]}`);
         }
 
+        // Get commissioned date from node state if available
+        const commissionedAt = node.state.commissioning.commissionedAt;
+        const dateCommissioned = commissionedAt !== undefined ? new Date(commissionedAt) : new Date();
+
+        // Get the last interview date from tracked state changes or fall back to current time
+        const lastInterviewDate = this.#lastInterviewDates.get(BigInt(node.nodeId)) ?? new Date();
+
         return {
             node_id: node.nodeId,
-            date_commissioned: getDateAsString(new Date()), // TODO, always "now"
-            last_interview: getDateAsString(new Date()), // TODO, always "now"
+            date_commissioned: getDateAsString(dateCommissioned),
+            last_interview: getDateAsString(lastInterviewDate),
             interview_version: 6, // TODO
             available: node.isConnected,
             is_bridge: isBridge,
