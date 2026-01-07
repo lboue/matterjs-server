@@ -1,23 +1,21 @@
-# Open Home Foundation Matter Server
+# Open Home Foundation Matter(.js) Server
 
 ![Matter Logo](docs/matter_logo.svg)
 
-The Open Home Foundation Matter Server is an [officially certified](https://csa-iot.org/csa_product/open-home-foundation-matter-server/) Software Component to create a Matter controller. It serves as the foundation to provide Matter support to [Home Assistant](https://home-assistant.io) but its universal approach makes it suitable to be used in other projects too.
+> [!IMPORTANT]
+> This is an Alpha version of a matter.js-based controller with a [Python Matter Server](https://github.com/matter-js/python-matter-server) compatible WebSocket interface.
+> This version is not yet officially re-certified by the CS, but will be during the current Alpha/Beta phase.
 
-This project implements a Matter Controller Server over WebSockets using the
-[official Matter (formerly CHIP) SDK](https://github.com/project-chip/connectedhomeip)
+The Open Home Foundation Matter Server serves as the foundation to provide Matter support to [Home Assistant](https://home-assistant.io) but its universal approach makes it suitable to be used in other projects too.
+
+This project implements a Matter Controller Server over WebSockets using JavaScript Matter SDK [matter.js](https://github.com/matter-js/matter.js)
 as a base and provides both a server and client implementation.
 
-> [!IMPORTANT]
-> We’re excited to share that the Matter Server is being rewritten on top of [matter.js](https://github.com/matter-js/matter.js)! 🎉
-> This means that the current project has moved into **maintenance mode** — we’ll still fix important bugs if they come up, but all new features will land in the new project instead.
-> We’ll post a link as soon as the first **alpha version** is ready for you to try out. 🚀
-
-The Open Home Foundation Matter Server software component is funded by [Nabu Casa](https://www.nabucasa.com/) (a member of the CSA) and donated to [The Open Home Foundation](https://www.openhomefoundation.org/).
+The Open Home Foundation Matter Server software component is a project of the [The Open Home Foundation](https://www.openhomefoundation.org/).
 
 ## Support
 
-For developers, making use of this component or contributing to it, use the issue tracker within this repository and/or reach out on discord.
+During the Alpha/Beta phase of the matter.js-based Matter server, we enabled issue creation for this version via GitHub issues. If you use the Python Matter server and your issue is not related to a Migration-issue from/to matter.js-Server, please use the options listed below.
 
 For users of Home Assistant, seek support in the official Home Assistant support channels.
 
@@ -30,6 +28,22 @@ For users of Home Assistant, seek support in the official Home Assistant support
 
 Please do not create Home Assistant enduser support issues in the issue tracker of this repository.
 
+## Alpha test instructions
+
+The alpha test uses the data files from the python-matter-server (`chip.json` and `{fabricId}.json`). Simply copy the files from the python-matter-server to a directory of your choice and start the server with the `--storage-path` parameter pointing to that directory.
+
+> [!IMPORTANT]
+> Please ensure you have a backup of your storage files before switching to Matter.js.
+
+> [!IMPORTANT]
+> When using the python data files, you must ensure that the python-matter-server with these files is not running at the same time.
+
+On the first start, the data from these configuration files will be migrated to the new storage format. This can take a bit time, so please be patient.
+Additionally, on the first start, it is expected that the server logs an error message because no addresses are known for all nodes. This can be ignored. 
+On the first successful device connection, the server will automatically interview all nodes and update the data files accordingly (afterwards only changed attributes are requested on reconnections).
+
+The server will update the `{fabricId}.json` file whenever nodes are added or removed from the fabric, so das this is in sync if you need to migrate back to the python server for any reason. For new nodes we will **not** sfe any attribute data into the file, so switching back to python-matter-server will require a re-interview of the added nodes and they might report empty values until reconnected.
+
 ## Development
 
 Want to help out with development, testing, and/or documentation? Great! As both this project and Matter keeps evolving there will be a lot to improve. Reach out to us on discord if you want to help out.
@@ -38,35 +52,28 @@ Want to help out with development, testing, and/or documentation? Great! As both
 
 ## Installation / Running the Matter Server
 
-- Endusers of Home Assistant, refer to the [Home Assistant documentation](https://www.home-assistant.io/integrations/matter/) how to run Matter in Home Assistant using the official Matter Server add-on, which is based on this project.
+- Endusers of Home Assistant, refer to the [Home Assistant documentation](https://www.home-assistant.io/integrations/matter/) how to run Matter in Home Assistant using the official Matter Server add-on, which is based on this project. Choose the "Beta" version if you want to test the matter.js based server (soon)
 
 - For running the server and/or client in your development environment, see the [Development documentation](DEVELOPMENT.md).
 
 - For running the Matter Server as a standalone docker container, see our instructions [here](docs/docker.md).
 
-> [!NOTE]
-> Both Matter and this implementation are in an early state and features are probably missing or could be improved. See our [development notes](#development) how you can help out, with development and/or testing.
+### Manual installation (from npm)
+* Ensure to have Node.js 20.x, 22.x, or 24.x installed (22.x recommended)
+* `npm install matter-server`
+* `npx matter-server` or alternatively `cd node_modules/matter-server && npm run server`
 
+If you want to provide more parameters when using "npm run" (not needed when using npx!) use an extra "--" to separate parameters, see below.
 
-
-
-
-
-
-
-
-
-This is a WIP version of a Matter.js based controller with a Python Matter Server compatible WebSocket interface.
-
-## How to use
+### Manual installation (for local development)
 * clone the repository
 * `npm i` in the root directory to install npm dependencies and do initial build
 * (`npm run build`) if ever needed after changing code
 * `npm run server` to start it
 
-The server is started on port localhost:5580 and listens fpr WS on "/ws".
+The server is started on port localhost:5580 and listens fpr WS on "/ws"
 
-Just configure the HA instance against this server and have fun :-)
+Configure the HA instance against this server and have fun :-)
 
 ### Tips
 * to control the storage directory use `--storage-path=.ha1` as parameter to use local dir `.ha1` for storage
@@ -82,41 +89,13 @@ Ble and Wifi should work when server gets startes with `--ble` flag, but Wifi on
 
 This implementation aims to be API-compatible with the [Python Matter Server](https://github.com/home-assistant-libs/python-matter-server), but there are some intentional differences:
 
-### Test Node ID Range
+| Feature                 | Python Matter Server                          | Matter.js Server                                                                                           |
+|-------------------------|-----------------------------------------------|------------------------------------------------------------------------------------------------------------|
+| Fabric ID Default       | `--fabricid` defaults to 1                    | Random if not specified                                                                                    |
+| Test Node IDs           | `>= 900000`                                   | `>= 0xFFFF_FFFE_0000_0000` (NodeId range for temporary local NodeIds outside official operational NodeIds) |
+| Fabric Label            | Accepts null/empty to clear                   | Resets to "Home" when null/empty                                                                           |
+| Storage Format          | Single `chip.json` and `{fabricId}.json` file | matter.js native storage (migration supported)                                                             |
+| Attribute Subscriptions | Tracks per-node in `attribute_subscriptions`  | Always empty (handled internally)                                                                          |
+| Eve Energy Polling      | Polls custom eve cluster every 30s            | Not implemented (use updated firmware)                                                                     |
 
-Test nodes (imported via `import_test_node` command) use different ID ranges:
 
-| Implementation | Test Node ID Range |
-|----------------|-------------------|
-| Python Matter Server | `>= 900000` (0xDBBA0) |
-| Matter.js Server | `>= 0xFFFF_FFFE_0000_0000` |
-
-The Matter.js implementation uses the high 64-bit range to ensure test node IDs never collide with real Matter node IDs, which can be assigned values up to 64-bit. This is a deliberate design choice for better separation between test and production nodes.
-
-**Note**: If you're importing diagnostics dumps from a Python Matter Server instance, the test node IDs will be preserved as-is from the dump.
-
-### Fabric Label Handling
-
-When setting the fabric label via `set_default_fabric_label`:
-
-| Implementation | Behavior with null/empty |
-|----------------|-------------------------|
-| Python Matter Server | Auto-truncates to 32 chars, accepts null/empty to clear |
-| Matter.js Server | Resets to "Home" when null or empty string is passed |
-
-The matter.js SDK requires fabric labels to be 1-32 characters, so the Matter.js server uses "Home" as the default label instead of clearing it.
-
-### Eve Energy Custom Cluster Polling
-
-The Python Matter Server includes a polling mechanism for older Eve Energy devices that report power consumption via a custom vendor cluster (0x130AFC01) instead of the standard `ElectricalPowerMeasurement` cluster.
-
-| Implementation | Behavior |
-|----------------|----------|
-| Python Matter Server | Polls Eve energy attributes (Watt, Voltage, Current, etc.) every 30 seconds if the device is from Eve (vendor ID 4874) and lacks the standard power cluster |
-| Matter.js Server | Does not implement this polling mechanism |
-
-**Why this difference exists**: Modern Eve devices with up-to-date firmware use the standard Matter `ElectricalPowerMeasurement` cluster, which supports proper subscriptions and doesn't require polling. The polling in Python was a workaround for older firmware versions.
-
-**Recommendation**: If you have Eve Energy devices that don't report power values correctly, update your device firmware through the Eve app. Updated firmware uses standard Matter clusters that work correctly without polling.
-
-For complete compatibility details, see [TODO.md](TODO.md).

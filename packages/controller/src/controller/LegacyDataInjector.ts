@@ -106,7 +106,7 @@ export interface LegacyServerData {
     fabric?: LegacyFabricConfigData;
     nodeData?: LegacyServerFile;
     vendorId: number;
-    fabricId: number | bigint;
+    fabricId?: number | bigint;
 }
 
 export namespace LegacyDataInjector {

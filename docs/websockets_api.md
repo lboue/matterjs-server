@@ -1,12 +1,124 @@
-# Websocket documentation
+# WebSocket API Documentation
 
-This list is not intended to be complete, for a complete oversight see the client implementation.
+This document describes the WebSocket API for the Matter.js server. The server listens on `ws://localhost:5580/ws` by default.
 
-## Websocket commands
+## Connection
 
-Here are the most frequently used commands:
+On connection, the server immediately sends a `server_info` message with fabric and capability information:
 
-**Set WiFi credentials**
+```json
+{
+  "fabric_id": 1234567890,
+  "compressed_fabric_id": 9876543210,
+  "schema_version": 11,
+  "min_supported_schema_version": 11,
+  "sdk_version": "matter.js/0.11.0",
+  "wifi_credentials_set": true,
+  "thread_credentials_set": false,
+  "bluetooth_enabled": true
+}
+```
+
+## Request/Response Format
+
+All commands follow this request format:
+
+```json
+{
+  "message_id": "unique-id",
+  "command": "command_name",
+  "args": { ... }
+}
+```
+
+Successful responses:
+```json
+{
+  "message_id": "unique-id",
+  "result": { ... }
+}
+```
+
+Error responses:
+```json
+{
+  "message_id": "unique-id",
+  "error_code": 0,
+  "details": "Error description"
+}
+```
+
+## Commands
+
+### Server Information
+
+**server_info** - Get server information
+
+```json
+{
+  "message_id": "1",
+  "command": "server_info"
+}
+```
+
+**diagnostics** - Get server diagnostics (info, nodes, and recent events)
+
+```json
+{
+  "message_id": "1",
+  "command": "diagnostics"
+}
+```
+
+### Listening and Node Discovery
+
+**start_listening** - Start receiving events and get all nodes
+
+When the `start_listening` command is issued, the server returns all existing nodes. From that moment on, all events (including node attribute changes) will be forwarded to this WebSocket connection.
+
+```json
+{
+  "message_id": "1",
+  "command": "start_listening"
+}
+```
+
+**get_nodes** - Get all commissioned nodes
+
+```json
+{
+  "message_id": "1",
+  "command": "get_nodes",
+  "args": {
+    "only_available": false
+  }
+}
+```
+
+**get_node** - Get a single node by ID
+
+```json
+{
+  "message_id": "1",
+  "command": "get_node",
+  "args": {
+    "node_id": 1
+  }
+}
+```
+
+**discover** / **discover_commissionable_nodes** - Discover commissionable devices on the network
+
+```json
+{
+  "message_id": "1",
+  "command": "discover"
+}
+```
+
+### Credentials
+
+**set_wifi_credentials** - Set WiFi credentials for commissioning
 
 Inform the controller about the WiFi credentials it needs to send when commissioning a new device.
 
@@ -21,7 +133,7 @@ Inform the controller about the WiFi credentials it needs to send when commissio
 }
 ```
 
-**Set Thread dataset**
+**set_thread_dataset** - Set Thread credentials for commissioning
 
 Inform the controller about the Thread credentials it needs to use when commissioning a new device.
 
@@ -30,21 +142,35 @@ Inform the controller about the Thread credentials it needs to use when commissi
   "message_id": "1",
   "command": "set_thread_dataset",
   "args": {
-    "dataset": "put-credentials-here"
+    "dataset": "hex-encoded-operational-dataset"
   }
 }
 ```
 
-**Commission with code**
-
-Commission a new device. For WiFi or Thread based devices, the credentials need to be set upfront, otherwise, commissioning will fail. Supports both QR-code syntax (MT:...) and manual pairing code as string.
-The controller will use bluetooth for the commissioning of wireless devices. If the machine running the Python Matter Server controller lacks Bluetooth support, commissioning will only work for devices already connected to the network (by cable or another controller).
-
-Matter QR-code
+**set_default_fabric_label** - Set the default fabric label
 
 ```json
 {
-  "message_id": "2",
+  "message_id": "1",
+  "command": "set_default_fabric_label",
+  "args": {
+    "label": "Home"
+  }
+}
+```
+
+### Commissioning
+
+**commission_with_code** - Commission a new device using QR code or manual pairing code
+
+For WiFi or Thread based devices, the credentials need to be set upfront, otherwise commissioning will fail. Supports both QR-code syntax (MT:...) and manual pairing code.
+
+The controller will use Bluetooth for commissioning wireless devices. If Bluetooth is not available, commissioning will only work for devices already on the network (set `network_only: true`).
+
+Using QR code:
+```json
+{
+  "message_id": "1",
   "command": "commission_with_code",
   "args": {
     "code": "MT:Y.ABCDEFG123456789"
@@ -52,11 +178,10 @@ Matter QR-code
 }
 ```
 
-Manual pairing code
-
+Using manual pairing code (network only):
 ```json
 {
-  "message_id": "2",
+  "message_id": "1",
   "command": "commission_with_code",
   "args": {
     "code": "35325335079",
@@ -65,64 +190,66 @@ Manual pairing code
 }
 ```
 
-**Open Commissioning window**
+**commission_on_network** - Commission a device already on the network
 
-Open a commissioning window to commission a device present on this controller to another.
-Returns code to use as discriminator.
+Commission using setup PIN code with optional filtering by discriminator or vendor ID.
 
 ```json
 {
-  "message_id": "2",
+  "message_id": "1",
+  "command": "commission_on_network",
+  "args": {
+    "setup_pin_code": 20202021,
+    "filter_type": 2,
+    "filter": 3840,
+    "ip_addr": "192.168.1.100"
+  }
+}
+```
+
+Filter types:
+- `0` - No filter (discover any)
+- `1` - Short discriminator
+- `2` - Long discriminator
+- `3` - Vendor ID
+
+**open_commissioning_window** - Open commissioning window to share a device
+
+Open a commissioning window to allow another controller to commission a device already on this controller.
+
+```json
+{
+  "message_id": "1",
   "command": "open_commissioning_window",
   "args": {
-    "node_id": 1
+    "node_id": 1,
+    "timeout": 300
   }
 }
 ```
 
-**Get Nodes**
-
-Get all nodes already commissioned on the controller.
-
+Response includes pairing codes:
 ```json
 {
-  "message_id": "2",
-  "command": "get_nodes"
-}
-```
-
-**Get Node**
-
-Get info of a single Node.
-
-```json
-{
-  "message_id": "2",
-  "command": "get_node",
-  "args": {
-    "node_id": 1
+  "message_id": "1",
+  "result": {
+    "setup_pin_code": 12345678,
+    "setup_manual_code": "35325335079",
+    "setup_qr_code": "MT:Y.ABCDEFG123456789"
   }
 }
 ```
 
-**Start listening**
+### Attribute Operations
 
-When the start_listening command is issued, the server will dump all existing nodes. From that moment on all events (including node attribute changes) will be forwarded.
+**read_attribute** - Read attribute(s) from a node
 
+Read one or more attributes using path format `endpoint/cluster/attribute`. Supports wildcards using `*`.
+
+Single attribute:
 ```json
 {
-  "message_id": "3",
-  "command": "start_listening"
-}
-```
-
-**Read an attribute**
-
-Here is an example of reading `OnOff` attribute on a switch (OnOff cluster)
-
-```json
-{
-  "message_id": "read",
+  "message_id": "1",
   "command": "read_attribute",
   "args": {
     "node_id": 1,
@@ -131,13 +258,35 @@ Here is an example of reading `OnOff` attribute on a switch (OnOff cluster)
 }
 ```
 
-**Write an attribute**
+Multiple attributes:
+```json
+{
+  "message_id": "1",
+  "command": "read_attribute",
+  "args": {
+    "node_id": 1,
+    "attribute_path": ["1/6/0", "1/6/16384", "0/40/1"]
+  }
+}
+```
 
-Here is an example of writing `OnTime` attribute on a switch (OnOff cluster)
+Wildcard (all attributes from OnOff cluster):
+```json
+{
+  "message_id": "1",
+  "command": "read_attribute",
+  "args": {
+    "node_id": 1,
+    "attribute_path": "1/6/*"
+  }
+}
+```
+
+**write_attribute** - Write an attribute value
 
 ```json
 {
-  "message_id": "write",
+  "message_id": "1",
   "command": "write_attribute",
   "args": {
     "node_id": 1,
@@ -147,62 +296,415 @@ Here is an example of writing `OnTime` attribute on a switch (OnOff cluster)
 }
 ```
 
-**Send a command**
+### Commands
 
-Here is an example of turning on a switch (OnOff cluster)
+**device_command** - Send a command to a device
 
 ```json
 {
-  "message_id": "example",
+  "message_id": "1",
   "command": "device_command",
   "args": {
-    "endpoint_id": 1,
     "node_id": 1,
-    "payload": {},
+    "endpoint_id": 1,
     "cluster_id": 6,
-    "command_name": "On"
+    "command_name": "on",
+    "payload": {}
   }
 }
 ```
 
-**Python script to send a command**
-
-Because we use the datamodels of the Matter SDK, this is a little bit more involved.
-Here is an example of turning on a switch:
-
-```python
-import json
-
-# Import the CHIP clusters
-from chip.clusters import Objects as clusters
-
-# Import the ability to turn objects into dictionaries, and vice-versa
-from matter_server.common.helpers.util import dataclass_from_dict,dataclass_to_dict
-
-command = clusters.OnOff.Commands.On()
-payload = dataclass_to_dict(command)
-
-
-message = {
-    "message_id": "example",
-    "command": "device_command",
-    "args": {
-        "endpoint_id": 1,
-        "node_id": 1,
-        "payload": payload,
-        "cluster_id": command.cluster_id,
-        "command_name": "On"
+Command with parameters (e.g., move to level):
+```json
+{
+  "message_id": "1",
+  "command": "device_command",
+  "args": {
+    "node_id": 1,
+    "endpoint_id": 1,
+    "cluster_id": 8,
+    "command_name": "moveToLevelWithOnOff",
+    "payload": {
+      "level": 128,
+      "transitionTime": 10
     }
+  }
 }
-
-print(json.dumps(message, indent=2))
 ```
 
-You can also provide parameters for the cluster commands. Here's how to change the brightness for example:
+Optional parameters:
+- `response_type`: Set to `null` to suppress response data
+- `timed_request_timeout_ms`: Timeout for timed interactions (required for some commands like door lock)
 
-```python
-command = clusters.LevelControl.Commands.MoveToLevelWithOnOff(
-  level=int(value), # provide a percentage
-  transitionTime=0, # in seconds
-)
+### Node Management
+
+**interview_node** - Re-interview a node (refresh its data)
+
+```json
+{
+  "message_id": "1",
+  "command": "interview_node",
+  "args": {
+    "node_id": 1
+  }
+}
 ```
+
+**ping_node** - Ping a node to check connectivity
+
+```json
+{
+  "message_id": "1",
+  "command": "ping_node",
+  "args": {
+    "node_id": 1,
+    "attempts": 3
+  }
+}
+```
+
+**get_node_ip_addresses** - Get IP addresses for a node
+
+```json
+{
+  "message_id": "1",
+  "command": "get_node_ip_addresses",
+  "args": {
+    "node_id": 1,
+    "prefer_cache": false,
+    "scoped": false
+  }
+}
+```
+
+**remove_node** - Remove/decommission a node
+
+```json
+{
+  "message_id": "1",
+  "command": "remove_node",
+  "args": {
+    "node_id": 1
+  }
+}
+```
+
+### Fabric Management
+
+**get_matter_fabrics** - Get all fabrics on a node
+
+```json
+{
+  "message_id": "1",
+  "command": "get_matter_fabrics",
+  "args": {
+    "node_id": 1
+  }
+}
+```
+
+**remove_matter_fabric** - Remove a fabric from a node
+
+```json
+{
+  "message_id": "1",
+  "command": "remove_matter_fabric",
+  "args": {
+    "node_id": 1,
+    "fabric_index": 2
+  }
+}
+```
+
+### ACL and Bindings
+
+**set_acl_entry** - Set an ACL entry on a node
+
+```json
+{
+  "message_id": "1",
+  "command": "set_acl_entry",
+  "args": {
+    "node_id": 1,
+    "entry": {
+      "privilege": 5,
+      "authMode": 2,
+      "subjects": [112233],
+      "targets": null,
+      "fabricIndex": 1
+    }
+  }
+}
+```
+
+**set_node_binding** - Set bindings on a node endpoint
+
+```json
+{
+  "message_id": "1",
+  "command": "set_node_binding",
+  "args": {
+    "node_id": 1,
+    "endpoint": 1,
+    "bindings": [
+      {
+        "node": 2,
+        "endpoint": 1,
+        "cluster": 6
+      }
+    ]
+  }
+}
+```
+
+### Firmware Updates
+
+**check_node_update** - Check for available firmware updates
+
+```json
+{
+  "message_id": "1",
+  "command": "check_node_update",
+  "args": {
+    "node_id": 1
+  }
+}
+```
+
+**update_node** - Apply a firmware update
+
+```json
+{
+  "message_id": "1",
+  "command": "update_node",
+  "args": {
+    "nodeId": 1,
+    "softwareVersion": 2
+  }
+}
+```
+
+### Vendor Information
+
+**get_vendor_names** - Get vendor names by ID
+
+```json
+{
+  "message_id": "1",
+  "command": "get_vendor_names",
+  "args": {
+    "filter_vendors": [4874, 65521]
+  }
+}
+```
+
+### Test Nodes
+
+**import_test_node** - Import test node(s) from a diagnostic dump
+
+Import nodes from Home Assistant diagnostic dumps for testing purposes. Test nodes have node IDs >= 0xFFFFFFFE00000000.
+
+```json
+{
+  "message_id": "1",
+  "command": "import_test_node",
+  "args": {
+    "dump": "{\"data\":{\"node\":{...}}}"
+  }
+}
+```
+
+## Events
+
+Events are sent to clients that have called `start_listening`. Events have this format:
+
+```json
+{
+  "event": "event_name",
+  "data": { ... }
+}
+```
+
+### Node Events
+
+**node_added** - A new node was commissioned or imported
+
+```json
+{
+  "event": "node_added",
+  "data": {
+    "node_id": 1,
+    "date_commissioned": "2024-01-01T00:00:00.000000",
+    "last_interview": "2024-01-01T12:00:00.000000",
+    "interview_version": 6,
+    "available": true,
+    "is_bridge": false,
+    "attributes": { ... },
+    "attribute_subscriptions": []
+  }
+}
+```
+
+**node_updated** - A node's structure or availability changed
+
+```json
+{
+  "event": "node_updated",
+  "data": { ... }
+}
+```
+
+**node_removed** - A node was decommissioned
+
+```json
+{
+  "event": "node_removed",
+  "data": 1
+}
+```
+
+### Attribute Events
+
+**attribute_updated** - An attribute value changed
+
+```json
+{
+  "event": "attribute_updated",
+  "data": [1, "1/6/0", true]
+}
+```
+
+Format: `[node_id, "endpoint/cluster/attribute", value]`
+
+### Endpoint Events
+
+**endpoint_added** - An endpoint was added to a node (bridges)
+
+```json
+{
+  "event": "endpoint_added",
+  "data": {
+    "node_id": 1,
+    "endpoint_id": 3
+  }
+}
+```
+
+**endpoint_removed** - An endpoint was removed from a node
+
+```json
+{
+  "event": "endpoint_removed",
+  "data": {
+    "node_id": 1,
+    "endpoint_id": 3
+  }
+}
+```
+
+### Matter Events
+
+**node_event** - A Matter event occurred (e.g., button press, switch position)
+
+```json
+{
+  "event": "node_event",
+  "data": {
+    "node_id": 1,
+    "endpoint_id": 1,
+    "cluster_id": 59,
+    "event_id": 1,
+    "event_number": 12345,
+    "priority": 1,
+    "timestamp": 1704067200000,
+    "timestamp_type": 1,
+    "data": { "newPosition": 1 }
+  }
+}
+```
+
+### Server Events
+
+**server_info_updated** - Server configuration changed (e.g., credentials set)
+
+```json
+{
+  "event": "server_info_updated",
+  "data": {
+    "fabric_id": 1234567890,
+    "compressed_fabric_id": 9876543210,
+    "schema_version": 11,
+    "min_supported_schema_version": 11,
+    "sdk_version": "matter.js/0.11.0",
+    "wifi_credentials_set": true,
+    "thread_credentials_set": true,
+    "bluetooth_enabled": true
+  }
+}
+```
+
+**server_shutdown** - Server is shutting down
+
+```json
+{
+  "event": "server_shutdown",
+  "data": {}
+}
+```
+
+## Attribute Path Format
+
+Attribute paths use the format: `endpoint/cluster/attribute`
+
+- `1/6/0` - Endpoint 1, OnOff cluster (6), OnOff attribute (0)
+- `0/40/1` - Endpoint 0, BasicInformation cluster (40), VendorName attribute (1)
+- `*/6/*` - All endpoints, OnOff cluster, all attributes (wildcard)
+
+## Common Cluster IDs
+
+| Cluster | ID | Description |
+|---------|-----|-------------|
+| Identify | 3 | Identify device |
+| Groups | 4 | Group membership |
+| OnOff | 6 | On/Off control |
+| LevelControl | 8 | Dimming/level |
+| Descriptor | 29 | Endpoint descriptor |
+| BasicInformation | 40 | Device information |
+| OtaSoftwareUpdateRequestor | 42 | OTA updates |
+| ColorControl | 768 | Color/temperature |
+| DoorLock | 257 | Door locks |
+| WindowCovering | 258 | Blinds/shades |
+| Thermostat | 513 | HVAC control |
+
+## Error Codes
+
+| Code | Description |
+|------|-------------|
+| 0 | Unknown error |
+| 1 | Invalid command |
+| 2 | Invalid arguments |
+| 3 | Node not found |
+| 5 | Node does not exist |
+
+## Python Matter Server Compatibility
+
+This API is designed to be compatible with the [Python Matter Server](https://github.com/home-assistant-libs/python-matter-server) WebSocket API.
+
+### Stub Commands
+
+| Command | Status | Notes |
+|---------|--------|-------|
+| `subscribe_attribute` | Stub | Not implemented (Matter.js handles subscriptions internally) |
+
+### Data Differences
+
+| Field | Python | Matter.js |
+|-------|--------|-----------|
+| `MatterNode.attribute_subscriptions` | Tracks per-node subscriptions | Always empty array |
+| Test node IDs | `>= 900000` | `>= 0xFFFF_FFFE_0000_0000` |
+
+### Behavioral Differences
+
+- **Fabric Label**: `set_default_fabric_label` with null/empty resets to "Home" instead of clearing
+- **Attribute Subscriptions**: All attributes are subscribed automatically; the `attribute_subscriptions` field is not used
+- **Test Nodes**: Use high bigint range to prevent collision with real Matter node IDs

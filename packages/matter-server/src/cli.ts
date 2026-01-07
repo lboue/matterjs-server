@@ -7,9 +7,8 @@ import { Command, Option } from "commander";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-// Default values matching Python Matter Server
+// Default values
 const DEFAULT_VENDOR_ID = 0xfff1;
-const DEFAULT_FABRIC_ID = 1;
 const DEFAULT_PORT = 5580;
 const DEFAULT_STORAGE_PATH = join(homedir(), ".matter_server");
 
@@ -23,7 +22,7 @@ export type SdkLogLevel = (typeof SDK_LOG_LEVELS)[number];
 export interface CliOptions {
     // Fabric configuration
     vendorId: number;
-    fabricId: number;
+    fabricId: number | undefined;
 
     // Server configuration
     storagePath: string;
@@ -72,7 +71,7 @@ export function parseCliArgs(argv?: string[]): CliOptions {
 
     program
         .option("--vendorid <id>", "Vendor ID for the Fabric", parseIntOption, DEFAULT_VENDOR_ID)
-        .option("--fabricid <id>", "Fabric ID for the Fabric", parseIntOption, DEFAULT_FABRIC_ID)
+        .option("--fabricid <id>", "Fabric ID for the Fabric (random if not specified)", parseIntOption)
         .option("--storage-path <path>", "Storage path to keep persistent data", DEFAULT_STORAGE_PATH)
         .option("--port <port>", "TCP Port for WebSocket server", parseIntOption, DEFAULT_PORT)
         .option(
@@ -111,7 +110,7 @@ export function parseCliArgs(argv?: string[]): CliOptions {
 
     return {
         vendorId: opts.vendorid,
-        fabricId: opts.fabricid,
+        fabricId: opts.fabricid ?? undefined,
         storagePath: opts.storagePath,
         port: opts.port,
         listenAddress: opts.listenAddress.length > 0 ? opts.listenAddress : null,

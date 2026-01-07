@@ -1,5 +1,8 @@
 # Setting up your development environment
 
+> [!IMPORTANT]
+> This document is not yet updated to the matter.js version of the server and so relevant for the Python one.
+
 **For enabling Matter support within Home Assistant, please refer to the Home Assistant documentation. These instructions are for development only!**
 
 Development is only possible on a (recent) Linux or MacOS machine. Other operating systems are **not supported**. See [here](docs/os_requirements.md) for a full list of requirements to the OS and network, especially if you plan on communicating with Thread based devices.

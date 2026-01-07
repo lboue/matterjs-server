@@ -40,10 +40,10 @@ npm run format-verify
 
 This is an npm workspaces monorepo with four packages:
 
-- **packages/tools** (`@matter/tools`): Build infrastructure using esbuild + TSC. Provides `matter-build`, `matter-run`, `matter-version` binaries
 - **packages/controller** (`@matter-server/controller`): Core Matter controller library wrapping `@project-chip/matter.js`. Exports `MatterController`, `ControllerCommandHandler`, `WebSocketControllerHandler`, `ConfigStorage`
 - **packages/dashboard** (`@matter-server/dashboard`): Web UI built with Lit, Rollup, and Material Web Components. Connects to server via WebSocket
 - **packages/matter-server** (`matter-server`): Main entry point. HTTP/WebSocket server using Express, combines controller + dashboard
+- **packages/tools** (`@matter/tools`) (private unpublished package only!): Build infrastructure using esbuild + TSC. Provides `matter-build`, `matter-run`, `matter-version` binaries
 
 ## Architecture
 
@@ -59,7 +59,7 @@ The server implements a protocol compatible with Home Assistant's Python Matter 
 
 ### Key Dependencies
 - `@project-chip/matter.js`: Core Matter protocol implementation
-- `@matter/main`, `@matter/general`: Matter.js utilities
+- `@matter/main`, `@matter/main/general`: Matter.js utilities
 - `@matter/nodejs-ble`: Optional BLE support (enable with `--ble` flag)
 
 ## Build System
