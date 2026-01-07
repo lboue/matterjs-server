@@ -27,8 +27,8 @@
         "lint-fix": "eslint --fix",
         "format": "prettier --write \"packages/**/*.ts\"",
         "format-verify": "prettier --check \"packages/**/*.ts\"",
-        "test": "matter-test -w",
-        "test:unit": "matter-test -w",
+        "test": "matter-test",
+        "test:unit": "matter-test",
         "relock": "node ./utils/relock.js",
         "sync-matterjs": "node ./utils/sync-matterjs.js",
         "server": "node --enable-source-maps packages/matter-server/dist/esm/MatterServer.js"
