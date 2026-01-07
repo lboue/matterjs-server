@@ -82,8 +82,8 @@ describe("Integration Test", function () {
         }
 
         // Kill processes
-        await killProcess(deviceProcess);
         await killProcess(serverProcess);
+        await killProcess(deviceProcess);
 
         // Cleanup temp directories
         await cleanupTempStorage(serverStoragePath, deviceStoragePath);

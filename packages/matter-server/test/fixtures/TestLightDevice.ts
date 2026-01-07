@@ -56,17 +56,17 @@ console.log(`QR pairing code: MT:Y.K9042C00KA0648G00`);
 // Run the device
 await node.run();
 
-// Handle graceful shutdown
+// Handle a graceful shutdown
 process.on("SIGTERM", () => {
     console.log("Received SIGTERM, shutting down...");
-    node.close()
+    node.cancel()
         .then(() => process.exit(0))
         .catch(() => process.exit(1));
 });
 
 process.on("SIGINT", () => {
     console.log("Received SIGINT, shutting down...");
-    node.close()
+    node.cancel()
         .then(() => process.exit(0))
         .catch(() => process.exit(1));
 });

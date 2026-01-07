@@ -140,6 +140,7 @@ export function waitForDeviceReady(process: ChildProcess, timeoutMs = 30_000): P
  */
 export async function killProcess(process: ChildProcess | undefined, timeoutMs = 2_000): Promise<void> {
     if (!process || process.exitCode !== null) {
+        console.log("[killProcess] Process already exited");
         // Process doesn't exist or already exited - just clean up listeners
         if (process) {
             process.stdout?.removeAllListeners();
@@ -149,7 +150,7 @@ export async function killProcess(process: ChildProcess | undefined, timeoutMs =
         return;
     }
 
-    return new Promise<void>(resolve => {
+    return await new Promise<void>(resolve => {
         const timeout = setTimeout(() => {
             // Force kill if graceful shutdown takes too long
             if (process.exitCode === null) {
@@ -160,6 +161,7 @@ export async function killProcess(process: ChildProcess | undefined, timeoutMs =
         }, timeoutMs);
 
         const cleanup = () => {
+            console.log("[killProcess] Cleaning up listeners");
             clearTimeout(timeout);
             // Remove all listeners to allow clean process exit
             process.stdout?.removeAllListeners();
@@ -169,6 +171,6 @@ export async function killProcess(process: ChildProcess | undefined, timeoutMs =
         };
 
         process.once("exit", cleanup);
-        process.kill("SIGTERM");
+        process.kill("SIGINT");
     });
 }

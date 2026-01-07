@@ -208,13 +208,13 @@ async function loadOtaFiles(directory: string) {
                 const success = await controller.storeOtaImageFromFile(filePath, false);
                 if (success) {
                     logger.info(`Loaded OTA file: ${file}`);
-                    // Delete the file after successful import
+                    // Delete the file after a successful import
                     await unlink(filePath);
                     logger.debug(`Deleted OTA file after import: ${file}`);
                 }
             } catch (error) {
                 logger.error(`Failed to load OTA file ${file}: ${error}`);
-                // Continue with next file
+                // Continue with the next file
             }
         }
     } catch (error) {
@@ -223,9 +223,13 @@ async function loadOtaFiles(directory: string) {
 }
 
 async function stop() {
+    console.log("Shutting down...");
     await server?.stop();
+    console.log("Server stopped.");
     await controller?.stop();
+    console.log("Controller stopped.");
     await config?.close();
+    console.log("Config storage closed.");
     process.exit(0);
 }
 

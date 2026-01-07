@@ -384,11 +384,16 @@ export class MatterWebSocketClient {
         });
     }
 
-    async close(): Promise<void> {
-        if (this.ws) {
-            this.ws.close();
-            this.ws = null;
-        }
+    close(): Promise<void> {
+        return new Promise(resolve => {
+            if (this.ws) {
+                this.ws.once("close", resolve);
+                this.ws.close();
+                this.ws = null;
+            } else {
+                resolve();
+            }
+        });
     }
 
     getServerInfo(): ServerInfoMessage | null {
