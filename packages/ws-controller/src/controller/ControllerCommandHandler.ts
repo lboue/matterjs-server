@@ -1221,16 +1221,16 @@ export class ControllerCommandHandler {
             const peerAddress = PeerAddress({ nodeId, fabricIndex });
 
             // Query OTA provider for updates using dynamic behavior access
-            const updatesAvailable = await otaProvider.act((agent: any) =>
-                agent.get("softwareupdates").queryUpdates({
+            const updatesAvailable = await otaProvider.act(agent =>
+                agent.get(SoftwareUpdateManager).queryUpdates({
                     peerToCheck: node.node,
                     includeStoredUpdates: true,
                 }),
             );
 
             // Find update for this specific node
-            const nodeUpdate = updatesAvailable.find((update: { peerAddress: PeerAddress; info: any }) =>
-                PeerAddress.is(update.peerAddress, peerAddress),
+            const nodeUpdate = updatesAvailable.find(({ peerAddress: updateAddress }) =>
+                PeerAddress.is(peerAddress, updateAddress),
             );
 
             if (nodeUpdate) {
@@ -1292,9 +1292,9 @@ export class ControllerCommandHandler {
             logger.info(`Starting update for node ${nodeId} to version ${softwareVersion}`);
 
             // Trigger the update using forceUpdate via dynamic behavior access
-            await otaProvider.act((agent: any) =>
+            await otaProvider.act(agent =>
                 agent
-                    .get("softwareupdates")
+                    .get(SoftwareUpdateManager)
                     .forceUpdate(peerAddress, updateInfo.vendorId, updateInfo.productId, softwareVersion),
             );
 

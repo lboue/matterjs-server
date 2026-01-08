@@ -44,6 +44,7 @@ export class MatterController {
     #commandHandler?: ControllerCommandHandler;
     #config: ConfigStorage;
     #legacyCommissionedDates?: Map<string, Timestamp>;
+    #enableTestNetDcl = false;
 
     static async create(environment: Environment, config: ConfigStorage, legacyData?: LegacyServerData) {
         const instance = new MatterController(environment, config);
@@ -112,10 +113,20 @@ export class MatterController {
         }
 
         if (this.#legacyCommissionedDates !== undefined) {
-            this.#commandHandler.events.started.once(() => this.injectCommissionedDates());
+            this.#commandHandler.events.started.once(async () => {
+                await this.injectCommissionedDates();
+
+                if (this.#enableTestNetDcl) {
+                    await this.enableTestOtaImages();
+                }
+            });
         }
 
         return this.#commandHandler;
+    }
+
+    set enableTestNetDcl(enable: boolean) {
+        this.#enableTestNetDcl = enable;
     }
 
     /**

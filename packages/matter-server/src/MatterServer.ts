@@ -146,6 +146,7 @@ async function start() {
 
     config = await ConfigStorage.create(env);
     controller = await MatterController.create(env, config, legacyServerData);
+    controller.enableTestNetDcl = cliOptions.enableTestNetDcl;
 
     await initializeOta(controller, cliOptions);
 

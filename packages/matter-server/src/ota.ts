@@ -12,11 +12,6 @@ import type { CliOptions } from "./cli.js";
 const logger = Logger.get("MatterServer.Ota");
 
 export async function initializeOta(controller: MatterController, cliOptions: CliOptions) {
-    // Configure OTA settings after the controller is created
-    if (cliOptions.enableTestNetDcl) {
-        await controller.enableTestOtaImages();
-    }
-
     // Load OTA files from the provider directory if configured
     if (cliOptions.otaProviderDir) {
         if (!cliOptions.enableTestNetDcl) {
