@@ -3,6 +3,8 @@
 Matter is based on IPv6 link-local multicast protocols and thus running the Matter Server (or developing it) is not as straightforward as any other application, mostly due to the bad shape of IPv6 support in various Linux distributions, let alone the IPv6 Neighbor
 Discovery Protocol, which is required for Thread.
 
+Additionally, for node.js to work correctly with BLE commissioning, some additional requirements need to be met.
+
 ## Networking
 
 Matter uses link-local multicast protocols which do not work across different LANs or VLANs so best to use either a complete flat network or ensure that the machine running Matter Server is on the same (v)LAN as the devices, any border routers and the phone/device used for commissioning.
@@ -73,3 +75,7 @@ sysctl -w net.ipv6.conf.wlan0.accept_ra_rt_info_max_plen=64
 
 If your system has IPv6 forwarding enabled (not recommended, see above), you'll
 have to use `2` for the accept_ra variable. See also the [Thread Border Router - Bidirectional IPv6 Connectivity and DNS-Based Service Discovery codelab](https://openthread.io/codelabs/openthread-border-router#6).
+
+## Bluetooth Low Energy requirements
+
+When working without Docker, please see the BLE requirements for your platform in the ["noble" relevant BLE documentation](https://github.com/matter-js/matter.js/tree/main/packages/nodejs-ble#prerequisites-and-limitations).
