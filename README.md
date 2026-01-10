@@ -2,9 +2,12 @@
 
 ![Matter Logo](docs/matter_logo.svg)
 
-> [!IMPORTANT]
+> [!WARNING]
 > This is an Alpha version of a matter.js-based controller with a [Python Matter Server](https://github.com/matter-js/python-matter-server) compatible WebSocket interface.
-> This version is not yet officially re-certified by the CS, but will be during the current Alpha/Beta phase.
+> This version is not yet officially re-certified by the CSA, but will be during the current Alpha/Beta phase.
+
+> [!WARNING]
+> Please refer to the [Alpha/Beta testing instructions](ALPHABETATESTS.md) how to test this version.
 
 The Open Home Foundation Matter Server serves as the foundation to provide Matter support to [Home Assistant](https://home-assistant.io) but its universal approach makes it suitable to be used in other projects too.
 
@@ -20,6 +23,12 @@ This repository consists of multiple packages that are provided in the `packages
 * `custom-clusters`: A set of community-provided custom Matter clusters used by the Matter Server (published to npmjs as `@matter-server/custom-clusters`)
 * `dashboard`: A dashboard to interact with the Matter Server and show node detailed data (published to npmjs as `@matter-server/dashboard`)
 
+## Alpha/Beta testing instructions
+
+As mentioned above the enw Matter server is currently in a Testing phase.
+
+Please see the [Alpha/Beta testing instructions](ALPHABETATESTS.md) for more information.
+
 ## Support
 
 During the Alpha/Beta phase of the matter.js-based Matter server, we enabled issue creation for this version via GitHub issues. If you use the Python Matter server and your issue is not related to a Migration-issue from/to matter.js-Server, please use the options listed below.
@@ -34,22 +43,6 @@ For users of Home Assistant, seek support in the official Home Assistant support
   report in the [Home Assistant Core repository](https://github.com/home-assistant/core/issues/new/choose).
 
 Please do not create Home Assistant enduser support issues in the issue tracker of this repository.
-
-## Alpha test instructions
-
-The alpha test uses the data files from the python-matter-server (`chip.json` and `{fabricId}.json`). Simply copy the files from the python-matter-server to a directory of your choice and start the server with the `--storage-path` parameter pointing to that directory.
-
-> [!IMPORTANT]
-> Please ensure you have a backup of your storage files before switching to Matter.js.
-
-> [!IMPORTANT]
-> When using the python data files, you must ensure that the python-matter-server with these files is not running at the same time.
-
-On the first start, the data from these configuration files will be migrated to the new storage format. This can take a bit time, so please be patient.
-Additionally, on the first start, it is expected that the server logs an error message because no addresses are known for all nodes. This can be ignored. 
-On the first successful device connection, the server will automatically interview all nodes and update the data files accordingly (afterwards only changed attributes are requested on reconnections).
-
-The server will update the `{fabricId}.json` file whenever nodes are added or removed from the fabric, so das this is in sync if you need to migrate back to the python server for any reason. For new nodes we will **not** sfe any attribute data into the file, so switching back to python-matter-server will require a re-interview of the added nodes and they might report empty values until reconnected.
 
 ## Development
 
@@ -83,10 +76,10 @@ The server is started on port localhost:5580 and listens fpr WS on "/ws"
 Configure the HA instance against this server and have fun :-)
 
 ### Tips
-* to control the storage directory use `--storage-path=.ha1` as parameter to use local dir `.ha1` for storage
-* to limit network interfaces (especially good idea on Macs sometimes) use  `-primary-interface=en0`
+* to control the storage directory use `--storage-path .ha1` as parameter to use local dir `.ha1` for storage
+* to limit network interfaces (especially good idea on Macs sometimes) use `--primary-interface en0`
 
-So as example to do both use `npm run server -- --storage-path=.ha1 -primary-interface=en0` (note the extra "--" to pass parameters to the script).
+So as example to do both use `npm run server -- --storage-path .ha1 --primary-interface en0` (note the extra "--" to pass parameters to the script).
 
 It was in general tested with a simply slight bulb on network.
 

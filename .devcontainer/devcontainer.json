@@ -1,0 +1,49 @@
+// @license
+// Copyright 2025-2026 Open Home Foundation
+// SPDX-License-Identifier: Apache-2.0
+
+// Dev container notes for developers:
+//
+// You do not need to use a dev container with matterjs-server. Native development should work fine. Further, due to
+// networking idiosyncrasies, devices running in a dev container may not be discoverable outside the container on macs
+// and windows.
+//
+// For the same reasons as above, the dev container is useful for local testing. Running matterjs-server in the container
+// allows it to connect to other components running in docker.
+//
+// Using Docker desktop you must set default containers to be dual IPv4/IPv6. On macs the options "Use kernel
+// networking for UDP" and "Enable host networking" must be enabled.
+
+{
+	"name": "matterjs-server",
+
+	"dockerComposeFile": "docker-compose.yml",
+	"service": "devcontainer",
+	"workspaceFolder": "/matterjs-server",
+
+	"postCreateCommand": "/bin/bash ./.devcontainer/post-create.sh",
+
+	"forwardPorts": [5580],
+
+	"features": {
+		"ghcr.io/devcontainers/features/docker-in-docker:2": {
+			"moby": true,
+			"azureDnsAutoDetection": false,
+			"installDockerBuildx": true,
+			"installDockerComposeSwitch": false,
+			"version": "latest",
+			"dockerDashComposeVersion": "v2"
+		}
+	},
+
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"rioj7.command-variable",
+				"stkb.rewrap",
+				"dbaeumer.vscode-eslint",
+				"esbenp.prettier-vscode"
+			]
+		}
+	}
+}

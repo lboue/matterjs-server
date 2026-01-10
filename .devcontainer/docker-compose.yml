@@ -1,0 +1,22 @@
+# @license
+# Copyright 2025-2026 Open Home Foundation
+# SPDX-License-Identifier: Apache-2.0
+
+services:
+  devcontainer:
+    image: "mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm"
+    volumes:
+      - ..:/matterjs-server:cached
+      - node-modules:/matterjs-server/node_modules
+    networks:
+      - "matter"
+    ports:
+      - "5580:5580"
+    command: "sleep infinity"
+
+volumes:
+  node-modules:
+
+networks:
+  matter:
+    enable_ipv6: true

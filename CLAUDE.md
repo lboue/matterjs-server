@@ -22,7 +22,7 @@ npm run build-clean
 npm run server
 
 # Start server with options
-npm run server -- --storage-path=.ha1 --mdns-networkinterface=en0
+npm run server -- --storage-path .ha1 --primary-interface en0
 
 # Run tests (uses @matter/testing with mocha)
 npm test
