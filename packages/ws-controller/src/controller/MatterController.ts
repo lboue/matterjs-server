@@ -16,7 +16,7 @@ import {
     NodeId,
     SoftwareUpdateManager,
 } from "@matter/main";
-import { DclOtaUpdateService, DclVendorInfoService, VendorInfo } from "@matter/main/protocol";
+import { DclCertificateService, DclOtaUpdateService, DclVendorInfoService, VendorInfo } from "@matter/main/protocol";
 import { VendorId } from "@matter/main/types";
 import { CommissioningController } from "@project-chip/matter.js";
 import { Readable } from "node:stream";
@@ -46,8 +46,13 @@ export class MatterController {
     #legacyCommissionedDates?: Map<string, Timestamp>;
     #enableTestNetDcl = false;
 
-    static async create(environment: Environment, config: ConfigStorage, legacyData?: LegacyServerData) {
-        const instance = new MatterController(environment, config);
+    static async create(
+        environment: Environment,
+        config: ConfigStorage,
+        enableTestNetDcl: boolean,
+        legacyData?: LegacyServerData,
+    ) {
+        const instance = new MatterController(environment, config, enableTestNetDcl);
 
         const commissionedDates = new Map<string, Timestamp>();
         if (legacyData !== undefined) {
@@ -77,9 +82,10 @@ export class MatterController {
         return instance;
     }
 
-    constructor(environment: Environment, config: ConfigStorage) {
+    constructor(environment: Environment, config: ConfigStorage, enableTestNetDcl: boolean) {
         this.#env = environment;
         this.#config = config;
+        this.#enableTestNetDcl = enableTestNetDcl;
     }
 
     protected async initialize(
@@ -99,6 +105,10 @@ export class MatterController {
             adminFabricId: fabricId !== undefined ? FabricId(fabricId) : undefined,
             enableOtaProvider: true,
         });
+
+        // Start loading and initialization of meta data
+        this.vendorInfoService;
+        this.certificateService;
     }
 
     get commandHandler() {
@@ -112,21 +122,17 @@ export class MatterController {
             );
         }
 
-        if (this.#legacyCommissionedDates !== undefined) {
-            this.#commandHandler.events.started.once(async () => {
+        this.#commandHandler.events.started.once(async () => {
+            if (this.#legacyCommissionedDates !== undefined) {
                 await this.injectCommissionedDates();
+            }
 
-                if (this.#enableTestNetDcl) {
-                    await this.enableTestOtaImages();
-                }
-            });
-        }
+            if (this.#enableTestNetDcl) {
+                await this.enableTestOtaImages();
+            }
+        });
 
         return this.#commandHandler;
-    }
-
-    set enableTestNetDcl(enable: boolean) {
-        this.#enableTestNetDcl = enable;
     }
 
     /**
@@ -148,6 +154,17 @@ export class MatterController {
             new DclVendorInfoService(this.#env);
         }
         return this.services.get(DclVendorInfoService);
+    }
+
+    /**
+     * Get the DCL certificate service instance
+     * Lazily initializes the service if not already present.
+     */
+    get certificateService() {
+        if (!this.#env.has(DclCertificateService)) {
+            new DclCertificateService(this.#env, { fetchTestCertificates: this.#enableTestNetDcl });
+        }
+        return this.services.get(DclCertificateService);
     }
 
     /**
@@ -199,17 +216,16 @@ export class MatterController {
         if (this.#controllerInstance === undefined) {
             throw new Error("Controller not initialized");
         }
-        await this.#controllerInstance.node.setStateOf(SoftwareUpdateManager, { allowTestOtaImages: true });
+        await this.#controllerInstance.otaProvider.setStateOf(SoftwareUpdateManager, { allowTestOtaImages: true });
         logger.info("Enabled test OTA images (test-net DCL)");
     }
 
     /**
      * Store an OTA image file from a file path.
      * @param filePath - Path to the OTA file
-     * @param isProduction - Whether this is a production image (default: false for custom files)
      * @returns true if stored successfully
      */
-    async storeOtaImageFromFile(filePath: string, isProduction = false): Promise<boolean> {
+    async storeOtaImageFromFile(filePath: string): Promise<boolean> {
         const { createReadStream } = await import("node:fs");
         const { pathToFileURL } = await import("node:url");
         const otaService = this.services.get(DclOtaUpdateService);
@@ -217,7 +233,7 @@ export class MatterController {
         // Convert file path to file:// URL for the OTA service
         const fileUrl = pathToFileURL(filePath).href;
 
-        // Read file twice - once for info, once for storage
+        // Read the file twice - once for info, once for storage
         const infoStream = Readable.toWeb(createReadStream(filePath)) as ReadableStream<Uint8Array>;
         const updateInfo = await otaService.updateInfoFromStream(infoStream, fileUrl);
 
@@ -226,7 +242,7 @@ export class MatterController {
         );
 
         const storeStream = Readable.toWeb(createReadStream(filePath)) as ReadableStream<Uint8Array>;
-        await otaService.store(storeStream, updateInfo, isProduction);
+        await otaService.store(storeStream, updateInfo, false);
         return true;
     }
 

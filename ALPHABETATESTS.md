@@ -106,6 +106,7 @@ The following directories will be created in the `data` directory you specify an
 * `server`: All node data is stored in files in this directory – one file per storage key. This allows the OS to best optimize data access and I/O operations.
 * `ota`: The OTA update files are stored in this directory using a specific naming scheme. Please do not store your own files there; see the [CLI documentation](./docs/cli.md) for instructions and use your own directory to add custom OTA files. They will automatically be imported from there.
 * `certificates`: Downloaded Matter certificate chains used to validate devices when commissioning them.
+* `vendors`: Downloaded list of Matter vendors
 
 ### How does the migration work exactly?
 

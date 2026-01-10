@@ -657,10 +657,10 @@ export class WebSocketControllerHandler implements WebServerHandler {
     async #handleGetVendorNames(args: ArgsOf<"get_vendor_names">): Promise<ResponseOf<"get_vendor_names">> {
         const { filter_vendors } = args;
 
-        // Get vendor info from DCL service
+        // Get vendor info from the DCL service
         const dclVendors = await this.#controller.getAllVendors();
 
-        // Build merged result: DCL vendors override static list, but include static entries not in DCL
+        // Build merged result: DCL vendors override the static list but include static entries not in DCL
         const mergedVendors: { [key: string]: string } = {};
 
         // First add all static vendor IDs

@@ -40,7 +40,7 @@ async function loadOtaFiles(controller: MatterController, directory: string) {
 
             const filePath = join(directory, file);
             try {
-                const success = await controller.storeOtaImageFromFile(filePath, false);
+                const success = await controller.storeOtaImageFromFile(filePath);
                 if (success) {
                     logger.info(`Loaded OTA file: ${file}`);
                     // Delete the file after a successful import
