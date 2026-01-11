@@ -31,7 +31,6 @@ const LOG_LEVELS = ["critical", "error", "warning", "info", "debug", "verbose"] 
 const SDK_LOG_LEVELS = ["none", "error", "progress", "detail", "automation"] as const;
 
 export type LogLevel = (typeof LOG_LEVELS)[number];
-export type SdkLogLevel = (typeof SDK_LOG_LEVELS)[number];
 
 export interface CliOptions {
     // Fabric configuration
@@ -45,33 +44,20 @@ export interface CliOptions {
 
     // Logging configuration
     logLevel: LogLevel;
-
-    /** @deprecated Not supported */
-    logLevelSdk: SdkLogLevel;
-
     logFile: string | null;
-
-    /** @deprecated Not supported */
-    logNodeIds: number[] | null;
 
     // Network configuration
     primaryInterface: string | null;
 
     // Certificate configuration
-    /** @deprecated Not supported */
-    paaRootCertDir: string | null;
-
     enableTestNetDcl: boolean;
 
     // Bluetooth configuration
     bluetoothAdapter: number | null;
 
     // OTA configuration
+    disableOta: boolean;
     otaProviderDir: string | null;
-
-    // Server behavior
-    /** @deprecated Not supported */
-    disableServerInteractions: boolean;
 
     // Dashboard configuration
     disableDashboard: boolean;
@@ -88,6 +74,14 @@ function parseIntOption(value: string): number {
 function collectAddresses(value: string, previous: string[]): string[] {
     return previous.concat(value);
 }
+
+/** Deprecated options that are still accepted but no longer used */
+const DEPRECATED_OPTIONS: Record<string, string> = {
+    logLevelSdk: "--log-level-sdk",
+    logNodeIds: "--log-node-ids",
+    paaRootCertDir: "--paa-root-cert-dir",
+    disableServerInteractions: "--disable-server-interactions",
+};
 
 export function parseCliArgs(argv?: string[]): CliOptions {
     const program = new Command();
@@ -111,33 +105,32 @@ export function parseCliArgs(argv?: string[]): CliOptions {
             [],
         )
         .addOption(new Option("--log-level <level>", "Global logging level").choices(LOG_LEVELS).default("info"))
-        .addOption(
-            new Option("--log-level-sdk <level>", "Matter SDK logging level. This option is no longer supported.")
-                .choices(SDK_LOG_LEVELS)
-                .default("error"),
-        )
         .option("--log-file <path>", "Log file path (optional)")
         .option("--primary-interface <interface>", "Primary network interface for link-local addresses")
-        .option(
-            "--paa-root-cert-dir <path>",
-            "Directory for PAA root certificates. This option is no longer supported.",
-        )
         .option("--enable-test-net-dcl", "Enable test-net DCL certificates", false)
         .option("--bluetooth-adapter <id>", "Bluetooth adapter HCI ID (e.g., 0 for hci0)", parseIntOption)
-        .option(
-            "--log-node-ids <ids...>",
-            "Node IDs to filter logs (space-separated). This option is no longer supported.",
-        )
+        .option("--disable-ota", "Disable OTA update functionality", false)
         .option("--ota-provider-dir <path>", "Directory for OTA Provider files")
-        .option(
-            "--disable-server-interactions",
-            "Disable server cluster interactions. This option is no longer supported.",
-            false,
+        .option("--disable-dashboard", "Disable the web dashboard", false)
+        // Deprecated options - still accepted for backwards compatibility
+        .addOption(
+            new Option("--log-level-sdk <level>", "Matter SDK logging level (deprecated, no longer used)")
+                .choices(SDK_LOG_LEVELS)
+                .hideHelp(),
         )
-        .option("--disable-dashboard", "Disable the web dashboard", false);
+        .option("--log-node-ids <ids...>", "Node IDs to filter logs (deprecated, no longer used)")
+        .option("--paa-root-cert-dir <path>", "Directory for PAA root certificates (deprecated, no longer used)")
+        .option("--disable-server-interactions", "Disable server cluster interactions (deprecated, no longer used)");
 
     program.parse(argv);
     const opts = program.opts();
+
+    // Warn about deprecated options if used
+    for (const [key, flag] of Object.entries(DEPRECATED_OPTIONS)) {
+        if (opts[key] !== undefined && opts[key] !== false) {
+            console.warn(`Warning: ${flag} is deprecated and no longer supported. This option will be ignored.`);
+        }
+    }
 
     return {
         vendorId: opts.vendorid,
@@ -146,15 +139,12 @@ export function parseCliArgs(argv?: string[]): CliOptions {
         port: opts.port,
         listenAddress: opts.listenAddress.length > 0 ? opts.listenAddress : null,
         logLevel: opts.logLevel,
-        logLevelSdk: opts.logLevelSdk,
         logFile: opts.logFile ?? null,
-        logNodeIds: opts.logNodeIds ?? null,
         primaryInterface: opts.primaryInterface ?? null,
-        paaRootCertDir: opts.paaRootCertDir ?? null,
         enableTestNetDcl: opts.enableTestNetDcl,
         bluetoothAdapter: opts.bluetoothAdapter ?? null,
+        disableOta: opts.disableOta,
         otaProviderDir: opts.otaProviderDir ?? null,
-        disableServerInteractions: opts.disableServerInteractions,
         disableDashboard: opts.disableDashboard,
     };
 }

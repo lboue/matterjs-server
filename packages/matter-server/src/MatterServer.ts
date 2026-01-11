@@ -145,9 +145,16 @@ async function start() {
     }
 
     config = await ConfigStorage.create(env);
-    controller = await MatterController.create(env, config, cliOptions.enableTestNetDcl, legacyServerData);
+    controller = await MatterController.create(
+        env,
+        config,
+        { enableTestNetDcl: cliOptions.enableTestNetDcl, disableOtaProvider: cliOptions.disableOta },
+        legacyServerData,
+    );
 
-    await initializeOta(controller, cliOptions);
+    if (!cliOptions.disableOta) {
+        await initializeOta(controller, cliOptions);
+    }
 
     // Subscribe to node events for legacy data file updates
     if (legacyData.serverFile && legacyData.fabricConfig) {

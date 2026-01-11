@@ -34,6 +34,7 @@ npm run server -- --bluetooth-adapter 0
 | --primary-interface   | string       | null                   | No       | Primary network interface for link-local addresses   |
 | --enable-test-net-dcl | boolean flag | false                  | No       | Enable test-net DCL certificates                     |
 | --bluetooth-adapter   | integer      | null                   | No       | Bluetooth adapter HCI ID (e.g., 0 for hci0)          |
+| --disable-ota         | boolean flag | false                  | No       | Disable OTA update functionality                     |
 | --ota-provider-dir    | string       | null                   | No       | Directory for OTA Provider files                     |
 | --disable-dashboard   | boolean flag | false                  | No       | Disable the web dashboard                            |
 

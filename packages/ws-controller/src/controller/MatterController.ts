@@ -34,6 +34,11 @@ export async function computeCompressedNodeId(
     return (await GlobalFabricId.compute(crypto, FabricId(fabricId), caKey)).toString();
 }
 
+export interface MatterControllerOptions {
+    enableTestNetDcl?: boolean;
+    disableOtaProvider?: boolean;
+}
+
 // Storage ID used for the Matter server
 const MATTER_SERVER_ID = "server";
 
@@ -45,14 +50,15 @@ export class MatterController {
     #config: ConfigStorage;
     #legacyCommissionedDates?: Map<string, Timestamp>;
     #enableTestNetDcl = false;
+    #disableOtaProvider = true;
 
     static async create(
         environment: Environment,
         config: ConfigStorage,
-        enableTestNetDcl: boolean,
+        options: MatterControllerOptions,
         legacyData?: LegacyServerData,
     ) {
-        const instance = new MatterController(environment, config, enableTestNetDcl);
+        const instance = new MatterController(environment, config, options);
 
         const commissionedDates = new Map<string, Timestamp>();
         if (legacyData !== undefined) {
@@ -82,10 +88,11 @@ export class MatterController {
         return instance;
     }
 
-    constructor(environment: Environment, config: ConfigStorage, enableTestNetDcl: boolean) {
+    constructor(environment: Environment, config: ConfigStorage, options: MatterControllerOptions) {
         this.#env = environment;
         this.#config = config;
-        this.#enableTestNetDcl = enableTestNetDcl;
+        this.#enableTestNetDcl = options.enableTestNetDcl ?? this.#enableTestNetDcl;
+        this.#disableOtaProvider = options.disableOtaProvider ?? this.#disableOtaProvider;
     }
 
     protected async initialize(
@@ -103,11 +110,13 @@ export class MatterController {
             adminFabricLabel: this.#config.fabricLabel,
             adminVendorId: vendorId !== undefined ? VendorId(vendorId) : undefined,
             adminFabricId: fabricId !== undefined ? FabricId(fabricId) : undefined,
-            enableOtaProvider: true,
+            enableOtaProvider: !this.#disableOtaProvider,
         });
 
         // Start loading and initialization of meta data
+        /* eslint-disable @typescript-eslint/no-unused-expressions */
         this.vendorInfoService;
+        /* eslint-disable @typescript-eslint/no-unused-expressions */
         this.certificateService;
     }
 
@@ -119,6 +128,7 @@ export class MatterController {
             this.#commandHandler = new ControllerCommandHandler(
                 this.#controllerInstance,
                 this.#env.vars.get("ble.enable", false),
+                !this.#disableOtaProvider,
             );
         }
 
@@ -127,8 +137,8 @@ export class MatterController {
                 await this.injectCommissionedDates();
             }
 
-            if (this.#enableTestNetDcl) {
-                await this.enableTestOtaImages();
+            if (!this.#disableOtaProvider && this.#enableTestNetDcl) {
+                await this.#enableTestOtaImages();
             }
         });
 
@@ -212,7 +222,7 @@ export class MatterController {
      * Enable test OTA images (test-net DCL).
      * Must be called after the controller is started.
      */
-    async enableTestOtaImages() {
+    async #enableTestOtaImages() {
         if (this.#controllerInstance === undefined) {
             throw new Error("Controller not initialized");
         }

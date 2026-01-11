@@ -109,6 +109,7 @@ export class ControllerCommandHandler {
     #started = false;
     #connected = false;
     #bleEnabled = false;
+    #otaEnabled = false;
     #nodes = new Map<NodeId, PairedNode>();
     /** Cache of available updates keyed by nodeId */
     #availableUpdates = new Map<NodeId, SoftwareUpdateInfo>();
@@ -124,10 +125,11 @@ export class ControllerCommandHandler {
         nodeEndpointRemoved: new Observable<[nodeId: NodeId, endpointId: EndpointNumber]>(),
     };
 
-    constructor(controllerInstance: CommissioningController, bleEnabled: boolean) {
+    constructor(controllerInstance: CommissioningController, bleEnabled: boolean, otaEnabled: boolean) {
         this.#controller = controllerInstance;
 
         this.#bleEnabled = bleEnabled;
+        this.#otaEnabled = otaEnabled;
     }
 
     get started() {
@@ -147,8 +149,10 @@ export class ControllerCommandHandler {
         await this.#controller.start();
         logger.info(`Controller started`);
 
-        // Subscribe to OTA provider events to track available updates
-        await this.#setupOtaEventHandlers();
+        if (!this.#bleEnabled) {
+            // Subscribe to OTA provider events to track available updates
+            await this.#setupOtaEventHandlers();
+        }
 
         await this.events.started.emit();
     }
@@ -157,6 +161,9 @@ export class ControllerCommandHandler {
      * Set up event handlers for OTA update notifications from the SoftwareUpdateManager.
      */
     async #setupOtaEventHandlers() {
+        if (!this.#otaEnabled) {
+            return;
+        }
         try {
             const otaProvider = this.#controller.otaProvider;
             if (!otaProvider) {
@@ -1185,6 +1192,9 @@ export class ControllerCommandHandler {
      * First checks the cached updates from OTA events, then queries the DCL if not found.
      */
     async checkNodeUpdate(nodeId: NodeId): Promise<MatterSoftwareVersion | null> {
+        if (!this.#otaEnabled) {
+            throw new Error("OTA is disabled.");
+        }
         // First check if we have a cached update from the updateAvailable event
         const cachedUpdate = this.#availableUpdates.get(nodeId);
         if (cachedUpdate) {
@@ -1240,6 +1250,9 @@ export class ControllerCommandHandler {
      * @param softwareVersion The target software version to update to
      */
     async updateNode(nodeId: NodeId, softwareVersion: number): Promise<MatterSoftwareVersion | null> {
+        if (!this.#otaEnabled) {
+            throw new Error("OTA is disabled.");
+        }
         const node = this.getNode(nodeId);
         if (node === undefined) {
             throw new Error("Node not found");
