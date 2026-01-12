@@ -42,17 +42,17 @@ async function loadOtaFiles(controller: MatterController, directory: string) {
             try {
                 const success = await controller.storeOtaImageFromFile(filePath);
                 if (success) {
-                    logger.info(`Loaded OTA file: ${file}`);
+                    logger.info(`Imported OTA file: ${file}`);
                     // Delete the file after a successful import
                     await unlink(filePath);
                     logger.debug(`Deleted OTA file after import: ${file}`);
                 }
             } catch (error) {
-                logger.error(`Failed to load OTA file ${file}: ${error}`);
+                logger.warn(`Failed to import OTA file ${file}: ${error}`);
                 // Continue with the next file
             }
         }
     } catch (error) {
-        logger.error(`Failed to read OTA provider directory ${directory}: ${error}`);
+        logger.info(`Failed to read OTA provider directory ${directory}: ${error}`);
     }
 }

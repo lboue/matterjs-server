@@ -17,6 +17,7 @@ import {
     StorageContext,
     StorageManager,
 } from "@matter/main";
+import { DescriptorCluster } from "@matter/main/clusters";
 import { CertificateAuthority, Fabric, FabricBuilder, Noc } from "@matter/main/protocol";
 import { VendorId } from "@matter/main/types";
 import { ClusterMap } from "../model/ModelMapper.js";
@@ -26,6 +27,8 @@ const logger = Logger.get("LegacyDataInjector");
 
 /* eslint-disable regexp/no-unused-capturing-group */
 const BASE64_REGEX = /^([0-9a-z+/]{4})*(([0-9a-z+/]{2}==)|([0-9a-z+/]{3}=))?$/i;
+
+const FEATUREMAP_ID = DescriptorCluster.attributes.featureMap.id.toString();
 
 /**
  * Fabric configuration data extracted from chip.json.
@@ -255,11 +258,20 @@ export namespace LegacyDataInjector {
                 const clusterModel = ClusterMap[clusterId];
                 const model = clusterModel?.attributes?.[attributeId];
                 if (clusterModel === undefined || model === undefined) {
-                    if (isPrimitiveType(value) || (Array.isArray(value) && value.every(isPrimitiveType))) {
+                    if (attributeId === FEATUREMAP_ID) {
+                        logger.debug(
+                            `Node ${nodeId}: Attribute ${attributeKey}, unknown featuremap converted to empty featuremap`,
+                        );
+                        nodeWrites.push(clusterStorage!.set(attributeId, { value: {} } as SupportedStorageTypes));
+                    } else if (isPrimitiveType(value) || (Array.isArray(value) && value.every(isPrimitiveType))) {
+                        logger.debug(
+                            `Node ${nodeId}: Attribute ${attributeKey}, unknown primary type converted generically`,
+                            value,
+                        );
                         nodeWrites.push(clusterStorage!.set(attributeId, { value } as SupportedStorageTypes));
                     } else {
                         logger.info(
-                            `Attribute ${attributeKey} not found in and unclear value. Skipping injection.`,
+                            `Node ${nodeId}: Attribute ${attributeKey}, not found in and unclear value. Skipping injection.`,
                             value,
                         );
                     }
@@ -269,7 +281,12 @@ export namespace LegacyDataInjector {
                             ? undefined
                             : convertWebSocketTagBasedToMatter(value, model, clusterModel.model);
                     if (convertedValue !== undefined) {
-                        logger.debug(`Converted value for attribute ${attributeKey}:`, value, "->", convertedValue);
+                        logger.debug(
+                            `Node ${nodeId}: Converted attribute ${attributeKey}:`,
+                            value,
+                            "->",
+                            convertedValue,
+                        );
                         nodeWrites.push(
                             clusterStorage!.set(attributeId, { value: convertedValue } as SupportedStorageTypes),
                         );

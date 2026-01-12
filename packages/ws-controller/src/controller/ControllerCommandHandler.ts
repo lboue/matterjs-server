@@ -245,7 +245,7 @@ export class ControllerCommandHandler {
                     subscribeMaxIntervalCeilingSeconds: undefined,
                 });
             } catch (error) {
-                logger.warn(`Failed to connect to node "${nodeId}": ${(error as Error).stack}`);
+                logger.warn(`Failed to connect to node "${nodeId}":`, error);
             }
         }
     }

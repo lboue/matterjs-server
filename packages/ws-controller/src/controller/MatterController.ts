@@ -130,17 +130,17 @@ export class MatterController {
                 this.#env.vars.get("ble.enable", false),
                 !this.#disableOtaProvider,
             );
+
+            this.#commandHandler.events.started.once(async () => {
+                if (this.#legacyCommissionedDates !== undefined) {
+                    await this.injectCommissionedDates();
+                }
+
+                if (!this.#disableOtaProvider && this.#enableTestNetDcl) {
+                    await this.#enableTestOtaImages();
+                }
+            });
         }
-
-        this.#commandHandler.events.started.once(async () => {
-            if (this.#legacyCommissionedDates !== undefined) {
-                await this.injectCommissionedDates();
-            }
-
-            if (!this.#disableOtaProvider && this.#enableTestNetDcl) {
-                await this.#enableTestOtaImages();
-            }
-        });
 
         return this.#commandHandler;
     }
