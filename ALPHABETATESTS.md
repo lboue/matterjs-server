@@ -2,7 +2,7 @@
 
 ## Overview of Test Phases and Their Goals
 
-### Phase 1: Alpha Test of the New Matter Server (starts Mon 13.01.2026)
+### Phase 1: Alpha Test of the New Matter Server (starts Mon 12.01.2026)
 
 This test phase involves a separate installation of the new Matter Server and does not provide an updated Home Assistant add-on or integration. This means it requires some advanced knowledge on how to install and run the server and how to get the relevant files.
 Please see detailed instructions [below](#alpha-test-instructions).
