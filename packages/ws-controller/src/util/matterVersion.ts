@@ -9,8 +9,8 @@
  */
 
 import { readFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 interface PackageJson {
     version: string;
@@ -20,9 +20,9 @@ interface PackageJson {
  * Get the version of the @matter/main package.
  */
 export function getMatterVersion(): string {
-    // Use createRequire to resolve the module path, then read the package.json
-    const require = createRequire(import.meta.url);
-    const matterMainPath = require.resolve("@matter/main");
+    // Use import.meta.resolve for ESM-native module resolution
+    const matterMainUrl = import.meta.resolve("@matter/main");
+    const matterMainPath = fileURLToPath(matterMainUrl);
     // Navigate up from the resolved module to find package.json
     let dir = dirname(matterMainPath);
     while (dir !== "/") {

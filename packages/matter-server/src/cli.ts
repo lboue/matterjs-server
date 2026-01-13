@@ -10,14 +10,15 @@
  */
 
 import { Command, Option } from "commander";
-import { createRequire } from "node:module";
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-// Read version from package.json
-// Path is relative to dist/esm/ where compiled code runs
-const require = createRequire(import.meta.url);
-const packageJson = require("../../package.json") as { version: string };
+// Read version from package.json using an ESM-native approach
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const packageJsonPath = join(__dirname, "../../package.json");
+const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as { version: string };
 const VERSION = packageJson.version;
 
 // Default values
