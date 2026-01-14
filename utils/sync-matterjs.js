@@ -52,7 +52,7 @@ async function updatePackageJson(filePath, version) {
 
     if (modified) {
         // Preserve original formatting (2-space indent, trailing newline)
-        const newContent = JSON.stringify(pkg, null, 2) + "\n";
+        const newContent = JSON.stringify(pkg, null, 4) + "\n";
         await writeFile(filePath, newContent, "utf-8");
         return true;
     }
