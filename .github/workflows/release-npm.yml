@@ -185,6 +185,35 @@ jobs:
           build-args: |
             MATTERJS_SERVER_VERSION=${{ steps.version.outputs.result }}
 
+      - name: Check if python-matter-server build needed
+        if: steps.automerge.outputs.mergeResult == 'merged' && !contains(steps.version.outputs.result, '-')
+        id: check_python_compat
+        run: |
+          version="${{ steps.version.outputs.result }}"
+          major="${version%%.*}"
+          if [ "$major" -ge 9 ]; then
+            echo "build=true" >> $GITHUB_OUTPUT
+          else
+            echo "build=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build and push python-matter-server Docker image
+        if: steps.automerge.outputs.mergeResult == 'merged' && steps.check_python_compat.outputs.build == 'true'
+        uses: docker/build-push-action@v6.18.0
+        with:
+          context: ./docker/python-matter-server
+          platforms: linux/amd64,linux/arm64
+          file: ./docker/python-matter-server/Dockerfile
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/python-matter-server:${{ steps.docker_tags.outputs.patch }}
+            ghcr.io/${{ github.repository_owner }}/python-matter-server:${{ steps.docker_tags.outputs.minor }}
+            ghcr.io/${{ github.repository_owner }}/python-matter-server:${{ steps.docker_tags.outputs.major }}
+            ghcr.io/${{ github.repository_owner }}/python-matter-server:stable
+            ghcr.io/${{ github.repository_owner }}/python-matter-server:latest
+          push: true
+          build-args: |
+            MATTERJS_SERVER_VERSION=${{ steps.version.outputs.result }}
+
       - name: Create Github Release
         if: steps.automerge.outputs.mergeResult == 'merged'
         uses: ncipollo/release-action@v1
