@@ -76,11 +76,11 @@ function collectAddresses(value: string, previous: string[]): string[] {
     return previous.concat(value);
 }
 
-function parseBooleanEnv(value: string): boolean {
-    const lower = value.toLowerCase();
-    if (["true", "1", "yes"].includes(lower)) return true;
-    if (["false", "0", "no"].includes(lower)) return false;
-    throw new InvalidArgumentError(`Invalid boolean value: ${value}`);
+function parseBooleanEnv(value: string | undefined): boolean {
+    const lower = (value ?? "").toLowerCase().trim();
+    if (lower === "" || ["false", "0", "no", "off"].includes(lower)) return false;
+    if (["true", "1", "yes", "on"].includes(lower)) return true;
+    throw new InvalidArgumentError(`Invalid boolean value: "${value}". Use true/false, 1/0, yes/no, or on/off.`);
 }
 
 /** Deprecated options that are still accepted but no longer used */

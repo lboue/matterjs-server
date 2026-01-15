@@ -93,11 +93,11 @@ All CLI options can be configured via environment variables, making it easy to c
 | `LOG_LEVEL`           | Server logging verbosity                             | `info`               | `critical`, `error`, `warning`, `info`, `debug`, `verbose` |
 | `LOG_FILE`            | Log file path                                        | (none)               | Any valid file path                                      |
 | `PRIMARY_INTERFACE`   | Primary network interface for mDNS                   | (auto-detect)        | e.g., `eth0`, `en0`                                      |
-| `ENABLE_TEST_NET_DCL` | Enable test-net DCL certificates                     | `false`              | `true`, `false`                                          |
+| `ENABLE_TEST_NET_DCL` | Enable test-net DCL certificates                     | `false`              | `true`/`false`, `1`/`0`, `yes`/`no`, `on`/`off`          |
 | `BLUETOOTH_ADAPTER`   | Bluetooth adapter HCI ID                             | (none)               | e.g., `0` for `hci0`                                     |
-| `DISABLE_OTA`         | Disable OTA update functionality                     | `false`              | `true`, `false`                                          |
+| `DISABLE_OTA`         | Disable OTA update functionality                     | `false`              | `true`/`false`, `1`/`0`, `yes`/`no`, `on`/`off`          |
 | `OTA_PROVIDER_DIR`    | Directory for OTA Provider files                     | (none)               | Any valid directory path                                 |
-| `DISABLE_DASHBOARD`   | Disable the web dashboard                            | `false`              | `true`, `false`                                          |
+| `DISABLE_DASHBOARD`   | Disable the web dashboard                            | `false`              | `true`/`false`, `1`/`0`, `yes`/`no`, `on`/`off`          |
 | `VENDOR_ID`           | Vendor ID for the Fabric                             | `0xfff1`             | Any valid vendor ID                                      |
 | `FABRIC_ID`           | Fabric ID for the Fabric                             | `1`                  | Any valid fabric ID                                      |
 
