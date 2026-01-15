@@ -89,12 +89,12 @@ export function checkPolledAttributes(attributes: AttributesData): Set<Attribute
         }
     }
 
-    // Add Eve energy attributes to poll for each Eve endpoint
+    // Add Eve energy attributes to a poll for each Eve endpoint
     for (const endpoint of eveEndpoints) {
         for (const [, attributeId] of Object.entries(EVE_ENERGY_ATTRIBUTE_IDS)) {
             const attrPath = `${endpoint}/${EVE_CLUSTER_ID}/${attributeId}`;
             // Only add if the attribute exists in the node's attributes
-            if (attrPath in attributes) {
+            if (attributes[attrPath] !== undefined) {
                 polledAttributes.add(attrPath);
             }
         }
