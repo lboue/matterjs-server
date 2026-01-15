@@ -218,11 +218,16 @@ export class CustomClusterPoller {
         this.#isPolling = true;
 
         try {
-            for (const [nodeId, attributePaths] of this.#polledAttributes) {
+            const entries = Array.from(this.#polledAttributes.entries());
+            for (let i = 0; i < entries.length; i++) {
+                const [nodeId, attributePaths] = entries[i];
                 await this.#pollNode(nodeId, attributePaths);
                 // Small delay between nodes to avoid overwhelming the network
-                this.#currentDelayPromise = Time.sleep("sleep", Millis(1_000));
-                await this.#currentDelayPromise;
+                // Only add this delay if there are more nodes remaining to be polled
+                if (i < entries.length - 1) {
+                    this.#currentDelayPromise = Time.sleep("sleep", Millis(1_000));
+                    await this.#currentDelayPromise;
+                }
             }
         } finally {
             this.#isPolling = false;
