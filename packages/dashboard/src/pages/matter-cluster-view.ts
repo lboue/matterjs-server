@@ -12,11 +12,14 @@ import "@material/web/list/list-item";
 import { MatterClient, MatterNode, toBigIntAwareJson } from "@matter-server/ws-client";
 import { LitElement, css, html } from "lit";
 import { customElement, property } from "lit/decorators.js";
+import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { clusters } from "../client/models/descriptions.js";
 import { showAlertDialog } from "../components/dialog-box/show-dialog-box.js";
 import "../components/ha-svg-icon";
 import "../pages/components/node-details";
 import { bindingContext } from "./components/context.js";
+// Cluster command components (auto-register on import)
+import { getClusterCommandsTag } from "./cluster-commands/index.js";
 
 declare global {
     interface HTMLElementTagNameMap {
@@ -27,7 +30,7 @@ declare global {
 function clusterAttributes(attributes: { [key: string]: any }, endpoint: number, cluster: number) {
     // extract unique clusters from the node attributes, as (sorted) array
     return Object.keys(attributes)
-        .filter(key => key.startsWith(`${endpoint}/${cluster}`))
+        .filter(key => key.startsWith(`${endpoint}/${cluster}/`))
         .map(key => {
             const attributeKey = Number(key.split("/")[2]);
             return { key: attributeKey, value: attributes[key] };
@@ -67,6 +70,9 @@ class MatterClusterView extends LitElement {
             <div class="container">
                 <node-details .node=${this.node} .client=${this.client}></node-details>
             </div>
+
+            <!-- Cluster commands section (if available for this cluster) -->
+            ${this._renderClusterCommands()}
 
             <!-- Cluster attributes listing -->
             <div class="container">
@@ -116,6 +122,40 @@ class MatterClusterView extends LitElement {
             title: "Attribute value",
             text: toBigIntAwareJson(value),
         });
+    }
+
+    private _renderClusterCommands() {
+        if (this.cluster === undefined) return html``;
+        if (!this.node?.available) return html``; // Don't show commands when device is offline
+
+        const tagName = getClusterCommandsTag(this.cluster);
+        if (!tagName) return html``;
+
+        // Dynamically render the registered cluster command component
+        const componentHtml = `<${tagName}></${tagName}>`;
+        const element = unsafeHTML(componentHtml);
+
+        return html`
+            <div class="container">
+                <div id="cluster-commands-container">${element}</div>
+            </div>
+        `;
+    }
+
+    override updated(changedProperties: Map<string, unknown>) {
+        super.updated(changedProperties);
+
+        // After render, find and configure the cluster commands component
+        const container = this.shadowRoot?.getElementById("cluster-commands-container");
+        if (container) {
+            const commandsElement = container.firstElementChild as any;
+            if (commandsElement && this.node && this.client) {
+                commandsElement.client = this.client;
+                commandsElement.node = this.node;
+                commandsElement.endpoint = this.endpoint;
+                commandsElement.cluster = this.cluster;
+            }
+        }
     }
 
     private _goBack() {

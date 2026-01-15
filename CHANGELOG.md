@@ -9,15 +9,17 @@ This page shows a detailed overview of the changes between versions without the 
 
 ## __WORK IN PROGRESS__
 
-- Enhancements: Allows a LOG_LEVEL environment variable to control the log level of the Matter server when started via docker container
+- Enhancement: Allows a LOG_LEVEL environment variable to control the log level of the Matter server when started via docker container
+- Enhancement: Added some basic cluster commands (OnOff and LevelControl) to the dashboard for more simple testing.
+- Fix: Prevents displaying of duplicate cluster details in the dashboard
 
 ## 0.2.2 (2026-01-14)
 
-- Fixes: update matter.js to 0.16.2
+- Fix: update matter.js to 0.16.2
 
 ## 0.2.1 (2026-01-13)
 
-- Fixes: remove a require-lookup which was not ESM 
+- Fix: remove a require-lookup which was not ESM 
 
 ## 0.2.0 (2026-01-13)
 
