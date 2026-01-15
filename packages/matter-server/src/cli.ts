@@ -76,8 +76,8 @@ function collectAddresses(value: string, previous: string[]): string[] {
     return previous.concat(value);
 }
 
-function parseBooleanEnv(value: string): boolean {
-    const lower = value.toLowerCase().trim();
+function parseBooleanEnv(value: string | undefined): boolean {
+    const lower = (value ?? "").toLowerCase().trim();
     if (lower === "" || ["false", "0", "no", "off"].includes(lower)) return false;
     if (["true", "1", "yes", "on"].includes(lower)) return true;
     throw new InvalidArgumentError(`Invalid boolean value: "${value}". Use true/false, 1/0, yes/no, or on/off.`);
