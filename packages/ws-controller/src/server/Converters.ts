@@ -298,7 +298,7 @@ export function parseBigIntAwareJson(json: string): unknown {
     // Pre-process: Replace large numbers (15+ digits) with marked string placeholders
     // This must happen before JSON.parse to preserve precision
     // Match numbers after colon (object values) or after [ or , (array elements)
-    const processed = json.replace(/([:,[])\s*(\d{15,})(?=[,}\]\s])/g, (match, prefix, number) => {
+    const processed = json.replace(/([:,[])\s*(\d{15,})(?=[,}\]\s]|$)/g, (match, prefix, number) => {
         const num = BigInt(number);
         if (num > Number.MAX_SAFE_INTEGER) {
             return `${prefix}"${BIGINT_MARKER}${number}"`;
