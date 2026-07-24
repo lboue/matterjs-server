@@ -4,23 +4,34 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { describeSemanticTag, isSemanticTagList } from "../src/util/semantic-tags.js";
+import { decodeSemanticTagList, describeSemanticTag } from "../src/util/semantic-tags.js";
 
-describe("isSemanticTagList", () => {
-    it("accepts an array of semantic tag structs", () => {
-        expect(isSemanticTagList([{ mfgCode: null, namespaceId: 8, tag: 2, label: null }])).to.be.true;
+// SemanticTagStruct wire entries are field-tag keyed ("0" MfgCode, "1" NamespaceID, "2" Tag, "3" Label),
+// matching how packages/ws-controller serializes attribute-read struct values (Converters.ts tagBased path).
+
+describe("decodeSemanticTagList", () => {
+    it("decodes tag-keyed SemanticTagStruct entries", () => {
+        // Real device fixture: Closure Panel endpoint exposing namespace 69 (ClosurePanel), tag 0 (Lift)
+        const decoded = decodeSemanticTagList([{ "0": null, "1": 69, "2": 0, "3": "ClosurePanel.Lift" }]);
+        expect(decoded).to.deep.equal([{ mfgCode: null, namespaceId: 69, tag: 0, label: "ClosurePanel.Lift" }]);
+    });
+
+    it("treats an absent MfgCode/Label key as null, not undefined", () => {
+        const decoded = decodeSemanticTagList([{ "1": 8, "2": 2 }]);
+        expect(decoded).to.deep.equal([{ mfgCode: null, namespaceId: 8, tag: 2, label: null }]);
     });
 
     it("accepts an empty array", () => {
-        expect(isSemanticTagList([])).to.be.true;
+        expect(decodeSemanticTagList([])).to.deep.equal([]);
     });
 
-    it("rejects undefined (attribute not read yet)", () => {
-        expect(isSemanticTagList(undefined)).to.be.false;
+    it("returns undefined when the attribute hasn't been read yet", () => {
+        expect(decodeSemanticTagList(undefined)).to.be.undefined;
     });
 
-    it("rejects non-semtag arrays", () => {
-        expect(isSemanticTagList([1, 2, 3])).to.be.false;
+    it("returns undefined for entries that aren't SemanticTagStruct-shaped", () => {
+        expect(decodeSemanticTagList([1, 2, 3])).to.be.undefined;
+        expect(decodeSemanticTagList([{ foo: "bar" }])).to.be.undefined;
     });
 });
 
@@ -35,6 +46,11 @@ describe("describeSemanticTag", () => {
         // CommonPosition (8) -> Row (5), qualified per spec by a numeric label
         const { text } = describeSemanticTag({ mfgCode: null, namespaceId: 8, tag: 5, label: "3" });
         expect(text).to.equal('Common Position → Row ("3")');
+    });
+
+    it("resolves a real device fixture (Closure Panel -> Lift)", () => {
+        const { text } = describeSemanticTag({ mfgCode: null, namespaceId: 69, tag: 0, label: "ClosurePanel.Lift" });
+        expect(text).to.equal('Closure Panel → Lift ("ClosurePanel.Lift")');
     });
 
     it("falls back to raw ids for an unrecognized standard namespace", () => {

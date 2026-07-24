@@ -5,6 +5,7 @@
  */
 
 import { semantic_tag_namespaces } from "../client/models/descriptions.js";
+import { attributeArray } from "./access-control.js";
 import { formatHex } from "./format_hex.js";
 
 // Descriptor cluster and its TagList attribute (semantic tags for the endpoint)
@@ -18,11 +19,34 @@ export interface SemanticTag {
     label?: string | null;
 }
 
-export function isSemanticTagList(value: unknown): value is SemanticTag[] {
-    return (
-        Array.isArray(value) &&
-        value.every(entry => entry && typeof entry === "object" && "namespaceId" in entry && "tag" in entry)
-    );
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null;
+}
+
+/** SemanticTagStruct wire entries are field-tag keyed: "0" MfgCode, "1" NamespaceID, "2" Tag, "3" Label. */
+function decodeSemanticTag(entry: unknown): SemanticTag | undefined {
+    if (!isRecord(entry)) return undefined;
+    const namespaceId = entry["1"];
+    const tag = entry["2"];
+    if (typeof namespaceId !== "number" || typeof tag !== "number") return undefined;
+    const mfgCode = entry["0"];
+    const label = entry["3"];
+    return {
+        mfgCode: typeof mfgCode === "number" ? mfgCode : null,
+        namespaceId,
+        tag,
+        label: typeof label === "string" ? label : null,
+    };
+}
+
+// Decodes the Descriptor cluster's TagList attribute value, or undefined if the attribute
+// hasn't been read yet or its entries don't look like SemanticTagStruct.
+export function decodeSemanticTagList(value: unknown): SemanticTag[] | undefined {
+    if (value === undefined) return undefined;
+    const entries = attributeArray(value);
+    const decoded = entries.map(decodeSemanticTag);
+    if (decoded.some(tag => tag === undefined)) return undefined;
+    return decoded as SemanticTag[];
 }
 
 // Renders a single semantic tag as "Namespace → Tag", falling back to raw ids when the

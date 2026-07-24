@@ -27,7 +27,12 @@ import "../pages/components/node-details";
 import { computeActiveClusterFeatures } from "../util/cluster-features.js";
 import { DevModeService } from "../util/dev-mode-service.js";
 import { formatHex, formatNodeAddress, getEffectiveFabricIndex } from "../util/format_hex.js";
-import { describeSemanticTag, DESCRIPTOR_CLUSTER_ID, isSemanticTagList, TAG_LIST_ATTR } from "../util/semantic-tags.js";
+import {
+    decodeSemanticTagList,
+    describeSemanticTag,
+    DESCRIPTOR_CLUSTER_ID,
+    TAG_LIST_ATTR,
+} from "../util/semantic-tags.js";
 import { notFoundStyles } from "../util/shared-styles.js";
 import { BaseClusterCommands, getClusterCommandsTag } from "./cluster-commands/index.js";
 import { bindingContext } from "./components/context.js";
@@ -392,18 +397,19 @@ class MatterClusterView extends LitElement {
         if (this.cluster !== DESCRIPTOR_CLUSTER_ID || !this.node) return nothing;
 
         const tagListValue = this.node.attributes[`${this.endpoint}/${this.cluster}/${TAG_LIST_ATTR}`];
-        if (!isSemanticTagList(tagListValue)) return nothing;
+        const tagList = decodeSemanticTagList(tagListValue);
+        if (tagList === undefined) return nothing;
 
         return html`
             <div class="container">
                 <div class="features-panel">
                     <div class="features-panel-header">Semantic Tags (TagList)</div>
                     <div class="features-panel-body">
-                        ${tagListValue.length === 0
+                        ${tagList.length === 0
                             ? html`<p class="empty">No semantic tags</p>`
                             : html`
                                   <ul class="feature-chip-list">
-                                      ${tagListValue.map(semtag => {
+                                      ${tagList.map(semtag => {
                                           const { text, title } = describeSemanticTag(semtag);
                                           return html`<li class="feature-chip" title=${title}>${text}</li>`;
                                       })}
