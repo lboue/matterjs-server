@@ -17,7 +17,7 @@ import { css, html, LitElement, nothing, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { clientContext, tickContext } from "../client/client-context.js";
-import { clusters, semantic_tag_namespaces } from "../client/models/descriptions.js";
+import { clusters } from "../client/models/descriptions.js";
 import { showAlertDialog } from "../components/dialog-box/show-dialog-box.js";
 import { showAttributeWriteDialog } from "../components/dialogs/dev/show-attribute-write-dialog.js";
 import { showCommandInvokeDialog } from "../components/dialogs/dev/show-command-invoke-dialog.js";
@@ -27,6 +27,7 @@ import "../pages/components/node-details";
 import { computeActiveClusterFeatures } from "../util/cluster-features.js";
 import { DevModeService } from "../util/dev-mode-service.js";
 import { formatHex, formatNodeAddress, getEffectiveFabricIndex } from "../util/format_hex.js";
+import { describeSemanticTag, DESCRIPTOR_CLUSTER_ID, isSemanticTagList, TAG_LIST_ATTR } from "../util/semantic-tags.js";
 import { notFoundStyles } from "../util/shared-styles.js";
 import { BaseClusterCommands, getClusterCommandsTag } from "./cluster-commands/index.js";
 import { bindingContext } from "./components/context.js";
@@ -46,44 +47,6 @@ const ACCEPTED_COMMAND_LIST_ATTR = 0xfff9;
 
 // FeatureMap global attribute (bitmap of cluster feature flags supported by this instance)
 const FEATURE_MAP_ATTR = 0xfffc;
-
-// Descriptor cluster and its TagList attribute (semantic tags for the endpoint)
-const DESCRIPTOR_CLUSTER_ID = 29;
-const TAG_LIST_ATTR = 4;
-
-interface SemanticTag {
-    mfgCode: number | null;
-    namespaceId: number;
-    tag: number;
-    label?: string | null;
-}
-
-function isSemanticTagList(value: unknown): value is SemanticTag[] {
-    return (
-        Array.isArray(value) &&
-        value.every(entry => entry && typeof entry === "object" && "namespaceId" in entry && "tag" in entry)
-    );
-}
-
-// Renders a single semantic tag as "Namespace → Tag", falling back to raw ids when the
-// namespace is manufacturer-specific or unrecognized (standard namespaces only cover Matter's
-// own registry, not vendor-defined ones referenced via mfgCode).
-function describeSemanticTag(semtag: SemanticTag): { text: string; title: string } {
-    const { mfgCode, namespaceId, tag, label } = semtag;
-    const idSuffix = ` (ns ${namespaceId}, tag ${tag})`;
-
-    if (mfgCode != null) {
-        const text = label ? `Mfg ${formatHex(mfgCode)}: ${label}` : `Mfg ${formatHex(mfgCode)} tag ${tag}`;
-        return { text, title: `Manufacturer-specific${idSuffix}, mfgCode ${formatHex(mfgCode)}` };
-    }
-
-    const namespace = semantic_tag_namespaces[namespaceId];
-    const tagInfo = namespace?.tags[tag];
-    const namespaceLabel = namespace?.label ?? `Namespace ${namespaceId}`;
-    const tagLabel = tagInfo?.label ?? `Tag ${tag}`;
-    const text = label ? `${namespaceLabel} → ${tagLabel} ("${label}")` : `${namespaceLabel} → ${tagLabel}`;
-    return { text, title: `${namespaceLabel} → ${tagLabel}${idSuffix}` };
-}
 
 // How long to flash the refresh icon in success state.
 const REFRESH_SUCCESS_MS = 600;
