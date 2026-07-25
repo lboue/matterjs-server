@@ -28,6 +28,8 @@ export {
     type ErrorResultMessage,
     type EventMessage,
     type EventTypes,
+    type GroupInfo,
+    type GroupMemberRef,
     type IcdStateData,
     type LogLevelResponse,
     type LogLevelString,

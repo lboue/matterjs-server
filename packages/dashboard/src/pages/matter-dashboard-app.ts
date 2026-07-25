@@ -16,6 +16,7 @@ import "./components/header";
 import type { ActiveView } from "./components/header.js";
 import "./matter-cluster-view";
 import "./matter-endpoint-view";
+import "./matter-groups-view";
 import "./matter-network-view";
 import "./matter-node-view";
 import "./matter-server-view";
@@ -98,6 +99,8 @@ class MatterDashboardApp extends LitElement {
                 }
             } else if (hash === "nodes" || hash === "" || pathParts[0] === "node") {
                 this._activeView = "nodes";
+            } else if (pathParts[0] === "groups") {
+                this._activeView = "groups";
             }
 
             this._route = {
@@ -249,6 +252,14 @@ class MatterDashboardApp extends LitElement {
                 .hasWifiDevices=${hasWifiDevices}
                 networkType="wifi"
             ></matter-network-view>`;
+        }
+        // Check for Groups view (#groups)
+        if (this._route.prefix === "groups" || this._route.path[0] === "groups") {
+            return html`<matter-groups-view
+                .activeView=${this._activeView}
+                .hasThreadDevices=${hasThreadDevices}
+                .hasWifiDevices=${hasWifiDevices}
+            ></matter-groups-view>`;
         }
         // root level: server overview (nodes view)
         return html`<matter-server-view

@@ -406,6 +406,36 @@ export class MatterClient {
         );
     }
 
+    async listGroups(timeout?: number) {
+        return await this.sendCommand("list_groups", 0, {}, timeout);
+    }
+
+    async createGroup(name: string, groupId?: number, clusters?: number[], timeout?: number) {
+        return await this.sendCommand("create_group", 0, { name, group_id: groupId, clusters }, timeout);
+    }
+
+    async deleteGroup(groupId: number, timeout?: number) {
+        return await this.sendCommand("delete_group", 0, { group_id: groupId }, timeout);
+    }
+
+    async addGroupMember(groupId: number, nodeId: number | bigint, endpointId: number, timeout?: number) {
+        return await this.sendCommand(
+            "add_group_member",
+            0,
+            { group_id: groupId, node_id: nodeId, endpoint_id: endpointId },
+            timeout,
+        );
+    }
+
+    async removeGroupMember(groupId: number, nodeId: number | bigint, endpointId: number, timeout?: number) {
+        return await this.sendCommand(
+            "remove_group_member",
+            0,
+            { group_id: groupId, node_id: nodeId, endpoint_id: endpointId },
+            timeout,
+        );
+    }
+
     async deviceCommand(
         nodeId: number | bigint,
         endpointId: number,

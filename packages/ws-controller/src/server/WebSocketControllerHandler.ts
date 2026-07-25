@@ -745,6 +745,21 @@ export class WebSocketControllerHandler implements WebServerHandler {
                 case "set_node_binding":
                     result = await this.#handleSetNodeBinding(args);
                     break;
+                case "list_groups":
+                    result = this.#handleListGroups();
+                    break;
+                case "create_group":
+                    result = await this.#handleCreateGroup(args);
+                    break;
+                case "delete_group":
+                    result = await this.#handleDeleteGroup(args);
+                    break;
+                case "add_group_member":
+                    result = await this.#handleAddGroupMember(args);
+                    break;
+                case "remove_group_member":
+                    result = await this.#handleRemoveGroupMember(args);
+                    break;
                 case "import_test_node":
                     result = await this.#handleImportTestNode(args);
                     break;
@@ -1522,6 +1537,30 @@ export class WebSocketControllerHandler implements WebServerHandler {
     async #handleSetNodeBinding(args: ArgsOf<"set_node_binding">): Promise<ResponseOf<"set_node_binding">> {
         const { node_id, endpoint, bindings } = args;
         return await this.#commandHandler.setNodeBinding(NodeId(node_id), EndpointNumber(endpoint), bindings);
+    }
+
+    #handleListGroups(): ResponseOf<"list_groups"> {
+        return this.#commandHandler.listGroups();
+    }
+
+    async #handleCreateGroup(args: ArgsOf<"create_group">): Promise<ResponseOf<"create_group">> {
+        const { name, group_id, clusters } = args;
+        return await this.#commandHandler.createGroup(name, group_id, clusters);
+    }
+
+    async #handleDeleteGroup(args: ArgsOf<"delete_group">): Promise<ResponseOf<"delete_group">> {
+        await this.#commandHandler.deleteGroup(args.group_id);
+        return {};
+    }
+
+    async #handleAddGroupMember(args: ArgsOf<"add_group_member">): Promise<ResponseOf<"add_group_member">> {
+        const { group_id, node_id, endpoint_id } = args;
+        return await this.#commandHandler.addGroupMember(group_id, NodeId(node_id), EndpointNumber(endpoint_id));
+    }
+
+    async #handleRemoveGroupMember(args: ArgsOf<"remove_group_member">): Promise<ResponseOf<"remove_group_member">> {
+        const { group_id, node_id, endpoint_id } = args;
+        return await this.#commandHandler.removeGroupMember(group_id, NodeId(node_id), EndpointNumber(endpoint_id));
     }
 
     async #handleImportTestNode(args: ArgsOf<"import_test_node">): Promise<ResponseOf<"import_test_node">> {

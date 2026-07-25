@@ -466,6 +466,26 @@ export interface APICommands {
         requestArgs: { node_id: number | bigint; endpoint: number; bindings: BindingTarget[] };
         response: AttributeWriteResult[] | null;
     };
+    list_groups: {
+        requestArgs: Record<string, never>;
+        response: GroupInfo[];
+    };
+    create_group: {
+        requestArgs: { name: string; group_id?: number; clusters?: number[] };
+        response: GroupInfo;
+    };
+    delete_group: {
+        requestArgs: { group_id: number };
+        response: Record<string, never>;
+    };
+    add_group_member: {
+        requestArgs: { group_id: number; node_id: number | bigint; endpoint_id: number };
+        response: GroupInfo;
+    };
+    remove_group_member: {
+        requestArgs: { group_id: number; node_id: number | bigint; endpoint_id: number };
+        response: GroupInfo;
+    };
     set_default_fabric_label: {
         requestArgs: { label: string | null };
         response: null;
@@ -534,6 +554,24 @@ export interface BindingTarget {
 export interface AttributeWriteResult {
     path: { endpoint_id: number; cluster_id: number; attribute_id: number };
     status: number;
+}
+
+/** A node/endpoint pair belonging to a Matter group */
+export interface GroupMemberRef {
+    node_id: number | bigint;
+    endpoint_id: number;
+}
+
+/**
+ * A Matter group known to this controller. Never carries the group's key material — the epoch
+ * key is a fabric secret that stays server-side.
+ */
+export interface GroupInfo {
+    group_id: number;
+    name: string;
+    members: GroupMemberRef[];
+    /** Clusters this group is meant to control; Matter groups themselves are untyped. */
+    clusters: number[];
 }
 
 /** Matter node event structure */

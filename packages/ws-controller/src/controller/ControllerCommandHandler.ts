@@ -32,13 +32,20 @@ import {
     DnsRecordType,
     NetworkClient,
 } from "@matter/main";
-import { IcdManagementClient, OperationalCredentialsClient } from "@matter/main/behaviors";
+import {
+    AccessControlClient,
+    GroupKeyManagementClient,
+    IcdManagementClient,
+    OperationalCredentialsClient,
+} from "@matter/main/behaviors";
 import {
     AccessControl,
     BasicInformation,
     Binding,
     BridgedDeviceBasicInformation,
     GeneralCommissioning,
+    GroupKeyManagement,
+    Groups,
     IcdManagement,
     OperationalCredentials,
     TimeSynchronization,
@@ -77,6 +84,7 @@ import {
     splitAttributePath,
     toBigIntAwareJson,
 } from "../server/Converters.js";
+import { GroupRecord, GroupStore } from "../server/GroupStore.js";
 import {
     AttributeResponseStatus,
     AttributesData,
@@ -95,6 +103,7 @@ import {
     AccessControlTarget,
     AttributeWriteResult,
     BindingTarget,
+    GroupInfo,
     IcdStateData,
     MatterSoftwareVersion,
     NodePingResult,
@@ -158,6 +167,7 @@ export class ControllerCommandHandler {
     readonly #bleEnabled: boolean;
     readonly #bleProxyEnabled: boolean;
     readonly #otaEnabled: boolean;
+    readonly #groupStore: GroupStore;
     /** Node management and attribute cache */
     #nodes = new Nodes();
     /** Cache of available updates keyed by nodeId */
@@ -202,6 +212,7 @@ export class ControllerCommandHandler {
         bleEnabled: boolean,
         bleProxyEnabled: boolean,
         otaEnabled: boolean,
+        groupStore: GroupStore,
         timeSyncEnabled = false,
     ) {
         this.#controller = controllerInstance;
@@ -210,6 +221,7 @@ export class ControllerCommandHandler {
         this.#bleProxyEnabled = bleProxyEnabled;
         logger.info(`BLE is ${bleEnabled ? "enabled" : "disabled"}${bleProxyEnabled ? " (proxy mode)" : ""}`);
         this.#otaEnabled = otaEnabled;
+        this.#groupStore = groupStore;
 
         // Initialize custom cluster poller for Eve energy attributes etc.
         // Reads automatically trigger change events through the normal attribute flow
@@ -1651,6 +1663,212 @@ export class ControllerCommandHandler {
                 status,
             },
         ];
+    }
+
+    #toGroupInfo(record: GroupRecord): GroupInfo {
+        return {
+            group_id: record.groupId,
+            name: record.name,
+            members: record.members.map(m => ({ node_id: m.nodeId, endpoint_id: m.endpointId })),
+            clusters: record.clusters,
+        };
+    }
+
+    /** List all Matter groups known to this controller (registry only — never includes key material). */
+    listGroups(): GroupInfo[] {
+        return this.#groupStore.listGroups().map(record => this.#toGroupInfo(record));
+    }
+
+    /** Create a new Matter group entry. Registry only — no on-device effect until a member is added. */
+    async createGroup(name: string, groupId?: number, clusters: number[] = []): Promise<GroupInfo> {
+        const record = await this.#groupStore.createGroup(name, groupId, clusters);
+        return this.#toGroupInfo(record);
+    }
+
+    /**
+     * Delete a Matter group. `RemoveGroup` on each member is best-effort: a member that is offline
+     * or has already forgotten the group must not block removing the group from the registry.
+     */
+    async deleteGroup(groupId: number): Promise<void> {
+        const record = this.#groupStore.getGroup(groupId);
+        if (record === undefined) {
+            throw ServerError.invalidArguments(`Group ${groupId} does not exist`);
+        }
+        for (const member of record.members) {
+            try {
+                await this.#removeGroupFromDevice(NodeId(member.nodeId), EndpointNumber(member.endpointId), groupId);
+            } catch (error) {
+                logger.warn(
+                    `deleteGroup: RemoveGroup failed on node ${member.nodeId} endpoint ${member.endpointId}`,
+                    error,
+                );
+            }
+        }
+        await this.#groupStore.deleteGroup(groupId);
+    }
+
+    /**
+     * Add an endpoint to a group: provisions the group key on the node (a prerequisite the spec
+     * enforces for `AddGroup`), issues `Groups.AddGroup`, then grants the group operate access on
+     * the group's recorded clusters via a group-authorized ACL entry — without it, the endpoint
+     * would join the group but still reject commands addressed to it.
+     */
+    async addGroupMember(groupId: number, nodeId: NodeId, endpointId: EndpointNumber): Promise<GroupInfo> {
+        const record = this.#groupStore.getGroup(groupId);
+        if (record === undefined) {
+            throw ServerError.invalidArguments(`Group ${groupId} does not exist`);
+        }
+
+        await this.#provisionGroupKey(nodeId, groupId, record.keySetId, record.epochKey);
+
+        const node = this.#nodes.get(nodeId).node;
+        const response = (await this.#invokeCommand(node, {
+            endpoint: endpointId,
+            cluster: Groups.Cluster,
+            command: "addGroup",
+            // Matter limits device-side group names to 16 characters; the full name stays in the registry.
+            fields: { groupId: GroupId(groupId), groupName: record.name.slice(0, 16) },
+        })) as Groups.AddGroupResponse | undefined;
+        if (response !== undefined && response.status !== Status.Success) {
+            throw new Error(`Device rejected AddGroup for group ${groupId} (status ${response.status})`);
+        }
+
+        if (record.clusters.length > 0) {
+            await this.#grantGroupAcl(nodeId, endpointId, groupId, record.clusters);
+        }
+
+        const updated = await this.#groupStore.addMember(groupId, BigInt(nodeId), endpointId);
+        return this.#toGroupInfo(updated);
+    }
+
+    /** Remove an endpoint from a group via `Groups.RemoveGroup`, then update the registry and ACL. */
+    async removeGroupMember(groupId: number, nodeId: NodeId, endpointId: EndpointNumber): Promise<GroupInfo> {
+        const record = this.#groupStore.getGroup(groupId);
+        if (record === undefined) {
+            throw ServerError.invalidArguments(`Group ${groupId} does not exist`);
+        }
+
+        await this.#removeGroupFromDevice(nodeId, endpointId, groupId);
+
+        try {
+            await this.#revokeGroupAcl(nodeId, groupId);
+        } catch (error) {
+            logger.warn(
+                `removeGroupMember: failed to remove group-auth ACL for group ${groupId} on node ${nodeId}`,
+                error,
+            );
+        }
+
+        const updated = await this.#groupStore.removeMember(groupId, BigInt(nodeId), endpointId);
+        return this.#toGroupInfo(updated);
+    }
+
+    async #removeGroupFromDevice(nodeId: NodeId, endpointId: EndpointNumber, groupId: number): Promise<void> {
+        const node = this.#nodes.get(nodeId).node;
+        const response = (await this.#invokeCommand(node, {
+            endpoint: endpointId,
+            cluster: Groups.Cluster,
+            command: "removeGroup",
+            fields: { groupId: GroupId(groupId) },
+        })) as Groups.RemoveGroupResponse | undefined;
+        if (response !== undefined && response.status !== Status.Success) {
+            throw new Error(`Device rejected RemoveGroup for group ${groupId} (status ${response.status})`);
+        }
+    }
+
+    /**
+     * Provision the group's key set on a node: `KeySetWrite` the shared epoch key, then merge the
+     * GroupId -> KeySetId mapping into `GroupKeyMap`. Required before `Groups.AddGroup` is accepted —
+     * the spec has no "create group" command; a group exists once a node holds its key material.
+     */
+    async #provisionGroupKey(nodeId: NodeId, groupId: number, keySetId: number, epochKeyHex: string): Promise<void> {
+        const node = this.#nodes.get(nodeId).node;
+        const endpoint0 = node.endpoints.for(EndpointNumber(0));
+
+        await this.#invokeCommand(node, {
+            endpoint: EndpointNumber(0),
+            cluster: GroupKeyManagement.Cluster,
+            command: "keySetWrite",
+            fields: {
+                groupKeySet: {
+                    groupKeySetId: keySetId,
+                    groupKeySecurityPolicy: GroupKeyManagement.GroupKeySecurityPolicy.TrustFirst,
+                    epochKey0: Buffer.from(epochKeyHex, "hex"),
+                    epochStartTime0: 1,
+                    epochKey1: null,
+                    epochStartTime1: null,
+                    epochKey2: null,
+                    epochStartTime2: null,
+                },
+            },
+        });
+
+        const existing = endpoint0.maybeStateOf(GroupKeyManagementClient)?.groupKeyMap ?? [];
+        const merged = [
+            ...existing.filter(entry => entry.groupId !== GroupId(groupId)),
+            { groupId: GroupId(groupId), groupKeySetId: keySetId, fabricIndex: this.#currentFabricIndex(nodeId) },
+        ];
+
+        await this.#writeAttribute(nodeId, EndpointNumber(0), GroupKeyManagement.id, "groupKeyMap", merged);
+    }
+
+    /** Grant the group operate access to the group's recorded clusters on this endpoint (idempotent). */
+    async #grantGroupAcl(
+        nodeId: NodeId,
+        endpointId: EndpointNumber,
+        groupId: number,
+        clusters: number[],
+    ): Promise<void> {
+        const endpoint0 = this.#nodes.get(nodeId).node.endpoints.for(EndpointNumber(0));
+        const existing = endpoint0.maybeStateOf(AccessControlClient)?.acl ?? [];
+
+        const wantedTargets = clusters.map(cluster => ({
+            cluster: ClusterId(cluster),
+            endpoint: endpointId,
+            deviceType: null,
+        }));
+        const alreadyGranted = existing.some(
+            entry =>
+                entry.authMode === AccessControl.AccessControlEntryAuthMode.Group &&
+                entry.subjects?.some(subject => subject === GroupId(groupId)) &&
+                wantedTargets.every(wanted =>
+                    entry.targets?.some(
+                        target => target.cluster === wanted.cluster && target.endpoint === wanted.endpoint,
+                    ),
+                ),
+        );
+        if (alreadyGranted) {
+            return;
+        }
+
+        const updated = [
+            ...existing,
+            {
+                privilege: AccessControl.AccessControlEntryPrivilege.Operate,
+                authMode: AccessControl.AccessControlEntryAuthMode.Group,
+                subjects: [GroupId(groupId)],
+                targets: wantedTargets,
+                fabricIndex: this.#currentFabricIndex(nodeId),
+            },
+        ];
+        await this.#writeAttribute(nodeId, EndpointNumber(0), AccessControl.id, "acl", updated);
+    }
+
+    /** Remove group-authorized ACL entries granting this group access (best-effort cleanup). */
+    async #revokeGroupAcl(nodeId: NodeId, groupId: number): Promise<void> {
+        const endpoint0 = this.#nodes.get(nodeId).node.endpoints.for(EndpointNumber(0));
+        const existing = endpoint0.maybeStateOf(AccessControlClient)?.acl ?? [];
+        const updated = existing.filter(
+            entry =>
+                !(
+                    entry.authMode === AccessControl.AccessControlEntryAuthMode.Group &&
+                    entry.subjects?.length === 1 &&
+                    entry.subjects[0] === GroupId(groupId)
+                ),
+        );
+        if (updated.length !== existing.length) {
+            await this.#writeAttribute(nodeId, EndpointNumber(0), AccessControl.id, "acl", updated);
+        }
     }
 
     /**

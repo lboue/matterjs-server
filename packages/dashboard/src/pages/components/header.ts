@@ -27,7 +27,7 @@ interface HeaderAction {
     action: void;
 }
 
-export type ActiveView = "nodes" | "thread" | "wifi";
+export type ActiveView = "nodes" | "thread" | "wifi" | "groups";
 
 @customElement("dashboard-header")
 export class DashboardHeader extends LitElement {
@@ -112,14 +112,8 @@ export class DashboardHeader extends LitElement {
             return nothing;
         }
 
-        // Only show tabs if at least one network type has devices
         const showThreadTab = this.hasThreadDevices === true;
         const showWifiTab = this.hasWifiDevices === true;
-
-        // Don't show nav tabs if no network devices exist
-        if (!showThreadTab && !showWifiTab) {
-            return nothing;
-        }
 
         return html`
             <nav class="nav-tabs" aria-label="View navigation">
@@ -145,6 +139,12 @@ export class DashboardHeader extends LitElement {
                           >WiFi</a
                       >`
                     : nothing}
+                <a
+                    href="#groups"
+                    class="nav-tab ${this.activeView === "groups" ? "active" : ""}"
+                    aria-current=${this.activeView === "groups" ? "page" : nothing}
+                    >Groups</a
+                >
             </nav>
         `;
     }

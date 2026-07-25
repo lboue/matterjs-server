@@ -37,6 +37,7 @@ import {
 import { CommissioningController } from "@project-chip/matter.js";
 import { Readable } from "node:stream";
 import { ConfigStorage } from "../server/ConfigStorage.js";
+import { GroupStore } from "../server/GroupStore.js";
 import { ControllerCommandHandler } from "./ControllerCommandHandler.js";
 import { LegacyDataInjector, LegacyServerData } from "./LegacyDataInjector.js";
 import { resolveServerId } from "./ServerIdResolver.js";
@@ -181,6 +182,7 @@ export class MatterController {
     #controllerInstance?: CommissioningController;
     #commandHandler?: ControllerCommandHandler;
     #config: ConfigStorage;
+    #groupStore: GroupStore;
     #serverId: string;
     #serverVersion: string;
     #legacyCommissionedDates?: Map<string, Timestamp>;
@@ -202,6 +204,7 @@ export class MatterController {
     static async create(
         environment: Environment,
         config: ConfigStorage,
+        groupStore: GroupStore,
         options: MatterControllerOptions,
         legacyData?: LegacyServerData,
     ) {
@@ -216,7 +219,7 @@ export class MatterController {
             legacyData?.fabricId,
         );
 
-        const instance = new MatterController(environment, config, options, serverId);
+        const instance = new MatterController(environment, config, groupStore, options, serverId);
 
         const commissionedDates = new Map<string, Timestamp>();
         if (legacyData !== undefined) {
@@ -267,10 +270,17 @@ export class MatterController {
         return instance;
     }
 
-    constructor(environment: Environment, config: ConfigStorage, options: MatterControllerOptions, serverId: string) {
+    constructor(
+        environment: Environment,
+        config: ConfigStorage,
+        groupStore: GroupStore,
+        options: MatterControllerOptions,
+        serverId: string,
+    ) {
         this.#env = environment;
         this.#borderRouterRegistry = new BorderRouterRegistry(this.#env);
         this.#config = config;
+        this.#groupStore = groupStore;
         this.#serverId = serverId;
         this.#serverVersion = options.serverVersion ?? "0.0.0";
         this.#enableTestNetDcl = options.enableTestNetDcl ?? this.#enableTestNetDcl;
@@ -389,6 +399,7 @@ export class MatterController {
                 this.#env.vars.get("ble.enable", false),
                 this.#bleProxyEnabled,
                 !this.#disableOtaProvider,
+                this.#groupStore,
                 this.#enableTimeSync,
             );
 

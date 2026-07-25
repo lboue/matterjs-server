@@ -13,6 +13,7 @@ import { BleProxyHandler, ProxyBle } from "@matter-server/ble-proxy";
 import {
     ConfigStorage,
     Environment,
+    GroupStore,
     LegacyServerData,
     LogDestination,
     LogFormat,
@@ -156,6 +157,7 @@ async function start() {
     }
 
     config = await ConfigStorage.create(env);
+    const groupStore = await GroupStore.create(env);
 
     // If we found a most common fabric label in legacy data, use it as the default
     // (only applies on first migration when no fabricLabel is stored yet)
@@ -180,6 +182,7 @@ async function start() {
     controller = await MatterController.create(
         env,
         config,
+        groupStore,
         {
             enableTestNetDcl: cliOptions.enableTestNetDcl,
             disableOtaProvider: cliOptions.disableOta,
