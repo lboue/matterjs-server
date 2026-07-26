@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { toBigIntAwareJson } from "@matter-server/ws-client";
 import { semantic_tag_namespaces } from "../client/models/descriptions.js";
 import { attributeArray } from "./access-control.js";
 import { formatHex } from "./format_hex.js";
@@ -39,14 +40,32 @@ function decodeSemanticTag(entry: unknown): SemanticTag | undefined {
     };
 }
 
-// Decodes the Descriptor cluster's TagList attribute value, or undefined if the attribute
-// hasn't been read yet or its entries don't look like SemanticTagStruct.
-export function decodeSemanticTagList(value: unknown): SemanticTag[] | undefined {
+export type SemanticTagListEntry = { kind: "tag"; semtag: SemanticTag } | { kind: "raw"; raw: unknown };
+
+// undefined means the TagList attribute hasn't been read yet — an empty array means the device
+// reported no semantic tags.
+export function decodeSemanticTagList(value: unknown): SemanticTagListEntry[] | undefined {
     if (value === undefined) return undefined;
-    const entries = attributeArray(value);
-    const decoded = entries.map(decodeSemanticTag);
-    if (decoded.some(tag => tag === undefined)) return undefined;
-    return decoded as SemanticTag[];
+    if (!Array.isArray(value) && !isRecord(value)) return [{ kind: "raw", raw: value }];
+
+    return attributeArray(value).map((entry): SemanticTagListEntry => {
+        const semtag = decodeSemanticTag(entry);
+        return semtag === undefined ? { kind: "raw", raw: entry } : { kind: "tag", semtag };
+    });
+}
+
+const RAW_ENTRY_TEXT_MAX = 60;
+
+export function describeSemanticTagListEntry(entry: SemanticTagListEntry): {
+    text: string;
+    title: string;
+    erroneous: boolean;
+} {
+    if (entry.kind === "tag") return { ...describeSemanticTag(entry.semtag), erroneous: false };
+
+    const raw = entry.raw === undefined ? "undefined" : toBigIntAwareJson(entry.raw);
+    const text = raw.length > RAW_ENTRY_TEXT_MAX ? `${raw.slice(0, RAW_ENTRY_TEXT_MAX - 1)}…` : raw;
+    return { text, title: `Not a SemanticTagStruct: ${raw}`, erroneous: true };
 }
 
 // Renders a single semantic tag as "Namespace → Tag", falling back to raw ids when the

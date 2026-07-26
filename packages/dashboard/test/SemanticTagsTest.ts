@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { decodeSemanticTagList, describeSemanticTag } from "../src/util/semantic-tags.js";
+import { decodeSemanticTagList, describeSemanticTag, describeSemanticTagListEntry } from "../src/util/semantic-tags.js";
 
 // SemanticTagStruct wire entries are field-tag keyed ("0" MfgCode, "1" NamespaceID, "2" Tag, "3" Label),
 // matching how packages/ws-controller serializes attribute-read struct values (Converters.ts tagBased path).
@@ -13,12 +13,16 @@ describe("decodeSemanticTagList", () => {
     it("decodes tag-keyed SemanticTagStruct entries", () => {
         // Real device fixture: Closure Panel endpoint exposing namespace 69 (ClosurePanel), tag 0 (Lift)
         const decoded = decodeSemanticTagList([{ "0": null, "1": 69, "2": 0, "3": "ClosurePanel.Lift" }]);
-        expect(decoded).to.deep.equal([{ mfgCode: null, namespaceId: 69, tag: 0, label: "ClosurePanel.Lift" }]);
+        expect(decoded).to.deep.equal([
+            { kind: "tag", semtag: { mfgCode: null, namespaceId: 69, tag: 0, label: "ClosurePanel.Lift" } },
+        ]);
     });
 
     it("treats an absent MfgCode/Label key as null, not undefined", () => {
         const decoded = decodeSemanticTagList([{ "1": 8, "2": 2 }]);
-        expect(decoded).to.deep.equal([{ mfgCode: null, namespaceId: 8, tag: 2, label: null }]);
+        expect(decoded).to.deep.equal([
+            { kind: "tag", semtag: { mfgCode: null, namespaceId: 8, tag: 2, label: null } },
+        ]);
     });
 
     it("accepts an empty array", () => {
@@ -29,9 +33,22 @@ describe("decodeSemanticTagList", () => {
         expect(decodeSemanticTagList(undefined)).to.be.undefined;
     });
 
-    it("returns undefined for entries that aren't SemanticTagStruct-shaped", () => {
-        expect(decodeSemanticTagList([1, 2, 3])).to.be.undefined;
-        expect(decodeSemanticTagList([{ foo: "bar" }])).to.be.undefined;
+    it("keeps entries that aren't SemanticTagStruct-shaped as raw", () => {
+        expect(decodeSemanticTagList([1, { foo: "bar" }])).to.deep.equal([
+            { kind: "raw", raw: 1 },
+            { kind: "raw", raw: { foo: "bar" } },
+        ]);
+    });
+
+    it("keeps decodable entries alongside undecodable ones", () => {
+        expect(decodeSemanticTagList([{ "1": 8, "2": 2 }, "nonsense"])).to.deep.equal([
+            { kind: "tag", semtag: { mfgCode: null, namespaceId: 8, tag: 2, label: null } },
+            { kind: "raw", raw: "nonsense" },
+        ]);
+    });
+
+    it("reports a whole attribute value that isn't a list as one raw entry", () => {
+        expect(decodeSemanticTagList(42)).to.deep.equal([{ kind: "raw", raw: 42 }]);
     });
 });
 
@@ -72,5 +89,36 @@ describe("describeSemanticTag", () => {
     it("renders manufacturer-specific tags without a label using the raw tag id", () => {
         const { text } = describeSemanticTag({ mfgCode: 4874, namespaceId: 1, tag: 3, label: null });
         expect(text).to.equal("Mfg 0x130A tag 3");
+    });
+});
+
+describe("describeSemanticTagListEntry", () => {
+    it("describes a decoded tag without marking it erroneous", () => {
+        const { text, erroneous } = describeSemanticTagListEntry({
+            kind: "tag",
+            semtag: { mfgCode: null, namespaceId: 8, tag: 2, label: null },
+        });
+        expect(text).to.equal("Common Position → Top");
+        expect(erroneous).to.be.false;
+    });
+
+    it("marks a raw entry erroneous and shows its JSON", () => {
+        const { text, title, erroneous } = describeSemanticTagListEntry({ kind: "raw", raw: { foo: "bar" } });
+        expect(text).to.equal('{"foo":"bar"}');
+        expect(title).to.equal('Not a SemanticTagStruct: {"foo":"bar"}');
+        expect(erroneous).to.be.true;
+    });
+
+    it("truncates the chip text of an oversized raw entry but keeps the full JSON in the tooltip", () => {
+        const raw = { note: "x".repeat(120) };
+        const json = JSON.stringify(raw);
+        const { text, title } = describeSemanticTagListEntry({ kind: "raw", raw });
+        expect(text).to.equal(`${json.slice(0, 59)}…`);
+        expect(title).to.equal(`Not a SemanticTagStruct: ${json}`);
+    });
+
+    it("renders an undefined raw entry without crashing", () => {
+        const { text } = describeSemanticTagListEntry({ kind: "raw", raw: undefined });
+        expect(text).to.equal("undefined");
     });
 });

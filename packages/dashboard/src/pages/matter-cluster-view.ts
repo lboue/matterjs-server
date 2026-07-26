@@ -29,7 +29,7 @@ import { DevModeService } from "../util/dev-mode-service.js";
 import { formatHex, formatNodeAddress, getEffectiveFabricIndex } from "../util/format_hex.js";
 import {
     decodeSemanticTagList,
-    describeSemanticTag,
+    describeSemanticTagListEntry,
     DESCRIPTOR_CLUSTER_ID,
     TAG_LIST_ATTR,
 } from "../util/semantic-tags.js";
@@ -413,9 +413,11 @@ class MatterClusterView extends LitElement {
                     ? html`<p class="empty">No semantic tags</p>`
                     : html`
                           <ul class="chip-list">
-                              ${tagList.map(semtag => {
-                                  const { text, title } = describeSemanticTag(semtag);
-                                  return html`<li class="chip" title=${title}>${text}</li>`;
+                              ${tagList.map(entry => {
+                                  const { text, title, erroneous } = describeSemanticTagListEntry(entry);
+                                  return html`<li class=${erroneous ? "chip chip-error" : "chip"} title=${title}>
+                                      ${text}
+                                  </li>`;
                               })}
                           </ul>
                       `}
@@ -743,6 +745,13 @@ class MatterClusterView extends LitElement {
                 background: var(--md-sys-color-secondary-container);
                 padding: 4px 10px;
                 border-radius: 8px;
+            }
+
+            .chip.chip-error {
+                color: var(--md-sys-color-on-error-container);
+                background: var(--md-sys-color-error-container);
+                border: 1px solid var(--md-sys-color-error);
+                font-family: var(--monospace-font);
             }
         `,
     ];
