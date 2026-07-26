@@ -9,7 +9,7 @@ This page shows a detailed overview of the changes between versions without the 
 
 ## **WORK IN PROGRESS**
 
-- Feature: (lboue) Dashboard cluster view shows a "Semantic Tags (TagList)" panel on the Descriptor cluster, decoding each tag's namespace/tag id into a readable name (e.g. `Common Position → Top`), with fallback to raw ids for unrecognized or manufacturer-specific tags
+- Feature: (lboue) Dashboard cluster view shows a "Semantic Tags (TagList)" panel on the Descriptor cluster
 - Fix: Fixes the DST determination
 - Fix: Command responses and events now expose acronym field names in the Python Matter Server casing (e.g. `videoStreamID`, `groupID`, `PAKEPasscodeVerifier`), matching the generated Python client and Home Assistant; the previous lowercased-acronym keys are still emitted alongside for compatibility
 

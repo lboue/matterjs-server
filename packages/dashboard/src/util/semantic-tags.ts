@@ -16,7 +16,7 @@ export interface SemanticTag {
     mfgCode: number | null;
     namespaceId: number;
     tag: number;
-    label?: string | null;
+    label: string | null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
