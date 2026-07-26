@@ -9,6 +9,7 @@ This page shows a detailed overview of the changes between versions without the 
 
 ## **WORK IN PROGRESS**
 
+- Feature: (lboue) Dashboard supports uploading a local `.ota` firmware file for a node, stored via a new `upload_ota_file` WebSocket command (schema 13)
 - Fix: Fixes the DST determination
 - Fix: Command responses and events now expose acronym field names in the Python Matter Server casing (e.g. `videoStreamID`, `groupID`, `PAKEPasscodeVerifier`), matching the generated Python client and Home Assistant; the previous lowercased-acronym keys are still emitted alongside for compatibility
 
