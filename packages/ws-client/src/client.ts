@@ -381,6 +381,11 @@ export class MatterClient {
         await this.sendCommand("update_node", 10, { node_id: nodeId, software_version: softwareVersion }, timeout);
     }
 
+    async uploadOtaFile(dataBase64: string, fileName?: string, timeout?: number): Promise<MatterSoftwareVersion> {
+        // Store a locally-uploaded .ota firmware file in the server's OTA image store.
+        return await this.sendCommand("upload_ota_file", 13, { data_base64: dataBase64, file_name: fileName }, timeout);
+    }
+
     async setACLEntry(nodeId: number | bigint, entry: AccessControlEntry[], timeout?: number) {
         return await this.sendCommand(
             "set_acl_entry",

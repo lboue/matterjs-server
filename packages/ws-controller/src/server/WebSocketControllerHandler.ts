@@ -87,14 +87,14 @@ function generateConnectionId(): string {
     return id.toString(16);
 }
 
-const SCHEMA_VERSION = 12;
+const SCHEMA_VERSION = 13;
 const MIN_SUPPORTED_SCHEMA_VERSION = 11;
 
 // Issuing any of these (schema 12) proves the connection is Thread-aware, so it opts the connection
 // in to `thread_diagnostics_updated` — even if the request itself errors. See the schema changelog.
 const THREAD_DIAGNOSTICS_OPT_IN_COMMANDS = new Set(["get_thread_diagnostics", "get_thread_border_routers"]);
 
-const skipMessageContentInLogFor = ["start_listening"];
+const skipMessageContentInLogFor = ["start_listening", "upload_ota_file"];
 
 /** Normalize a requested fabric label: matter.js requires a non-empty label of 1-32 chars. */
 function normalizeFabricLabel(label: string | null): string {
@@ -753,6 +753,9 @@ export class WebSocketControllerHandler implements WebServerHandler {
                     break;
                 case "update_node":
                     result = await this.#handleUpdateNode(args);
+                    break;
+                case "upload_ota_file":
+                    result = await this.#handleUploadOtaFile(args);
                     break;
                 case "server_info":
                     result = await this.#getServerInfo();
@@ -1541,6 +1544,17 @@ export class WebSocketControllerHandler implements WebServerHandler {
         const { node_id, software_version } = args;
         const targetVersion = typeof software_version === "string" ? parseInt(software_version, 10) : software_version;
         return await this.#commandHandler.updateNode(NodeId(node_id), targetVersion);
+    }
+
+    async #handleUploadOtaFile(args: ArgsOf<"upload_ota_file">): Promise<ResponseOf<"upload_ota_file">> {
+        const { data_base64, file_name } = args;
+        let data: Uint8Array<ArrayBuffer>;
+        try {
+            data = Bytes.fromBase64(data_base64) as Uint8Array<ArrayBuffer>;
+        } catch (error) {
+            throw ServerError.otaUploadError("Invalid file data", error as Error);
+        }
+        return await this.#commandHandler.uploadOtaFile(data, file_name);
     }
 
     #collectNodeDetails(nodeId: NodeId): MatterNode {

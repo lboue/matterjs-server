@@ -21,6 +21,7 @@ import {
     mdiShareVariant,
     mdiTrashCan,
     mdiUpdate,
+    mdiUpload,
     mdiVideo,
 } from "@mdi/js";
 import { LitElement, css, html, nothing } from "lit";
@@ -83,6 +84,9 @@ export class NodeDetails extends LitElement {
 
     @state()
     private _updateInitiated: boolean = false;
+
+    @state()
+    private _otaUploadInProgress: boolean = false;
 
     @consume({ context: bindingContext })
     endpoint!: number;
@@ -170,6 +174,13 @@ export class NodeDetails extends LitElement {
                               : html`<md-outlined-button @click=${handleAsync(() => this._searchUpdate())}
                                     >Update<ha-svg-icon slot="icon" .path=${mdiUpdate}></ha-svg-icon
                                 ></md-outlined-button>`}
+                        <md-outlined-button
+                            @click=${handleAsync(() => this._uploadOtaFile())}
+                            ?disabled=${this._otaUploadInProgress}
+                        >
+                            ${this._otaUploadInProgress ? "Uploading…" : "Upload Firmware"}
+                            <ha-svg-icon slot="icon" .path=${mdiUpload}></ha-svg-icon>
+                        </md-outlined-button>
                         ${isCamera
                             ? html`
                                   <md-outlined-button
@@ -193,6 +204,7 @@ export class NodeDetails extends LitElement {
                     </div>
                 </md-list-item>
             </md-list>
+            <input @change=${this._onOtaFileInput} type="file" id="otaFileElem" accept=".ota" style="display:none" />
         `;
     }
 
@@ -324,6 +336,56 @@ export class NodeDetails extends LitElement {
             this._updateInitiated = false;
         }
     }
+
+    private async _uploadOtaFile() {
+        if (
+            !(await showPromptDialog({
+                title: "Upload OTA firmware file",
+                text: "Select a local .ota firmware image to store on the server. It will only apply to devices whose vendor and product ID match the image.",
+                confirmText: "Select file",
+            }))
+        ) {
+            return;
+        }
+        const fileElem = this.shadowRoot!.getElementById("otaFileElem") as HTMLInputElement;
+        fileElem.click();
+    }
+
+    private _onOtaFileInput = (event: Event) => {
+        const fileElem = event.target as HTMLInputElement;
+        if (fileElem.files!.length > 0) {
+            const selectedFile = fileElem.files![0];
+            const reader = new FileReader();
+            reader.readAsDataURL(selectedFile);
+            reader.onload = async () => {
+                const dataUrl = reader.result?.toString() ?? "";
+                const dataBase64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+                try {
+                    this._otaUploadInProgress = true;
+                    const info = await this.client.uploadOtaFile(dataBase64, selectedFile.name);
+                    const nodeVendorId = this.node?.attributes["0/40/2"];
+                    const nodeProductId = this.node?.attributes["0/40/4"];
+                    if (nodeVendorId === info.vid && nodeProductId === info.pid) {
+                        await this._searchUpdate();
+                    } else {
+                        showAlertDialog({
+                            title: "Firmware stored",
+                            text: `Stored firmware for vendor 0x${info.vid.toString(16)} / product 0x${info.pid.toString(16)}, which does not match this device. It remains available on the server for a matching device.`,
+                        });
+                    }
+                } catch (err: any) {
+                    showAlertDialog({
+                        title: "Failed to upload firmware",
+                        text: err.message,
+                    });
+                } finally {
+                    this._otaUploadInProgress = false;
+                    fileElem.value = "";
+                }
+            };
+        }
+        event.preventDefault();
+    };
 
     private async _openCommissioningWindow() {
         if (

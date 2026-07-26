@@ -80,6 +80,8 @@ export enum ServerErrorCode {
     UpdateError = 11,
     /** OHF extension (not python-matter-server): value must equal ICD_MULTI_ADMIN_ERROR_CODE in ws-client model.ts. */
     IcdMultiAdmin = 100,
+    /** OHF extension (not python-matter-server): OTA firmware image upload failed (corrupt file / store failure). */
+    OtaUploadError = 101,
 }
 
 /**
@@ -142,6 +144,10 @@ export class ServerError extends Error {
 
     static updateError(message: string, cause?: Error): ServerError {
         return new ServerError(ServerErrorCode.UpdateError, message, cause);
+    }
+
+    static otaUploadError(message: string, cause?: Error): ServerError {
+        return new ServerError(ServerErrorCode.OtaUploadError, message, cause);
     }
 
     static icdMultiAdmin(adminVendorIds: number[]): ServerError {

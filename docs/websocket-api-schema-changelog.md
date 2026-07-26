@@ -10,6 +10,20 @@ The server-side constants live in `packages/ws-controller/src/server/WebSocketCo
 (`SCHEMA_VERSION`, `MIN_SUPPORTED_SCHEMA_VERSION`). Versions predating this document are not
 listed retroactively; entries start at the first version maintained here.
 
+## Schema 13
+
+Minimum supported: 11 (older clients keep working with the pre-13 command shapes).
+
+### OTA firmware upload
+
+- **New command `upload_ota_file`** → `{ data_base64: string, file_name?: string }` → `MatterSoftwareVersion`. Stores a
+  base64-encoded `.ota` firmware image (e.g. from a dashboard file picker) into the server's local OTA image store,
+  the same store populated by `--otaProviderDir` directory scanning. The returned `MatterSoftwareVersion` reflects
+  the vendor ID / product ID / software version parsed from the uploaded image's header, with `update_source` always
+  `"local"`. Once stored, the image is discoverable via `check_node_update` for any node whose vendor/product ID
+  matches — uploading does not target a specific node. Fails with the OHF-extension error code `OtaUploadError` (101)
+  on a corrupt/invalid image or if OTA support is disabled on the server.
+
 ## Schema 12
 
 Minimum supported: 11 (older clients keep working with the pre-12 command shapes).

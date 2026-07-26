@@ -11,6 +11,7 @@ import {
     camelize,
     ClientNode,
     CommissioningClient,
+    DclBehavior,
     FabricId,
     FabricIndex,
     IcdClient,
@@ -1762,6 +1763,40 @@ export class ControllerCommandHandler {
         );
 
         return this.#convertToMatterSoftwareVersion(updateInfo);
+    }
+
+    /**
+     * Store an uploaded OTA firmware image into the local OTA image store.
+     * @param data Raw bytes of the .ota file
+     * @param fileName Original file name, used to namespace the local otaUrl
+     */
+    async uploadOtaFile(data: Uint8Array<ArrayBuffer>, fileName?: string): Promise<MatterSoftwareVersion> {
+        if (!this.#otaEnabled) {
+            throw ServerError.otaUploadError("OTA is disabled");
+        }
+        try {
+            const otaService = await this.#controller.node.act(agent => agent.get(DclBehavior).otaUpdateService);
+            await otaService.construction;
+
+            const otaUrl = `local://${fileName ?? "upload"}`;
+            const blob = new Blob([data]);
+            const updateInfo = await otaService.updateInfoFromStream(blob.stream(), otaUrl);
+            await otaService.store(blob.stream(), updateInfo, "local");
+
+            return {
+                vid: updateInfo.vid,
+                pid: updateInfo.pid,
+                software_version: updateInfo.softwareVersion,
+                software_version_string: updateInfo.softwareVersionString,
+                min_applicable_software_version: updateInfo.minApplicableSoftwareVersion,
+                max_applicable_software_version: updateInfo.maxApplicableSoftwareVersion,
+                release_notes_url: updateInfo.releaseNotesUrl,
+                update_source: UpdateSource.LOCAL,
+            };
+        } catch (error) {
+            if (error instanceof ServerError) throw error;
+            throw ServerError.otaUploadError(`Failed to store OTA image: ${(error as Error).message}`, error as Error);
+        }
     }
 
     /**

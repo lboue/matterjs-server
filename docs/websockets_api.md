@@ -660,6 +660,23 @@ Entry fields:
 }
 ```
 
+**upload_ota_file** - Store a local `.ota` firmware file in the OTA image store
+
+The image is stored by vendor ID / product ID / software version parsed from its header, not
+tied to the node the upload was initiated from — `check_node_update` will surface it for any
+node whose vendor/product matches.
+
+```json
+{
+  "message_id": "1",
+  "command": "upload_ota_file",
+  "args": {
+    "data_base64": "<base64-encoded .ota file contents>",
+    "file_name": "my-device-v2.ota"
+  }
+}
+```
+
 ### ICD Management
 
 Manage this controller's Intermittently Connected Device (ICD) Check-In registration with a peer node.
