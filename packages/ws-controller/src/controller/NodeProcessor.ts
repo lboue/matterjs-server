@@ -9,6 +9,9 @@ import { PeerAddress, PeerAddressSet } from "@matter/main/protocol";
 
 const logger = Logger.get("NodeProcessor");
 
+// Timer.interval rejects anything outside the 32-bit signed range.
+export const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
 /**
  * Abstract base class for timer-driven periodic processing of registered nodes.
  * Handles timer lifecycle, node registration, and the per-node processing loop
@@ -69,6 +72,31 @@ export abstract class NodeProcessor {
         this.#timer.start();
     }
 
+    /**
+     * Override the delay before the next cycle. Only takes effect while no cycle is scheduled or
+     * running, so callers must apply it before scheduleIfNeeded() starts the timer.
+     */
+    protected setNextCycleDelay(delayMs: number): boolean {
+        if (!this.cycleDelayAdjustable) return false;
+        return this.#applyInterval(delayMs);
+    }
+
+    /** Whether setNextCycleDelay() can still take effect, so callers can skip computing a delay. */
+    protected get cycleDelayAdjustable(): boolean {
+        return !this.#timer.isRunning && !this.#isProcessing && !this.#closed;
+    }
+
+    /** Both assignment paths go through here, since nextCycleDelay() is open to any subclass. */
+    #applyInterval(delayMs: number): boolean {
+        if (!Number.isFinite(delayMs) || delayMs < 0) {
+            // A NaN passes Timer.interval's range check and then fires immediately, every cycle.
+            logger.warn(`Ignoring invalid cycle delay ${delayMs}`);
+            return false;
+        }
+        this.#timer.interval = Millis(Math.min(delayMs, MAX_TIMER_DELAY_MS));
+        return true;
+    }
+
     async stop(): Promise<void> {
         this.#closed = true;
         this.#currentDelayPromise?.cancel(new Error("Close"));
@@ -82,20 +110,43 @@ export abstract class NodeProcessor {
     /** Perform work for a single peer. Must handle its own errors. */
     protected abstract processNode(peer: PeerAddress): Promise<void>;
 
-    /** Called after a full processing cycle completes. Override for cycle-complete logging. */
+    /**
+     * Called once a cycle is committed to running, before the peer list is snapshotted. A peer
+     * registering after this point is not in the snapshot, so anything a subclass gates on "the first
+     * cycle has run" must open here rather than in onCycleComplete, or that peer falls between the two.
+     */
+    protected onCycleStart(): void {}
+
+    /**
+     * Called after a full processing cycle completes. `intervalFormatted` is empty when no next cycle
+     * was scheduled, i.e. every peer unregistered during this one.
+     */
     protected onCycleComplete(_processedCount: number, _intervalFormatted: string): void {}
+
+    /** Delay before the cycle that follows this one. Override to vary the cadence. */
+    protected nextCycleDelay(): Duration {
+        return this.#targetInterval;
+    }
 
     async #processAll(): Promise<void> {
         if (this.#isProcessing) return;
 
-        if (this.#timer.interval !== this.#targetInterval) {
-            this.#timer.interval = this.#targetInterval;
+        // A throw here would skip the finally below, leaving the timer stopped and this processor
+        // dead until a peer re-registers. The cadence is never worth that.
+        let nextInterval: Duration;
+        try {
+            nextInterval = this.nextCycleDelay();
+        } catch (error) {
+            logger.warn("Falling back to the target interval, computing the next cycle delay failed:", error);
+            nextInterval = this.#targetInterval;
         }
+        this.#applyInterval(nextInterval);
 
         this.#isProcessing = true;
         let processedCount = 0;
 
         try {
+            this.onCycleStart();
             const peers = Array.from(this.#peers);
             for (let i = 0; i < peers.length; i++) {
                 if (this.#closed) break;
@@ -116,7 +167,9 @@ export abstract class NodeProcessor {
         }
 
         if (!this.#closed) {
-            this.onCycleComplete(processedCount, Duration.format(this.#timer.interval));
+            // scheduleIfNeeded() declines to arm the timer with no peers left, so naming an interval
+            // then would point at a timer that is not running.
+            this.onCycleComplete(processedCount, this.#timer.isRunning ? Duration.format(this.#timer.interval) : "");
         }
     }
 }
