@@ -36,6 +36,9 @@ function makeTimeSyncAttrs(): AttributesData {
     return { [`0/${TIME_SYNC_CLUSTER_ID}/1`]: 1 };
 }
 
+// IcdManagement OperatingMode LIT + LongIdleTimeSupport, on a node reporting spec 1.4.0
+const LIT_ATTRS: AttributesData = { "0/70/8": 1, "0/70/65532": 1 << 2, "0/40/21": 0x01040000 };
+
 class StubConnector implements TimeSyncConnector {
     readonly syncCalls: PeerAddress[] = [];
     private readonly _connected = new PeerAddressSet();
@@ -404,9 +407,12 @@ describe("TimeSyncManager", () => {
                 await MockTime.yield3();
                 expect(connector.syncCalls.length, "first cycle must still run").to.be.greaterThan(0);
 
+                // The fallback delay is the full resync interval, and MockTime arms a timer restarted
+                // from inside its own callback relative to the end of the enclosing advance, so give
+                // the cycle several day-sized steps to land in.
                 const afterFirst = connector.syncCalls.length;
                 for (let i = 0; i < 3; i++) {
-                    await MockTime.advance(PAST_STARTUP_MS);
+                    await MockTime.advance(ONE_DAY_MS + ONE_MINUTE_MS);
                     await MockTime.yield3();
                 }
                 expect(connector.syncCalls.length, "timer must still be scheduled").to.be.greaterThan(afterFirst);
@@ -731,6 +737,32 @@ describe("TimeSyncManager", () => {
             connector.resolveAll();
             await stopPromise;
             expect(stopped).to.equal(true);
+        });
+
+        it("does not await an in-flight sync of a long idle time node", async () => {
+            connector.slowSync = true;
+            connector.setConnected(PEER_1);
+            manager.registerNode(PEER_1, { ...makeTimeSyncAttrs(), ...LIT_ATTRS });
+            manager.completeStartup();
+            manager.syncNode(PEER_1);
+
+            await manager.stop();
+            expect(connector.syncResolvers.length, "the push must still be pending").to.equal(1);
+            connector.resolveAll();
+        });
+
+        it("does not await an in-flight sync of a long idle time node that unregistered", async () => {
+            connector.slowSync = true;
+            connector.setConnected(PEER_1);
+            manager.registerNode(PEER_1, { ...makeTimeSyncAttrs(), ...LIT_ATTRS });
+            manager.completeStartup();
+            manager.syncNode(PEER_1);
+            // Unregistering clears the peer's LIT flag, so shutdown must not fall back to awaiting it.
+            manager.unregisterNode(PEER_1);
+
+            await manager.stop();
+            expect(connector.syncResolvers.length, "the push must still be pending").to.equal(1);
+            connector.resolveAll();
         });
     });
 });
