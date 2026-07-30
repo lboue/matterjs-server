@@ -20,6 +20,7 @@ import "./cluster-commands/clusters/binding-commands.js";
 import { clientContext, tickContext } from "../client/client-context.js";
 import { clusters } from "../client/models/descriptions.js";
 import "../components/ha-svg-icon";
+import { sourceClientClusters } from "../util/binding.js";
 import { getEndpointDeviceTypes } from "../util/endpoints.js";
 import { formatHex, formatNodeAddress, getEffectiveFabricIndex } from "../util/format_hex.js";
 import { notFoundStyles } from "../util/shared-styles.js";
@@ -41,6 +42,23 @@ function getUniqueClusters(node: MatterNode, endpoint: number) {
     ).sort((a, b) => {
         return a - b;
     });
+}
+
+interface EndpointCluster {
+    id: number;
+    isClient: boolean;
+}
+
+// Client-mode clusters (bound to a remote device) hold no local attribute storage, so they never
+// show up via getUniqueClusters; the Descriptor's ClientList is the only place they're recorded.
+function getEndpointClusters(node: MatterNode, endpoint: number): EndpointCluster[] {
+    const serverClusters = getUniqueClusters(node, endpoint);
+    const serverSet = new Set(serverClusters);
+    const clientOnlyClusters = sourceClientClusters(node, endpoint).filter(id => !serverSet.has(id));
+    return [
+        ...serverClusters.map(id => ({ id, isClient: false })),
+        ...clientOnlyClusters.map(id => ({ id, isClient: true })),
+    ].sort((a, b) => a.id - b.id);
 }
 
 export { getEndpointDeviceTypes };
@@ -117,15 +135,18 @@ class MatterEndpointView extends LitElement {
                                 .join(" / ")}
                         </div>
                     </md-list-item>
-                    ${guard([this.node?.attributes.length], () =>
-                        getUniqueClusters(this.node!, this.endpoint).map(cluster => {
+                    ${guard([Object.keys(this.node?.attributes ?? {}).length], () =>
+                        getEndpointClusters(this.node!, this.endpoint).map(cluster => {
                             return html`
                                 <md-list-item
                                     type="link"
-                                    href=${`#node/${this.node!.node_id}/${this.endpoint}/${cluster}`}
+                                    href=${`#node/${this.node!.node_id}/${this.endpoint}/${cluster.id}`}
                                 >
-                                    <div slot="headline">${clusters[cluster]?.label ?? "Custom/Unknown Cluster"}</div>
-                                    <div slot="supporting-text">ClusterId ${cluster} (${formatHex(cluster)})</div>
+                                    <div slot="headline">
+                                        ${clusters[cluster.id]?.label ?? "Custom/Unknown Cluster"}
+                                        ${cluster.isClient ? html`<span class="client-badge">CLIENT</span>` : nothing}
+                                    </div>
+                                    <div slot="supporting-text">ClusterId ${cluster.id} (${formatHex(cluster.id)})</div>
                                     <ha-svg-icon slot="end" .path=${mdiChevronRight}></ha-svg-icon>
                                 </md-list-item>
                             `;
@@ -177,6 +198,19 @@ class MatterEndpointView extends LitElement {
                 color: var(--danger-color);
                 font-weight: bold;
                 font-size: 0.8em;
+            }
+
+            .client-badge {
+                display: inline-block;
+                margin-left: 8px;
+                padding: 1px 6px;
+                border-radius: 4px;
+                font-size: 0.7rem;
+                font-weight: 600;
+                letter-spacing: 0.04em;
+                color: var(--md-sys-color-on-secondary-container);
+                background: var(--md-sys-color-secondary-container);
+                vertical-align: middle;
             }
         `,
     ];

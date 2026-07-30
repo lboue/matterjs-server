@@ -24,6 +24,7 @@ import { showCommandInvokeDialog } from "../components/dialogs/dev/show-command-
 import "../components/ha-svg-icon";
 import "../pages/components/node-details";
 // Cluster command components (auto-register on import)
+import { sourceClientClusters } from "../util/binding.js";
 import { computeActiveClusterFeatures } from "../util/cluster-features.js";
 import { DevModeService } from "../util/dev-mode-service.js";
 import { formatHex, formatNodeAddress, getEffectiveFabricIndex } from "../util/format_hex.js";
@@ -173,6 +174,7 @@ class MatterClusterView extends LitElement {
                         <div slot="supporting-text">ClusterId ${this.cluster} (${formatHex(this.cluster)})</div>
                     </md-list-item>
                     <md-divider></md-divider>
+                    ${this._isClientOnlyCluster() ? this._renderClientOnlyNotice() : nothing}
                     ${clusterAttributes(this.node.attributes, this.endpoint, this.cluster).map(
                         (attribute, index) => html`
                             <md-list-item class=${index % 2 === 1 ? "alternate-row" : ""}>
@@ -351,6 +353,26 @@ class MatterClusterView extends LitElement {
             commandId,
             commandName,
         });
+    }
+
+    // Client-mode clusters bind to a server hosted elsewhere and hold no local attribute storage,
+    // so the attribute list below is always empty for them.
+    private _isClientOnlyCluster(): boolean {
+        if (!this.node || this.cluster === undefined) return false;
+        const hasAttributes = clusterAttributes(this.node.attributes, this.endpoint, this.cluster).length > 0;
+        if (hasAttributes) return false;
+        return sourceClientClusters(this.node, this.endpoint).includes(this.cluster);
+    }
+
+    private _renderClientOnlyNotice(): TemplateResult {
+        return html`
+            <md-list-item>
+                <div slot="supporting-text" class="client-only-notice">
+                    This cluster is used in client mode on this endpoint. It binds to the cluster hosted on another
+                    device rather than hosting it itself, so there are no local attributes to display.
+                </div>
+            </md-list-item>
+        `;
     }
 
     private _renderClusterInfoPanel(): TemplateResult | typeof nothing {
@@ -649,6 +671,11 @@ class MatterClusterView extends LitElement {
                 color: var(--md-sys-color-on-surface-variant);
                 font-size: 0.9rem;
                 margin: 0;
+            }
+
+            .client-only-notice {
+                color: var(--md-sys-color-on-surface-variant);
+                font-size: 0.9rem;
             }
 
             .command-list {
