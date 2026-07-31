@@ -199,19 +199,21 @@ class AccessControlClusterCommands extends BaseClusterCommands {
             <details class="command-panel">
                 <summary>Access Control — ACL Entries (${entries.length})</summary>
                 <div class="command-content">
-                    ${overPrivilegedKeys.size >= 2
-                        ? html`<div class="banner">
-                              <span
-                                  >${overPrivilegedKeys.size} binding ACL entries grant Administer where Operate is
-                                  sufficient.</span
-                              >
-                              <md-outlined-button
-                                  ?disabled=${this._busy || !this.node.available}
-                                  @click=${handleAsync(() => this._fix(overPrivilegedKeys))}
-                                  >Fix all → Operate</md-outlined-button
-                              >
-                          </div>`
-                        : nothing}
+                    ${
+                        overPrivilegedKeys.size >= 2
+                            ? html`<div class="banner">
+                                  <span
+                                      >${overPrivilegedKeys.size} binding ACL entries grant Administer where Operate is
+                                      sufficient.</span
+                                  >
+                                  <md-outlined-button
+                                      ?disabled=${this._busy || !this.node.available}
+                                      @click=${handleAsync(() => this._fix(overPrivilegedKeys))}
+                                      >Fix all → Operate</md-outlined-button
+                                  >
+                              </div>`
+                            : nothing
+                    }
                     <table class="acl">
                         <thead>
                             <tr>
@@ -248,35 +250,39 @@ class AccessControlClusterCommands extends BaseClusterCommands {
                     <span class=${this._privilegeClass(entry.privilege)}
                         >${PRIVILEGE_NAMES[entry.privilege] ?? entry.privilege} · ${entry.privilege}</span
                     >
-                    ${overPrivileged
-                        ? html`<div>
-                              <md-outlined-button
-                                  class="fix"
-                                  ?disabled=${this._busy || !this.node.available}
-                                  @click=${handleAsync(() => this._fix(new Set([aclEntryKey(entry)])))}
-                                  >Fix → Operate</md-outlined-button
-                              >
-                          </div>`
-                        : nothing}
+                    ${
+                        overPrivileged
+                            ? html`<div>
+                                  <md-outlined-button
+                                      class="fix"
+                                      ?disabled=${this._busy || !this.node.available}
+                                      @click=${handleAsync(() => this._fix(new Set([aclEntryKey(entry)])))}
+                                      >Fix → Operate</md-outlined-button
+                                  >
+                              </div>`
+                            : nothing
+                    }
                 </td>
                 <td>${AUTH_MODE_NAMES[entry.authMode] ?? entry.authMode}</td>
                 <td>${this._renderSubjects(entry)}</td>
                 <td>${this._renderTargets(entry)}</td>
                 <td>${this._renderRelationship(rel)}</td>
                 <td>
-                    ${protectedEntry
-                        ? html`<ha-svg-icon
-                              class="lock"
-                              .path=${mdiLock}
-                              title="Your controller's administrator entry — deleting it would lock you out."
-                          ></ha-svg-icon>`
-                        : html`<md-outlined-button
-                              class="danger"
-                              ?disabled=${this._busy || !this.node.available}
-                              @click=${handleAsync(() => this._delete(entry))}
-                          >
-                              <ha-svg-icon .path=${mdiTrashCan} slot="icon"></ha-svg-icon>delete
-                          </md-outlined-button>`}
+                    ${
+                        protectedEntry
+                            ? html`<ha-svg-icon
+                                  class="lock"
+                                  .path=${mdiLock}
+                                  title="Your controller's administrator entry — deleting it would lock you out."
+                              ></ha-svg-icon>`
+                            : html`<md-outlined-button
+                                  class="danger"
+                                  ?disabled=${this._busy || !this.node.available}
+                                  @click=${handleAsync(() => this._delete(entry))}
+                              >
+                                  <ha-svg-icon .path=${mdiTrashCan} slot="icon"></ha-svg-icon>delete
+                              </md-outlined-button>`
+                    }
                 </td>
             </tr>
         `;

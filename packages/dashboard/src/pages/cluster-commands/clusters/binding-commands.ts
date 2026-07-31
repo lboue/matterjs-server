@@ -149,22 +149,24 @@ class BindingClusterCommands extends BaseClusterCommands {
             <details class="command-panel">
                 <summary>Bindings (${bindings.length})</summary>
                 <div class="command-content">
-                    ${bindings.length === 0
-                        ? html`<div class="empty">No bindings on this endpoint.</div>`
-                        : html`<table class="bt">
-                              <thead>
-                                  <tr>
-                                      <th>Target node</th>
-                                      <th>Endpoint</th>
-                                      <th>Cluster</th>
-                                      <th>ACL on target</th>
-                                      <th></th>
-                                  </tr>
-                              </thead>
-                              <tbody>
-                                  ${bindings.map((b, i) => this._row(b, i))}
-                              </tbody>
-                          </table>`}
+                    ${
+                        bindings.length === 0
+                            ? html`<div class="empty">No bindings on this endpoint.</div>`
+                            : html`<table class="bt">
+                                  <thead>
+                                      <tr>
+                                          <th>Target node</th>
+                                          <th>Endpoint</th>
+                                          <th>Cluster</th>
+                                          <th>ACL on target</th>
+                                          <th></th>
+                                      </tr>
+                                  </thead>
+                                  <tbody>
+                                      ${bindings.map((b, i) => this._row(b, i))}
+                                  </tbody>
+                              </table>`
+                    }
                     <md-outlined-button
                         ?disabled=${this._busy || !this.node.available}
                         @click=${handleAsync(() => this._openAdd())}
@@ -187,9 +189,9 @@ class BindingClusterCommands extends BaseClusterCommands {
             <tr>
                 <td>
                     <span class="ident"
-                        ><b>${name}</b>${b.node != null
-                            ? html` · <span class="nid">${b.node.toString()}</span>`
-                            : nothing}</span
+                        ><b>${name}</b>${
+                            b.node != null ? html` · <span class="nid">${b.node.toString()}</span>` : nothing
+                        }</span
                     >
                 </td>
                 <td>${endpointText}</td>
