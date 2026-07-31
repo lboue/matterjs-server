@@ -89,9 +89,11 @@ export class AttributeWriteDialog extends LitElement {
                         aria-describedby="write-path${this._error ? " write-error" : ""}"
                         rows="10"
                     ></textarea>
-                    ${this._error
-                        ? html`<div id="write-error" class="error" role="alert">${this._error}</div>`
-                        : nothing}
+                    ${
+                        this._error
+                            ? html`<div id="write-error" class="error" role="alert">${this._error}</div>`
+                            : nothing
+                    }
                 </div>
                 <div slot="actions">
                     <md-text-button @click=${this._close} ?disabled=${this._busy}>Cancel</md-text-button>

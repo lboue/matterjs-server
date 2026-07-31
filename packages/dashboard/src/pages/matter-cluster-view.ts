@@ -177,26 +177,32 @@ class MatterClusterView extends LitElement {
                         (attribute, index) => html`
                             <md-list-item class=${index % 2 === 1 ? "alternate-row" : ""}>
                                 <div slot="headline">
-                                    ${clusters[this.cluster!]?.attributes[attribute.key]?.label ??
-                                    "Custom/Unknown Attribute"}
+                                    ${
+                                        clusters[this.cluster!]?.attributes[attribute.key]?.label ??
+                                        "Custom/Unknown Attribute"
+                                    }
                                 </div>
                                 <div slot="supporting-text">
                                     AttributeId: ${attribute.key} (${formatHex(attribute.key)}) - Value type:
                                     ${clusters[this.cluster!]?.attributes[attribute.key]?.type ?? "unknown"}
                                 </div>
                                 <div slot="end" class="row-end">
-                                    ${this._devMode
-                                        ? this._renderAttributeDevActions(attribute.key, attribute.value)
-                                        : nothing}
-                                    ${toBigIntAwareJson(attribute.value).length > 30
-                                        ? html`<md-outlined-button
-                                              @click=${() => {
-                                                  this._showAttributeValue(attribute.value);
-                                              }}
-                                          >
-                                              Show value
-                                          </md-outlined-button>`
-                                        : html`<code>${toBigIntAwareJson(attribute.value)}</code>`}
+                                    ${
+                                        this._devMode
+                                            ? this._renderAttributeDevActions(attribute.key, attribute.value)
+                                            : nothing
+                                    }
+                                    ${
+                                        toBigIntAwareJson(attribute.value).length > 30
+                                            ? html`<md-outlined-button
+                                                  @click=${() => {
+                                                      this._showAttributeValue(attribute.value);
+                                                  }}
+                                              >
+                                                  Show value
+                                              </md-outlined-button>`
+                                            : html`<code>${toBigIntAwareJson(attribute.value)}</code>`
+                                    }
                                 </div>
                             </md-list-item>
                         `,
@@ -223,19 +229,21 @@ class MatterClusterView extends LitElement {
                 >
                     <ha-svg-icon .path=${mdiRefresh}></ha-svg-icon>
                 </md-outlined-icon-button>
-                ${meta?.writable
-                    ? html`
-                          <md-outlined-icon-button
-                              class="dev-action pencil"
-                              title="Write attribute…"
-                              aria-label="Write attribute"
-                              ?disabled=${!online}
-                              @click=${() => this._openAttributeWriteDialog(attributeId, currentValue, meta.label)}
-                          >
-                              <ha-svg-icon .path=${mdiPencil}></ha-svg-icon>
-                          </md-outlined-icon-button>
-                      `
-                    : nothing}
+                ${
+                    meta?.writable
+                        ? html`
+                              <md-outlined-icon-button
+                                  class="dev-action pencil"
+                                  title="Write attribute…"
+                                  aria-label="Write attribute"
+                                  ?disabled=${!online}
+                                  @click=${() => this._openAttributeWriteDialog(attributeId, currentValue, meta.label)}
+                              >
+                                  <ha-svg-icon .path=${mdiPencil}></ha-svg-icon>
+                              </md-outlined-icon-button>
+                          `
+                        : nothing
+                }
             </span>
         `;
     }
@@ -308,33 +316,35 @@ class MatterClusterView extends LitElement {
                         Commands
                     </summary>
                     <div class="dev-commands-content">
-                        ${commands.length === 0
-                            ? html`<p class="empty">No invokable commands for this cluster.</p>`
-                            : html`
-                                  <ul class="command-list">
-                                      ${commands.map(
-                                          cmd => html`
-                                              <li class="command-row">
-                                                  <div class="command-meta">
-                                                      <span class="command-label">${cmd.label}</span>
-                                                      <span class="command-sub"
-                                                          >CommandId ${cmd.id} (${formatHex(cmd.id)}) ·
-                                                          <code>${cmd.name}</code></span
+                        ${
+                            commands.length === 0
+                                ? html`<p class="empty">No invokable commands for this cluster.</p>`
+                                : html`
+                                      <ul class="command-list">
+                                          ${commands.map(
+                                              cmd => html`
+                                                  <li class="command-row">
+                                                      <div class="command-meta">
+                                                          <span class="command-label">${cmd.label}</span>
+                                                          <span class="command-sub"
+                                                              >CommandId ${cmd.id} (${formatHex(cmd.id)}) ·
+                                                              <code>${cmd.name}</code></span
+                                                          >
+                                                      </div>
+                                                      <md-outlined-button
+                                                          class="dev-invoke-button"
+                                                          ?disabled=${!online}
+                                                          @click=${() => this._openCommandInvokeDialog(cmd.id, cmd.name)}
                                                       >
-                                                  </div>
-                                                  <md-outlined-button
-                                                      class="dev-invoke-button"
-                                                      ?disabled=${!online}
-                                                      @click=${() => this._openCommandInvokeDialog(cmd.id, cmd.name)}
-                                                  >
-                                                      <ha-svg-icon slot="icon" .path=${mdiPlay}></ha-svg-icon>
-                                                      Invoke
-                                                  </md-outlined-button>
-                                              </li>
-                                          `,
-                                      )}
-                                  </ul>
-                              `}
+                                                          <ha-svg-icon slot="icon" .path=${mdiPlay}></ha-svg-icon>
+                                                          Invoke
+                                                      </md-outlined-button>
+                                                  </li>
+                                              `,
+                                          )}
+                                      </ul>
+                                  `
+                        }
                     </div>
                 </details>
             </div>
@@ -382,19 +392,21 @@ class MatterClusterView extends LitElement {
         return html`
             <div class="info-section">
                 <div class="info-section-header">Active Features</div>
-                ${activeFeatures.length === 0
-                    ? html`<p class="empty">No active features</p>`
-                    : html`
-                          <ul class="chip-list">
-                              ${activeFeatures.map(
-                                  feature => html`
-                                      <li class="chip" title="Bit ${feature.bit} (${feature.code})">
-                                          ${feature.label}
-                                      </li>
-                                  `,
-                              )}
-                          </ul>
-                      `}
+                ${
+                    activeFeatures.length === 0
+                        ? html`<p class="empty">No active features</p>`
+                        : html`
+                              <ul class="chip-list">
+                                  ${activeFeatures.map(
+                                      feature => html`
+                                          <li class="chip" title="Bit ${feature.bit} (${feature.code})">
+                                              ${feature.label}
+                                          </li>
+                                      `,
+                                  )}
+                              </ul>
+                          `
+                }
             </div>
         `;
     }
@@ -409,18 +421,20 @@ class MatterClusterView extends LitElement {
         return html`
             <div class="info-section">
                 <div class="info-section-header">Semantic Tags (TagList)</div>
-                ${tagList.length === 0
-                    ? html`<p class="empty">No semantic tags</p>`
-                    : html`
-                          <ul class="chip-list">
-                              ${tagList.map(entry => {
-                                  const { text, title, erroneous } = describeSemanticTagListEntry(entry);
-                                  return html`<li class=${erroneous ? "chip chip-error" : "chip"} title=${title}>
-                                      ${text}
-                                  </li>`;
-                              })}
-                          </ul>
-                      `}
+                ${
+                    tagList.length === 0
+                        ? html`<p class="empty">No semantic tags</p>`
+                        : html`
+                              <ul class="chip-list">
+                                  ${tagList.map(entry => {
+                                      const { text, title, erroneous } = describeSemanticTagListEntry(entry);
+                                      return html`<li class=${erroneous ? "chip chip-error" : "chip"} title=${title}>
+                                          ${text}
+                                      </li>`;
+                                  })}
+                              </ul>
+                          `
+                }
             </div>
         `;
     }

@@ -91,15 +91,17 @@ class MatterEndpointView extends LitElement {
             </div>
 
             <!-- Binding editor (when this endpoint has a Binding cluster) -->
-            ${getUniqueClusters(this.node, this.endpoint).includes(30)
-                ? html`<div class="container">
-                      <binding-cluster-commands
-                          .node=${this.node}
-                          .endpoint=${this.endpoint}
-                          .cluster=${30}
-                      ></binding-cluster-commands>
-                  </div>`
-                : nothing}
+            ${
+                getUniqueClusters(this.node, this.endpoint).includes(30)
+                    ? html`<div class="container">
+                          <binding-cluster-commands
+                              .node=${this.node}
+                              .endpoint=${this.endpoint}
+                              .cluster=${30}
+                          ></binding-cluster-commands>
+                      </div>`
+                    : nothing
+            }
 
             <!-- Endpoint clusters listing -->
             <div class="container">
