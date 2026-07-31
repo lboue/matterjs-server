@@ -94,17 +94,15 @@ class MatterEndpointView extends LitElement {
             ${this._renderClientClustersSection()}
 
             <!-- Binding editor (when this endpoint has a Binding cluster) -->
-            ${
-                getUniqueClusters(this.node, this.endpoint).includes(30)
-                    ? html`<div class="container">
-                          <binding-cluster-commands
-                              .node=${this.node}
-                              .endpoint=${this.endpoint}
-                              .cluster=${30}
-                          ></binding-cluster-commands>
-                      </div>`
-                    : nothing
-            }
+            ${getUniqueClusters(this.node, this.endpoint).includes(30)
+                ? html`<div class="container">
+                      <binding-cluster-commands
+                          .node=${this.node}
+                          .endpoint=${this.endpoint}
+                          .cluster=${30}
+                      ></binding-cluster-commands>
+                  </div>`
+                : nothing}
 
             <!-- Endpoint clusters listing -->
             <div class="container">
@@ -247,8 +245,8 @@ class MatterEndpointView extends LitElement {
             }
 
             .chip.chip-bound {
-                color: var(--md-sys-color-on-tertiary-container);
-                background: var(--md-sys-color-tertiary-container);
+                color: var(--md-sys-color-on-primary-container);
+                background: var(--md-sys-color-primary-container);
                 font-weight: 500;
             }
         `,
