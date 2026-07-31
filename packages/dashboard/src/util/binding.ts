@@ -60,6 +60,14 @@ export function sourceClientClusters(node: MatterNode, endpoint: number): number
     return numberList(node, `${endpoint}/29/2`);
 }
 
+// A binding entry without a Cluster field targets the whole endpoint (all its client clusters),
+// per the Binding cluster spec, rather than a single cluster.
+export function boundClientClusterIds(node: MatterNode, endpoint: number): Set<number> {
+    const bindings = readBindings(node, endpoint);
+    if (bindings.some(b => b.cluster === undefined)) return new Set(sourceClientClusters(node, endpoint));
+    return new Set(bindings.map(b => b.cluster).filter((c): c is number => c !== undefined));
+}
+
 export interface BindableClusters {
     bindable: number[];
     otherTarget: number[];

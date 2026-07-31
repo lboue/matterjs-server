@@ -13,14 +13,14 @@ import "@material/web/list/list-item";
 import { consume } from "@lit/context";
 import { MatterClient, MatterNode, isTestNodeId } from "@matter-server/ws-client";
 import { mdiAlertCircleOutline, mdiChevronRight } from "@mdi/js";
-import { LitElement, css, html, nothing } from "lit";
+import { LitElement, type TemplateResult, css, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { guard } from "lit/directives/guard.js";
 import "./cluster-commands/clusters/binding-commands.js";
 import { clientContext, tickContext } from "../client/client-context.js";
 import { clusters } from "../client/models/descriptions.js";
 import "../components/ha-svg-icon";
-import { sourceClientClusters } from "../util/binding.js";
+import { boundClientClusterIds, sourceClientClusters } from "../util/binding.js";
 import { getEndpointDeviceTypes } from "../util/endpoints.js";
 import { formatHex, formatNodeAddress, getEffectiveFabricIndex } from "../util/format_hex.js";
 import { notFoundStyles } from "../util/shared-styles.js";
@@ -42,23 +42,6 @@ function getUniqueClusters(node: MatterNode, endpoint: number) {
     ).sort((a, b) => {
         return a - b;
     });
-}
-
-interface EndpointCluster {
-    id: number;
-    isClient: boolean;
-}
-
-// Client-mode clusters (bound to a remote device) hold no local attribute storage, so they never
-// show up via getUniqueClusters; the Descriptor's ClientList is the only place they're recorded.
-function getEndpointClusters(node: MatterNode, endpoint: number): EndpointCluster[] {
-    const serverClusters = getUniqueClusters(node, endpoint);
-    const serverSet = new Set(serverClusters);
-    const clientOnlyClusters = sourceClientClusters(node, endpoint).filter(id => !serverSet.has(id));
-    return [
-        ...serverClusters.map(id => ({ id, isClient: false })),
-        ...clientOnlyClusters.map(id => ({ id, isClient: true })),
-    ].sort((a, b) => a.id - b.id);
 }
 
 export { getEndpointDeviceTypes };
@@ -108,6 +91,8 @@ class MatterEndpointView extends LitElement {
                 <node-details .node=${this.node}></node-details>
             </div>
 
+            ${this._renderClientClustersSection()}
+
             <!-- Binding editor (when this endpoint has a Binding cluster) -->
             ${getUniqueClusters(this.node, this.endpoint).includes(30)
                 ? html`<div class="container">
@@ -136,17 +121,14 @@ class MatterEndpointView extends LitElement {
                         </div>
                     </md-list-item>
                     ${guard([Object.keys(this.node?.attributes ?? {}).length], () =>
-                        getEndpointClusters(this.node!, this.endpoint).map(cluster => {
+                        getUniqueClusters(this.node!, this.endpoint).map(cluster => {
                             return html`
                                 <md-list-item
                                     type="link"
-                                    href=${`#node/${this.node!.node_id}/${this.endpoint}/${cluster.id}`}
+                                    href=${`#node/${this.node!.node_id}/${this.endpoint}/${cluster}`}
                                 >
-                                    <div slot="headline">
-                                        ${clusters[cluster.id]?.label ?? "Custom/Unknown Cluster"}
-                                        ${cluster.isClient ? html`<span class="client-badge">CLIENT</span>` : nothing}
-                                    </div>
-                                    <div slot="supporting-text">ClusterId ${cluster.id} (${formatHex(cluster.id)})</div>
+                                    <div slot="headline">${clusters[cluster]?.label ?? "Custom/Unknown Cluster"}</div>
+                                    <div slot="supporting-text">ClusterId ${cluster} (${formatHex(cluster)})</div>
                                     <ha-svg-icon slot="end" .path=${mdiChevronRight}></ha-svg-icon>
                                 </md-list-item>
                             `;
@@ -159,6 +141,38 @@ class MatterEndpointView extends LitElement {
 
     private _goBack() {
         history.back();
+    }
+
+    // Client-mode clusters only matter if there's a Binding cluster to point them somewhere, so
+    // the section stays hidden otherwise rather than listing clusters nothing can act on.
+    private _renderClientClustersSection(): TemplateResult | typeof nothing {
+        if (!this.node || !getUniqueClusters(this.node, this.endpoint).includes(30)) return nothing;
+        const clientClusters = sourceClientClusters(this.node, this.endpoint);
+        if (clientClusters.length === 0) return nothing;
+        const boundClusterIds = boundClientClusterIds(this.node, this.endpoint);
+
+        return html`
+            <div class="container">
+                <div class="info-panel">
+                    <div class="info-section">
+                        <div class="info-section-header">Client Clusters</div>
+                        <ul class="chip-list">
+                            ${clientClusters.map(id => {
+                                const bound = boundClusterIds.has(id);
+                                return html`
+                                    <li
+                                        class=${bound ? "chip chip-bound" : "chip"}
+                                        title=${bound ? "Bound" : "Not bound"}
+                                    >
+                                        ${clusters[id]?.label ?? "Custom/Unknown Cluster"}
+                                    </li>
+                                `;
+                            })}
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        `;
     }
 
     static override styles = [
@@ -200,17 +214,40 @@ class MatterEndpointView extends LitElement {
                 font-size: 0.8em;
             }
 
-            .client-badge {
-                display: inline-block;
-                margin-left: 8px;
-                padding: 1px 6px;
-                border-radius: 4px;
-                font-size: 0.7rem;
-                font-weight: 600;
-                letter-spacing: 0.04em;
+            .info-panel {
+                background-color: var(--md-sys-color-surface-container);
+                border: 1px solid var(--md-sys-color-outline-variant);
+                border-radius: 12px;
+                padding: 14px 16px;
+            }
+
+            .info-section-header {
+                font-weight: 500;
+                color: var(--md-sys-color-on-surface);
+                margin-bottom: 10px;
+            }
+
+            .chip-list {
+                list-style: none;
+                margin: 0;
+                padding: 0;
+                display: flex;
+                flex-wrap: wrap;
+                gap: 8px;
+            }
+
+            .chip {
+                font-size: 0.85rem;
                 color: var(--md-sys-color-on-secondary-container);
                 background: var(--md-sys-color-secondary-container);
-                vertical-align: middle;
+                padding: 4px 10px;
+                border-radius: 8px;
+            }
+
+            .chip.chip-bound {
+                color: var(--md-sys-color-on-tertiary-container);
+                background: var(--md-sys-color-tertiary-container);
+                font-weight: 500;
             }
         `,
     ];

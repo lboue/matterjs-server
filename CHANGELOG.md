@@ -9,7 +9,7 @@ This page shows a detailed overview of the changes between versions without the 
 
 ## **WORK IN PROGRESS**
 
-- Feature: (lboue) Dashboard endpoint view now also lists client-mode clusters (from the Descriptor's ClientList), marked with a CLIENT badge, alongside the server clusters it already showed; the cluster detail view explains why a client-mode cluster has no attributes to display
+- Feature: (lboue) Dashboard endpoint view shows a "Client Clusters" chip panel (from the Descriptor's ClientList) when the endpoint has a Binding cluster, marking clusters already covered by an existing binding as "Bound"; the cluster detail view explains why a client-mode cluster has no attributes to display
 
 ## 1.3.3 (2026-07-28)
 
