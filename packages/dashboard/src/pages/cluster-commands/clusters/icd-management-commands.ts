@@ -165,27 +165,23 @@ export class IcdManagementClusterCommands extends BaseClusterCommands {
                 <summary>Power & Sleep (ICD)</summary>
                 <div class="command-content">
                     <p>This device saves power by sleeping between short check-in windows.</p>
-                    ${
-                        info.operatingMode === "LIT"
-                            ? html`<p class="info-banner">
-                                  This device is currently in <b>Battery Saver Mode</b>: any action you trigger
-                                  (commands, reads, re-subscriptions) may take up to <b>${this._idleText}</b> while the
-                                  device sleeps. Updates reported by the device itself (e.g. sensor changes) are not
-                                  delayed — the device wakes up on its own to report them.
-                                  ${
-                                      this.node.available
-                                          ? nothing
-                                          : html`<br /><b class="offline-line"
-                                                    >The device is currently offline — reconnecting on its own can take
-                                                    up to ${this._idleText}.</b
-                                                >`
-                                  }
-                              </p>`
-                            : html`<p>
-                                  Current mode: <b>Standard</b> — the device sleeps between short check-ins and
-                                  typically reacts within seconds to a few minutes.
-                              </p>`
-                    }
+                    ${info.operatingMode === "LIT"
+                        ? html`<p class="info-banner">
+                              This device is currently in <b>Battery Saver Mode</b>: any action you trigger (commands,
+                              reads, re-subscriptions) may take up to <b>${this._idleText}</b> while the device sleeps.
+                              Updates reported by the device itself (e.g. sensor changes) are not delayed — the device
+                              wakes up on its own to report them.
+                              ${this.node.available
+                                  ? nothing
+                                  : html`<br /><b class="offline-line"
+                                            >The device is currently offline — reconnecting on its own can take up to
+                                            ${this._idleText}.</b
+                                        >`}
+                          </p>`
+                        : html`<p>
+                              Current mode: <b>Standard</b> — the device sleeps between short check-ins and typically
+                              reacts within seconds to a few minutes.
+                          </p>`}
                     ${info.features.userActiveModeTrigger ? this._renderWakeHint(info) : nothing}
                     ${info.features.longIdleTimeSupport || this._registered ? this._renderIcdManagement() : nothing}
                 </div>
@@ -272,12 +268,10 @@ export class IcdManagementClusterCommands extends BaseClusterCommands {
                 Every ecosystem (e.g. Apple, Google) this device is paired with must support Battery Saver Mode (called
                 Matter LIT (Long Idle Time) ICD). You can switch back to Standard Mode later as long as no other
                 ecosystem is registered for it.
-                ${
-                    !single && !this._registered
-                        ? html` This device is already paired with <b>${this._commissionedFabrics - 1}</b> other
-                              ecosystem(s).`
-                        : nothing
-                }
+                ${!single && !this._registered
+                    ? html` This device is already paired with <b>${this._commissionedFabrics - 1}</b> other
+                          ecosystem(s).`
+                    : nothing}
             </p>
             <div class="command-row">
                 <md-filled-button
@@ -293,12 +287,10 @@ export class IcdManagementClusterCommands extends BaseClusterCommands {
                 >
                     Resync state
                 </md-outlined-button>
-                ${
-                    this._busy
-                        ? html`<md-circular-progress indeterminate></md-circular-progress>
-                              <span class="busy">${this._busyLabel}</span>`
-                        : nothing
-                }
+                ${this._busy
+                    ? html`<md-circular-progress indeterminate></md-circular-progress>
+                          <span class="busy">${this._busyLabel}</span>`
+                    : nothing}
             </div>
         `;
     }
@@ -322,15 +314,13 @@ export class IcdManagementClusterCommands extends BaseClusterCommands {
             </p>
             <p>
                 <b>Important:</b>
-                ${
-                    single
-                        ? html`every ecosystem (e.g. Apple, Google) you pair this device with later must support Battery
-                          Saver Mode (called Matter LIT (Long Idle Time) ICD). In an ecosystem without support the
-                          device will appear offline or unresponsive.`
-                        : html`this device is already paired with <b>${this._commissionedFabrics - 1}</b> other
-                              ecosystem(s). All of them must support Battery Saver Mode (called Matter LIT (Long Idle
-                              Time) ICD), otherwise the device will appear offline or unresponsive in those ecosystems.`
-                }
+                ${single
+                    ? html`every ecosystem (e.g. Apple, Google) you pair this device with later must support Battery
+                      Saver Mode (called Matter LIT (Long Idle Time) ICD). In an ecosystem without support the device
+                      will appear offline or unresponsive.`
+                    : html`this device is already paired with <b>${this._commissionedFabrics - 1}</b> other
+                          ecosystem(s). All of them must support Battery Saver Mode (called Matter LIT (Long Idle Time)
+                          ICD), otherwise the device will appear offline or unresponsive in those ecosystems.`}
             </p>
             <p>
                 You can switch back to Standard Mode later as long as no other ecosystem is registered for Battery Saver

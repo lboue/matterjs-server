@@ -130,56 +130,48 @@ class ChimeClusterCommands extends BaseClusterCommands {
 
                     <div class="sounds">
                         <div class="sounds-header">Installed sounds (${sounds.length})</div>
-                        ${
-                            sounds.length === 0
-                                ? html`<div class="muted empty">No sounds installed.</div>`
-                                : sounds.map(
-                                      s => html`
-                                          <div
-                                              class="sound-row ${s.chimeId === selected ? "selected" : ""}"
-                                              @click=${handleAsync(() =>
-                                                  setSelected(this.client, this.node.node_id, this.endpoint, s.chimeId),
-                                              )}
-                                          >
-                                              <span class="pid">#${s.chimeId}</span>
-                                              <span class="pname">${s.name}</span>
-                                              ${
-                                                  s.chimeId === selected
-                                                      ? html`<span class="muted">✓ selected</span>`
-                                                      : nothing
-                                              }
-                                              <span class="grow"></span>
-                                              ${
-                                                  showPerRowPlay
-                                                      ? html`<md-icon-button
-                                                            ?disabled=${!enabled}
-                                                            @click=${handleAsyncEvent((e: Event) => {
-                                                                e.stopPropagation();
-                                                                return chimePlay(
-                                                                    this.client,
-                                                                    this.node.node_id,
-                                                                    this.endpoint,
-                                                                    s.chimeId,
-                                                                );
-                                                            })}
-                                                        >
-                                                            <ha-svg-icon .path=${mdiPlay}></ha-svg-icon>
-                                                        </md-icon-button>`
-                                                      : nothing
-                                              }
-                                          </div>
-                                      `,
-                                  )
-                        }
+                        ${sounds.length === 0
+                            ? html`<div class="muted empty">No sounds installed.</div>`
+                            : sounds.map(
+                                  s => html`
+                                      <div
+                                          class="sound-row ${s.chimeId === selected ? "selected" : ""}"
+                                          @click=${handleAsync(() =>
+                                              setSelected(this.client, this.node.node_id, this.endpoint, s.chimeId),
+                                          )}
+                                      >
+                                          <span class="pid">#${s.chimeId}</span>
+                                          <span class="pname">${s.name}</span>
+                                          ${s.chimeId === selected
+                                              ? html`<span class="muted">✓ selected</span>`
+                                              : nothing}
+                                          <span class="grow"></span>
+                                          ${showPerRowPlay
+                                              ? html`<md-icon-button
+                                                    ?disabled=${!enabled}
+                                                    @click=${handleAsyncEvent((e: Event) => {
+                                                        e.stopPropagation();
+                                                        return chimePlay(
+                                                            this.client,
+                                                            this.node.node_id,
+                                                            this.endpoint,
+                                                            s.chimeId,
+                                                        );
+                                                    })}
+                                                >
+                                                    <ha-svg-icon .path=${mdiPlay}></ha-svg-icon>
+                                                </md-icon-button>`
+                                              : nothing}
+                                      </div>
+                                  `,
+                              )}
                     </div>
 
-                    ${
-                        showLastPlayed
-                            ? html`<div class="last-played">
-                                  Last played: ${lastSoundName} · ${new Date(this._lastPlayed!.at).toLocaleTimeString()}
-                              </div>`
-                            : nothing
-                    }
+                    ${showLastPlayed
+                        ? html`<div class="last-played">
+                              Last played: ${lastSoundName} · ${new Date(this._lastPlayed!.at).toLocaleTimeString()}
+                          </div>`
+                        : nothing}
                 </div>
             </details>
         `;
