@@ -4210,8 +4210,8 @@ export const clusters: Record<number, ClusterDescription> = {
             }
         },
         "features": {
-            "0": {
-                "bit": 0,
+            "20": {
+                "bit": 20,
                 "code": "BIS",
                 "label": "Bridged Icd Support"
             }
@@ -5763,8 +5763,8 @@ export const clusters: Record<number, ClusterDescription> = {
                 "code": "DEPONOFF",
                 "label": "On Off"
             },
-            "1": {
-                "bit": 1,
+            "20": {
+                "bit": 20,
                 "code": "DIRECTMODECH",
                 "label": "Direct Mode Change"
             }
@@ -5859,8 +5859,8 @@ export const clusters: Record<number, ClusterDescription> = {
                 "code": "DEPONOFF",
                 "label": "On Off"
             },
-            "1": {
-                "bit": 1,
+            "20": {
+                "bit": 20,
                 "code": "DIRECTMODECH",
                 "label": "Direct Mode Change"
             }
@@ -7252,48 +7252,53 @@ export const clusters: Record<number, ClusterDescription> = {
                 "code": "RESET",
                 "label": "Reset"
             },
-            "1": {
-                "bit": 1,
+            "20": {
+                "bit": 20,
+                "code": "OVER",
+                "label": "Over Temperature"
+            },
+            "21": {
+                "bit": 21,
                 "code": "UNDER",
                 "label": "Under Temperature"
             },
-            "2": {
-                "bit": 2,
+            "22": {
+                "bit": 22,
                 "code": "MAJOR",
                 "label": "Major Threshold"
             },
-            "3": {
-                "bit": 3,
+            "23": {
+                "bit": 23,
                 "code": "MINOR",
                 "label": "Minor Threshold"
             },
-            "4": {
-                "bit": 4,
+            "24": {
+                "bit": 24,
                 "code": "OCRIADJ",
                 "label": "Over Critical Adjustable"
             },
-            "5": {
-                "bit": 5,
+            "25": {
+                "bit": 25,
                 "code": "OMAJADJ",
                 "label": "Over Major Adjustable"
             },
-            "6": {
-                "bit": 6,
+            "26": {
+                "bit": 26,
                 "code": "OMINADJ",
                 "label": "Over Minor Adjustable"
             },
-            "7": {
-                "bit": 7,
+            "27": {
+                "bit": 27,
                 "code": "UMINADJ",
                 "label": "Under Minor Adjustable"
             },
-            "8": {
-                "bit": 8,
+            "28": {
+                "bit": 28,
                 "code": "UMAJADJ",
                 "label": "Under Major Adjustable"
             },
-            "9": {
-                "bit": 9,
+            "29": {
+                "bit": 29,
                 "code": "UCRIADJ",
                 "label": "Under Critical Adjustable"
             }
@@ -10236,53 +10241,53 @@ export const clusters: Record<number, ClusterDescription> = {
                 "code": "FGP",
                 "label": "Finger Credentials"
             },
-            "3": {
-                "bit": 3,
+            "4": {
+                "bit": 4,
                 "code": "WDSCH",
                 "label": "Week Day Access Schedules"
             },
-            "4": {
-                "bit": 4,
+            "5": {
+                "bit": 5,
                 "code": "DPS",
                 "label": "Door Position Sensor"
             },
-            "5": {
-                "bit": 5,
+            "6": {
+                "bit": 6,
                 "code": "FACE",
                 "label": "Face Credentials"
             },
-            "6": {
-                "bit": 6,
+            "7": {
+                "bit": 7,
                 "code": "COTA",
                 "label": "Credential Over The Air Access"
             },
-            "7": {
-                "bit": 7,
+            "8": {
+                "bit": 8,
                 "code": "USR",
                 "label": "User"
             },
-            "8": {
-                "bit": 8,
+            "10": {
+                "bit": 10,
                 "code": "YDSCH",
                 "label": "Year Day Access Schedules"
             },
-            "9": {
-                "bit": 9,
+            "11": {
+                "bit": 11,
                 "code": "HDSCH",
                 "label": "Holiday Schedules"
             },
-            "10": {
-                "bit": 10,
+            "12": {
+                "bit": 12,
                 "code": "UBOLT",
                 "label": "Unbolting"
             },
-            "11": {
-                "bit": 11,
+            "13": {
+                "bit": 13,
                 "code": "ALIRO",
                 "label": "Aliro Provisioning"
             },
-            "12": {
-                "bit": 12,
+            "14": {
+                "bit": 14,
                 "code": "ALBU",
                 "label": "Aliro Bleuwb"
             }
@@ -10481,8 +10486,8 @@ export const clusters: Record<number, ClusterDescription> = {
                 "code": "PA_LF",
                 "label": "Position Aware Lift"
             },
-            "3": {
-                "bit": 3,
+            "4": {
+                "bit": 4,
                 "code": "PA_TL",
                 "label": "Position Aware Tilt"
             }
@@ -11736,38 +11741,38 @@ export const clusters: Record<number, ClusterDescription> = {
                 "code": "OCC",
                 "label": "Occupancy"
             },
-            "3": {
-                "bit": 3,
+            "4": {
+                "bit": 4,
                 "code": "SB",
                 "label": "Setback"
             },
-            "4": {
-                "bit": 4,
+            "5": {
+                "bit": 5,
                 "code": "AUTO",
                 "label": "Auto Mode"
             },
-            "5": {
-                "bit": 5,
+            "6": {
+                "bit": 6,
                 "code": "LTNE",
                 "label": "Local Temperature Not Exposed"
             },
-            "6": {
-                "bit": 6,
+            "7": {
+                "bit": 7,
                 "code": "MSCH",
                 "label": "Matter Schedule Configuration"
             },
-            "7": {
-                "bit": 7,
+            "8": {
+                "bit": 8,
                 "code": "PRES",
                 "label": "Presets"
             },
-            "8": {
-                "bit": 8,
+            "9": {
+                "bit": 9,
                 "code": "TEVT",
                 "label": "Events"
             },
-            "9": {
-                "bit": 9,
+            "10": {
+                "bit": 10,
                 "code": "TSUGGEST",
                 "label": "Thermostat Suggestions"
             }
@@ -13196,8 +13201,8 @@ export const clusters: Record<number, ClusterDescription> = {
                 "code": "VIS",
                 "label": "Vision"
             },
-            "8": {
-                "bit": 8,
+            "9": {
+                "bit": 9,
                 "code": "OCCEVENT",
                 "label": "Occupancy Event"
             }
