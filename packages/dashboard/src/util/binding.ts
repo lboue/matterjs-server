@@ -22,7 +22,7 @@ import {
 
 export const BINDING_CLUSTER_ID = 30;
 
-const BINDING_KEY_RE = /^(\d+)\/30\/0$/;
+const BINDING_KEY_RE = new RegExp(`^(\\d+)/${BINDING_CLUSTER_ID}/0$`);
 
 export function readBindings(node: MatterNode, endpoint: number): BindingEntryStruct[] {
     return attributeArray(node.attributes[`${endpoint}/${BINDING_CLUSTER_ID}/0`]).map(value =>
@@ -63,10 +63,9 @@ export function sourceClientClusters(node: MatterNode, endpoint: number): number
 /**
  * Client clusters on the endpoint that an existing binding of our fabric already covers.
  *
- * Explicit reads are not fabric-filtered, so the cached binding attribute can hold other fabrics'
- * entries; those must not be reported as bound. Per the Binding cluster spec an entry with no
- * Cluster field covers every client cluster on the endpoint — whole-endpoint unicast and group
- * bindings both take that form.
+ * Per the Binding cluster spec an entry with no Cluster field covers every client cluster on the
+ * endpoint — whole-endpoint unicast and group bindings both take that form. The fabric filter keeps
+ * the result correct even if a caller ever populates the cache from an unfiltered read.
  */
 export function boundClientClusterIds(node: MatterNode, endpoint: number): Set<number> {
     const fabricIndex = nodeFabricIndex(node);

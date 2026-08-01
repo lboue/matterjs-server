@@ -261,9 +261,10 @@ class MatterClusterView extends LitElement {
 
         this._refreshState = { ...this._refreshState, [attributeId]: "loading" };
         try {
-            const result = await this.client.readAttribute(nodeId, path);
+            // Fabric-filtered to match the subscription: matter.js discards a read whose filtering
+            // differs, so an unfiltered one would put values into the cache that nothing ever refreshes.
+            const result = await this.client.readAttribute(nodeId, path, undefined, true);
             if (!isSameContext()) return;
-            // Defensive merge — attribute_updated events usually do this already.
             for (const [key, value] of Object.entries(result)) {
                 this.node.attributes[key] = value;
             }

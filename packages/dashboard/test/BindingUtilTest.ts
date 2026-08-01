@@ -76,7 +76,6 @@ describe("binding util", () => {
     });
 
     it("boundClientClusterIds ignores entries belonging to another fabric", () => {
-        // Explicit reads are not fabric-filtered, so the cache can hold foreign-fabric entries.
         const n = node({
             "0/62/5": 1,
             "1/29/2": [6, 768],

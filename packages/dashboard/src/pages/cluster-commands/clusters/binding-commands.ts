@@ -76,8 +76,13 @@ class BindingClusterCommands extends BaseClusterCommands {
         }
     }
 
+    /**
+     * Fabric-filtered so the merged values match what the subscription caches: matter.js only feeds
+     * a one-shot read back into the datasource when its filtering matches the subscription's, so an
+     * unfiltered response would put other fabrics' entries into the cache and nothing would clear them.
+     */
     private async _readInto(nodeId: number | bigint, path: string | string[]) {
-        const res = await this.client.readAttribute(nodeId, path);
+        const res = await this.client.readAttribute(nodeId, path, undefined, true);
         const node = this.client.nodes[nodeIdKey(nodeId)];
         if (node) for (const [k, v] of Object.entries(res)) node.attributes[k] = v;
     }
