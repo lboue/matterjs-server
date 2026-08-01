@@ -15,6 +15,7 @@ import {
     nodeIdKey,
     subjectsInclude,
 } from "../../../util/access-control.js";
+import { BINDING_CLUSTER_ID } from "../../../util/binding.js";
 import { AccessControlEntryDataTransformer, type AccessControlEntryStruct } from "../acl/model.js";
 import { BindingEntryDataTransformer, type BindingEntryStruct } from "./model.js";
 
@@ -45,12 +46,25 @@ function requireFabricIndex(res: Record<string, unknown>, nodeId: number | bigin
 }
 
 /**
- * Read the node's ACL + CurrentFabricIndex fresh (explicit reads are not fabric-filtered) and narrow
- * to our fabric. Fails rather than risk writing back other fabrics' entries if the index is unknown.
+ * A read reports per-path failures by omitting the path, and these lists are rewritten whole — an
+ * absent list would be written back as an empty one, wiping every entry of our fabric.
+ */
+function requireList(res: Record<string, unknown>, path: string, nodeId: number | bigint): unknown {
+    if (!(path in res)) {
+        throw new Error(`Could not read ${path} from node ${nodeId}`);
+    }
+    return res[path];
+}
+
+/**
+ * Read the node's ACL + CurrentFabricIndex fresh and narrow to our fabric. Fails rather than risk
+ * writing back other fabrics' entries if the index is unknown.
  */
 async function freshOurAcl(client: MatterClient, nodeId: number | bigint): Promise<AccessControlEntryStruct[]> {
-    const res = await client.readAttribute(nodeId, ["0/31/0", "0/62/5"]);
-    const all = attributeArray(res["0/31/0"]).map(v => AccessControlEntryDataTransformer.transform(v));
+    const res = await client.readAttribute(nodeId, ["0/31/0", "0/62/5"], undefined, true);
+    const all = attributeArray(requireList(res, "0/31/0", nodeId)).map(v =>
+        AccessControlEntryDataTransformer.transform(v),
+    );
     return entriesForFabric(all, requireFabricIndex(res, nodeId));
 }
 
@@ -59,8 +73,9 @@ async function freshOurBindings(
     nodeId: number | bigint,
     endpoint: number,
 ): Promise<BindingEntryStruct[]> {
-    const res = await client.readAttribute(nodeId, [`${endpoint}/30/0`, "0/62/5"]);
-    const all = attributeArray(res[`${endpoint}/30/0`]).map(v => BindingEntryDataTransformer.transform(v));
+    const path = `${endpoint}/${BINDING_CLUSTER_ID}/0`;
+    const res = await client.readAttribute(nodeId, [path, "0/62/5"], undefined, true);
+    const all = attributeArray(requireList(res, path, nodeId)).map(v => BindingEntryDataTransformer.transform(v));
     const fabricIndex = requireFabricIndex(res, nodeId);
     return all.filter(b => b.fabricIndex === fabricIndex);
 }

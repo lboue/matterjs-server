@@ -64,7 +64,7 @@ class AccessControlClusterCommands extends BaseClusterCommands {
         if (this._loadedKey === key) return;
         this._loadedKey = key;
         try {
-            const res = await this.client.readAttribute(node.node_id, ["0/31/0", "0/62/5"]);
+            const res = await this.client.readAttribute(node.node_id, ["0/31/0", "0/62/5"], undefined, true);
             if (!this.isSameContext(node, endpoint)) return;
             for (const [k, v] of Object.entries(res)) this.node.attributes[k] = v;
             this.requestUpdate();

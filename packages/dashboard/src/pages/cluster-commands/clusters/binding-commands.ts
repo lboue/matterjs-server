@@ -21,13 +21,13 @@ import type { BindingEntryStruct } from "../../../components/dialogs/binding/mod
 import { showNodeBindingDialog } from "../../../components/dialogs/binding/show-node-binding-dialog.js";
 import { nodeIdKey } from "../../../util/access-control.js";
 import { handleAsync } from "../../../util/async-handler.js";
-import { readBindings, reverseAclState, type ReverseAclState } from "../../../util/binding.js";
+import { BINDING_CLUSTER_ID, readBindings, reverseAclState, type ReverseAclState } from "../../../util/binding.js";
 import { getEndpointDeviceTypes } from "../../../util/endpoints.js";
 import { getDeviceName } from "../../../util/node-name.js";
 import { BaseClusterCommands } from "../base-cluster-commands.js";
 import { registerClusterCommands } from "../registry.js";
 
-const CLUSTER_ID = 30;
+const CLUSTER_ID = BINDING_CLUSTER_ID;
 
 @customElement("binding-cluster-commands")
 class BindingClusterCommands extends BaseClusterCommands {
@@ -48,7 +48,7 @@ class BindingClusterCommands extends BaseClusterCommands {
         this._unsubscribe?.();
     }
 
-    /** Read the (fabric-scoped) binding attribute and each target's ACL into the cache on open. */
+    /** Read the binding attribute and each target's ACL into the cache on open. */
     private async _ensureLoaded() {
         if (!this.client || !this.node || !this.node.available || this.endpoint === undefined) return;
         const node = this.node;
@@ -57,7 +57,7 @@ class BindingClusterCommands extends BaseClusterCommands {
         if (this._loadedKey === key) return;
         this._loadedKey = key;
         try {
-            await this._readInto(node.node_id, [`${endpoint}/30/0`, "0/62/5"]);
+            await this._readInto(node.node_id, [`${endpoint}/${CLUSTER_ID}/0`, "0/62/5"]);
             const targets = new Set(
                 readBindings(node, endpoint)
                     .map(b => (b.node != null ? nodeIdKey(b.node) : undefined))
@@ -76,8 +76,13 @@ class BindingClusterCommands extends BaseClusterCommands {
         }
     }
 
+    /**
+     * Fabric-filtered so the merged values match what the subscription caches: matter.js only feeds
+     * a one-shot read back into the datasource when its filtering matches the subscription's, so an
+     * unfiltered response would put other fabrics' entries into the cache and nothing would clear them.
+     */
     private async _readInto(nodeId: number | bigint, path: string | string[]) {
-        const res = await this.client.readAttribute(nodeId, path);
+        const res = await this.client.readAttribute(nodeId, path, undefined, true);
         const node = this.client.nodes[nodeIdKey(nodeId)];
         if (node) for (const [k, v] of Object.entries(res)) node.attributes[k] = v;
     }

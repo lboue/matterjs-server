@@ -33,7 +33,7 @@ import {
     DESCRIPTOR_CLUSTER_ID,
     TAG_LIST_ATTR,
 } from "../util/semantic-tags.js";
-import { notFoundStyles } from "../util/shared-styles.js";
+import { infoPanelStyles, notFoundStyles } from "../util/shared-styles.js";
 import { BaseClusterCommands, getClusterCommandsTag } from "./cluster-commands/index.js";
 import { bindingContext } from "./components/context.js";
 
@@ -261,9 +261,10 @@ class MatterClusterView extends LitElement {
 
         this._refreshState = { ...this._refreshState, [attributeId]: "loading" };
         try {
-            const result = await this.client.readAttribute(nodeId, path);
+            // Fabric-filtered to match the subscription: matter.js discards a read whose filtering
+            // differs, so an unfiltered one would put values into the cache that nothing ever refreshes.
+            const result = await this.client.readAttribute(nodeId, path, undefined, true);
             if (!isSameContext()) return;
-            // Defensive merge — attribute_updated events usually do this already.
             for (const [key, value] of Object.entries(result)) {
                 this.node.attributes[key] = value;
             }
@@ -504,6 +505,7 @@ class MatterClusterView extends LitElement {
 
     static override styles = [
         notFoundStyles,
+        infoPanelStyles,
         css`
             :host {
                 display: block;
@@ -723,42 +725,6 @@ class MatterClusterView extends LitElement {
                 background: var(--md-sys-color-surface-container-high);
                 padding: 0 4px;
                 border-radius: 3px;
-            }
-
-            .info-panel {
-                background-color: var(--md-sys-color-surface-container);
-                border: 1px solid var(--md-sys-color-outline-variant);
-                border-radius: 12px;
-                padding: 14px 16px;
-            }
-
-            .info-section + .info-section {
-                margin-top: 12px;
-                padding-top: 12px;
-                border-top: 1px solid var(--md-sys-color-outline-variant);
-            }
-
-            .info-section-header {
-                font-weight: 500;
-                color: var(--md-sys-color-on-surface);
-                margin-bottom: 10px;
-            }
-
-            .chip-list {
-                list-style: none;
-                margin: 0;
-                padding: 0;
-                display: flex;
-                flex-wrap: wrap;
-                gap: 8px;
-            }
-
-            .chip {
-                font-size: 0.85rem;
-                color: var(--md-sys-color-on-secondary-container);
-                background: var(--md-sys-color-secondary-container);
-                padding: 4px 10px;
-                border-radius: 8px;
             }
 
             .chip.chip-error {

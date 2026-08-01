@@ -23,11 +23,16 @@ function toApiAcl(e: AccessControlEntryStruct): AccessControlEntry {
 }
 
 /**
- * Read the node's ACL + CurrentFabricIndex fresh (explicit reads are not fabric-filtered) and narrow
- * to our fabric. Fails rather than risk writing back other fabrics' entries if the index is unknown.
+ * Read the node's ACL + CurrentFabricIndex fresh and narrow to our fabric. Fails rather than risk
+ * writing back other fabrics' entries if the index is unknown.
  */
 async function freshOurAcl(client: MatterClient, nodeId: number | bigint): Promise<AccessControlEntryStruct[]> {
-    const res = await client.readAttribute(nodeId, ["0/31/0", "0/62/5"]);
+    const res = await client.readAttribute(nodeId, ["0/31/0", "0/62/5"], undefined, true);
+    // A read reports per-path failures by omitting the path, and the ACL is rewritten whole — an
+    // absent list would be written back as an empty one, locking every controller out of the node.
+    if (!("0/31/0" in res)) {
+        throw new Error(`Could not read the access control list (0/31/0) from node ${nodeId}`);
+    }
     const all = attributeArray(res["0/31/0"]).map(v => AccessControlEntryDataTransformer.transform(v));
     const fi = res["0/62/5"];
     if (typeof fi !== "number") {
