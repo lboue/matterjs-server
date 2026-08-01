@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from chip.clusters import Objects as clusters
 from chip.clusters.Types import NullValue
+from chip.tlv import uint
 from matter_server.common.helpers.util import dataclass_to_dict, dataclass_to_tag_dict
 
 
@@ -48,7 +49,7 @@ def test_dataclass_to_tag_dict_is_recursive_through_lists() -> None:
         transitions=[
             clusters.Thermostat.Structs.ScheduleTransitionStruct(
                 dayOfWeek=clusters.Thermostat.Bitmaps.ScheduleDayOfWeekBitmap.kMonday,
-                transitionTime=420,
+                transitionTime=uint(420),
                 heatingSetpoint=2100,
             )
         ],
