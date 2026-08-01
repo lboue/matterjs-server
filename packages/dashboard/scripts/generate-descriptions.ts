@@ -160,10 +160,12 @@ function generateDescriptions(): string {
 
         const features: { [id: string]: ClusterFeatureDescription } = {};
         for (const feature of cluster.features) {
-            // Feature fields are keyed by their bitmap constraint (the actual bit position), not
-            // effectiveId, which falls back to sibling index and collapses gaps left by unused bits.
-            const bit = Number(feature.key);
-            if (Number.isNaN(bit)) continue;
+            // Bitmap children key by constraint (the real bit); effectiveId collapses reserved-bit gaps.
+            const key = feature.key;
+            if (key === undefined || !/^\d+$/.test(key)) {
+                throw new Error(`Cluster ${cluster.name} feature ${feature.name} has non-numeric bit key "${key}"`);
+            }
+            const bit = Number(key);
             features[bit] = {
                 bit,
                 code: feature.name,
