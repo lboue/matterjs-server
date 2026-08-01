@@ -444,7 +444,11 @@ export class IcdManagementClusterCommands extends BaseClusterCommands {
         });
     }
 
-    /** Non-fabric-filtered RegisteredClients read; counts clients on other fabrics. */
+    /**
+     * Non-fabric-filtered RegisteredClients read; counts clients on other fabrics. Its result must not
+     * reach the attribute cache: node ids are per-fabric and can collide, so a foreign entry could
+     * false-positive `isRegisteredByUs`, and the subscription keeps that attribute fabric-filtered.
+     */
     private async _otherClientCount(node: MatterNode, endpoint: number): Promise<number> {
         const ourFabricIndexRaw = node.attributes[CURRENT_FABRIC_INDEX_PATH];
         const result = await this.client.readAttribute(
@@ -452,7 +456,10 @@ export class IcdManagementClusterCommands extends BaseClusterCommands {
             [REGISTERED_CLIENTS_PATH, CURRENT_FABRIC_INDEX_PATH],
             this._actionTimeoutMs,
         );
-        if (this.isSameContext(node, endpoint)) Object.assign(this.node.attributes, result);
+        const currentFabricIndex = result[CURRENT_FABRIC_INDEX_PATH];
+        if (this.isSameContext(node, endpoint) && typeof currentFabricIndex === "number") {
+            this.node.attributes[CURRENT_FABRIC_INDEX_PATH] = currentFabricIndex;
+        }
         const clients = decodeRegisteredClients(result[REGISTERED_CLIENTS_PATH]);
         const ourFabricIndex = result[CURRENT_FABRIC_INDEX_PATH] ?? ourFabricIndexRaw;
         return otherFabricClientCount(clients, typeof ourFabricIndex === "number" ? ourFabricIndex : undefined);
