@@ -20,10 +20,10 @@ import "./cluster-commands/clusters/binding-commands.js";
 import { clientContext, tickContext } from "../client/client-context.js";
 import { clusters } from "../client/models/descriptions.js";
 import "../components/ha-svg-icon";
-import { boundClientClusterIds, sourceClientClusters } from "../util/binding.js";
+import { BINDING_CLUSTER_ID, boundClientClusterIds, sourceClientClusters } from "../util/binding.js";
 import { getEndpointDeviceTypes } from "../util/endpoints.js";
 import { formatHex, formatNodeAddress, getEffectiveFabricIndex } from "../util/format_hex.js";
-import { notFoundStyles } from "../util/shared-styles.js";
+import { infoPanelStyles, notFoundStyles } from "../util/shared-styles.js";
 import { bindingContext } from "./components/context.js";
 
 declare global {
@@ -78,7 +78,10 @@ class MatterEndpointView extends LitElement {
             this.client.serverInfo.fabric_index,
             isTestNodeId(this.node.node_id),
         );
-        const nodeHex = formatNodeAddress(fabricIndex, this.node.node_id);
+        const nodeId = this.node.node_id;
+        const nodeHex = formatNodeAddress(fabricIndex, nodeId);
+        const endpointClusters = getUniqueClusters(this.node, this.endpoint);
+        const hasBindingCluster = endpointClusters.includes(BINDING_CLUSTER_ID);
 
         return html`
             <dashboard-header
@@ -91,16 +94,16 @@ class MatterEndpointView extends LitElement {
                 <node-details .node=${this.node}></node-details>
             </div>
 
-            ${this._renderClientClustersSection()}
+            ${hasBindingCluster ? this._renderClientClustersSection(this.node) : nothing}
 
             <!-- Binding editor (when this endpoint has a Binding cluster) -->
             ${
-                getUniqueClusters(this.node, this.endpoint).includes(30)
+                hasBindingCluster
                     ? html`<div class="container">
                           <binding-cluster-commands
                               .node=${this.node}
                               .endpoint=${this.endpoint}
-                              .cluster=${30}
+                              .cluster=${BINDING_CLUSTER_ID}
                           ></binding-cluster-commands>
                       </div>`
                     : nothing
@@ -122,19 +125,20 @@ class MatterEndpointView extends LitElement {
                                 .join(" / ")}
                         </div>
                     </md-list-item>
-                    ${guard([Object.keys(this.node?.attributes ?? {}).length], () =>
-                        getUniqueClusters(this.node!, this.endpoint).map(cluster => {
-                            return html`
-                                <md-list-item
-                                    type="link"
-                                    href=${`#node/${this.node!.node_id}/${this.endpoint}/${cluster}`}
-                                >
-                                    <div slot="headline">${clusters[cluster]?.label ?? "Custom/Unknown Cluster"}</div>
-                                    <div slot="supporting-text">ClusterId ${cluster} (${formatHex(cluster)})</div>
-                                    <ha-svg-icon slot="end" .path=${mdiChevronRight}></ha-svg-icon>
-                                </md-list-item>
-                            `;
-                        }),
+                    ${guard(
+                        [nodeId, this.endpoint, this.node.attributes, Object.keys(this.node.attributes).length],
+                        () =>
+                            endpointClusters.map(cluster => {
+                                return html`
+                                    <md-list-item type="link" href=${`#node/${nodeId}/${this.endpoint}/${cluster}`}>
+                                        <div slot="headline">
+                                            ${clusters[cluster]?.label ?? "Custom/Unknown Cluster"}
+                                        </div>
+                                        <div slot="supporting-text">ClusterId ${cluster} (${formatHex(cluster)})</div>
+                                        <ha-svg-icon slot="end" .path=${mdiChevronRight}></ha-svg-icon>
+                                    </md-list-item>
+                                `;
+                            }),
                     )}
                 </md-list>
             </div>
@@ -145,28 +149,23 @@ class MatterEndpointView extends LitElement {
         history.back();
     }
 
-    // Client-mode clusters only matter if there's a Binding cluster to point them somewhere, so
-    // the section stays hidden otherwise rather than listing clusters nothing can act on.
-    private _renderClientClustersSection(): TemplateResult | typeof nothing {
-        if (!this.node || !getUniqueClusters(this.node, this.endpoint).includes(30)) return nothing;
-        const clientClusters = sourceClientClusters(this.node, this.endpoint);
+    private _renderClientClustersSection(node: MatterNode): TemplateResult | typeof nothing {
+        const clientClusters = sourceClientClusters(node, this.endpoint);
         if (clientClusters.length === 0) return nothing;
-        const boundClusterIds = boundClientClusterIds(this.node, this.endpoint);
+        const boundClusterIds = boundClientClusterIds(node, this.endpoint);
 
         return html`
             <div class="container">
                 <div class="info-panel">
                     <div class="info-section">
                         <div class="info-section-header">Client Clusters</div>
-                        <ul class="chip-list">
+                        <ul class="chip-list" role="list">
                             ${clientClusters.map(id => {
                                 const bound = boundClusterIds.has(id);
                                 return html`
-                                    <li
-                                        class=${bound ? "chip chip-bound" : "chip"}
-                                        title=${bound ? "Bound" : "Not bound"}
-                                    >
-                                        ${clusters[id]?.label ?? "Custom/Unknown Cluster"}
+                                    <li class=${bound ? "chip chip-bound" : "chip"}>
+                                        ${clusters[id]?.label ?? "Custom/Unknown Cluster"} ${formatHex(id)}
+                                        <span class="chip-state">${bound ? "Bound" : "Not bound"}</span>
                                     </li>
                                 `;
                             })}
@@ -179,6 +178,7 @@ class MatterEndpointView extends LitElement {
 
     static override styles = [
         notFoundStyles,
+        infoPanelStyles,
         css`
             :host {
                 display: block;
@@ -216,40 +216,16 @@ class MatterEndpointView extends LitElement {
                 font-size: 0.8em;
             }
 
-            .info-panel {
-                background-color: var(--md-sys-color-surface-container);
-                border: 1px solid var(--md-sys-color-outline-variant);
-                border-radius: 12px;
-                padding: 14px 16px;
-            }
-
-            .info-section-header {
-                font-weight: 500;
-                color: var(--md-sys-color-on-surface);
-                margin-bottom: 10px;
-            }
-
-            .chip-list {
-                list-style: none;
-                margin: 0;
-                padding: 0;
-                display: flex;
-                flex-wrap: wrap;
-                gap: 8px;
-            }
-
-            .chip {
-                font-size: 0.85rem;
-                color: var(--md-sys-color-on-secondary-container);
-                background: var(--md-sys-color-secondary-container);
-                padding: 4px 10px;
-                border-radius: 8px;
-            }
-
             .chip.chip-bound {
                 color: var(--md-sys-color-on-primary-container);
                 background: var(--md-sys-color-primary-container);
+            }
+
+            .chip-state {
                 font-weight: 500;
+                margin-left: 8px;
+                padding-left: 8px;
+                border-left: 1px solid currentcolor;
             }
         `,
     ];

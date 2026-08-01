@@ -11,7 +11,8 @@ This page shows a detailed overview of the changes between versions without the 
 
 - Enhancement: Introduces Websocket Schema version 13 (backward compatible)
     - (MindFreeze) Adds Websocket command `get_network_topology` and event `network_topology_updated` to expose the Thread and WiFi network details for external visualization
-- Feature: (lboue) Dashboard endpoint view shows a "Client Clusters" chip panel (from the Descriptor's ClientList) when the endpoint has a Binding cluster, marking clusters already covered by an existing binding as "Bound"; the cluster detail view explains why a client-mode cluster has no attributes to display
+- Feature: (lboue) Dashboard endpoint view shows a "Client Clusters" panel listing the Descriptor's ClientList clusters when the endpoint has a Binding cluster, marking each as "Bound" or "Not bound"
+- Fix: Dashboard endpoint view refreshes its cluster list when a cluster appears or disappears on the node, or the viewed endpoint changes
 
 ## 1.3.3 (2026-07-28)
 

@@ -24,7 +24,6 @@ import { showCommandInvokeDialog } from "../components/dialogs/dev/show-command-
 import "../components/ha-svg-icon";
 import "../pages/components/node-details";
 // Cluster command components (auto-register on import)
-import { sourceClientClusters } from "../util/binding.js";
 import { computeActiveClusterFeatures } from "../util/cluster-features.js";
 import { DevModeService } from "../util/dev-mode-service.js";
 import { formatHex, formatNodeAddress, getEffectiveFabricIndex } from "../util/format_hex.js";
@@ -34,7 +33,7 @@ import {
     DESCRIPTOR_CLUSTER_ID,
     TAG_LIST_ATTR,
 } from "../util/semantic-tags.js";
-import { notFoundStyles } from "../util/shared-styles.js";
+import { infoPanelStyles, notFoundStyles } from "../util/shared-styles.js";
 import { BaseClusterCommands, getClusterCommandsTag } from "./cluster-commands/index.js";
 import { bindingContext } from "./components/context.js";
 
@@ -174,7 +173,6 @@ class MatterClusterView extends LitElement {
                         <div slot="supporting-text">ClusterId ${this.cluster} (${formatHex(this.cluster)})</div>
                     </md-list-item>
                     <md-divider></md-divider>
-                    ${this._isClientOnlyCluster() ? this._renderClientOnlyNotice() : nothing}
                     ${clusterAttributes(this.node.attributes, this.endpoint, this.cluster).map(
                         (attribute, index) => html`
                             <md-list-item class=${index % 2 === 1 ? "alternate-row" : ""}>
@@ -365,26 +363,6 @@ class MatterClusterView extends LitElement {
         });
     }
 
-    // Client-mode clusters bind to a server hosted elsewhere and hold no local attribute storage,
-    // so the attribute list below is always empty for them.
-    private _isClientOnlyCluster(): boolean {
-        if (!this.node || this.cluster === undefined) return false;
-        const hasAttributes = clusterAttributes(this.node.attributes, this.endpoint, this.cluster).length > 0;
-        if (hasAttributes) return false;
-        return sourceClientClusters(this.node, this.endpoint).includes(this.cluster);
-    }
-
-    private _renderClientOnlyNotice(): TemplateResult {
-        return html`
-            <md-list-item>
-                <div slot="supporting-text" class="client-only-notice">
-                    This cluster is used in client mode on this endpoint. It binds to the cluster hosted on another
-                    device rather than hosting it itself, so there are no local attributes to display.
-                </div>
-            </md-list-item>
-        `;
-    }
-
     private _renderClusterInfoPanel(): TemplateResult | typeof nothing {
         const sections = new Array<TemplateResult>();
         for (const section of [this._renderFeaturesSection(), this._renderTagListSection()]) {
@@ -526,6 +504,7 @@ class MatterClusterView extends LitElement {
 
     static override styles = [
         notFoundStyles,
+        infoPanelStyles,
         css`
             :host {
                 display: block;
@@ -687,11 +666,6 @@ class MatterClusterView extends LitElement {
                 margin: 0;
             }
 
-            .client-only-notice {
-                color: var(--md-sys-color-on-surface-variant);
-                font-size: 0.9rem;
-            }
-
             .command-list {
                 list-style: none;
                 margin: 0;
@@ -750,42 +724,6 @@ class MatterClusterView extends LitElement {
                 background: var(--md-sys-color-surface-container-high);
                 padding: 0 4px;
                 border-radius: 3px;
-            }
-
-            .info-panel {
-                background-color: var(--md-sys-color-surface-container);
-                border: 1px solid var(--md-sys-color-outline-variant);
-                border-radius: 12px;
-                padding: 14px 16px;
-            }
-
-            .info-section + .info-section {
-                margin-top: 12px;
-                padding-top: 12px;
-                border-top: 1px solid var(--md-sys-color-outline-variant);
-            }
-
-            .info-section-header {
-                font-weight: 500;
-                color: var(--md-sys-color-on-surface);
-                margin-bottom: 10px;
-            }
-
-            .chip-list {
-                list-style: none;
-                margin: 0;
-                padding: 0;
-                display: flex;
-                flex-wrap: wrap;
-                gap: 8px;
-            }
-
-            .chip {
-                font-size: 0.85rem;
-                color: var(--md-sys-color-on-secondary-container);
-                background: var(--md-sys-color-secondary-container);
-                padding: 4px 10px;
-                border-radius: 8px;
             }
 
             .chip.chip-error {
