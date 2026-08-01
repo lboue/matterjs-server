@@ -64,7 +64,7 @@ class AccessControlClusterCommands extends BaseClusterCommands {
         if (this._loadedKey === key) return;
         this._loadedKey = key;
         try {
-            const res = await this.client.readAttribute(node.node_id, ["0/31/0", "0/62/5"]);
+            const res = await this.client.readAttribute(node.node_id, ["0/31/0", "0/62/5"], undefined, true);
             if (!this.isSameContext(node, endpoint)) return;
             for (const [k, v] of Object.entries(res)) this.node.attributes[k] = v;
             this.requestUpdate();
@@ -113,6 +113,8 @@ class AccessControlClusterCommands extends BaseClusterCommands {
                     title: "Delete failed",
                     text: err instanceof Error ? err.message : String(err),
                 });
+            } else {
+                console.error("Delete failed", err);
             }
         } finally {
             this._busy = false;
@@ -128,6 +130,8 @@ class AccessControlClusterCommands extends BaseClusterCommands {
         } catch (err) {
             if (this.isSameContext(node, endpoint)) {
                 await showAlertDialog({ title: "Fix failed", text: err instanceof Error ? err.message : String(err) });
+            } else {
+                console.error("Fix failed", err);
             }
         } finally {
             this._busy = false;
