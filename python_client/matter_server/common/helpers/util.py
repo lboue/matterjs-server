@@ -89,6 +89,28 @@ def dataclass_to_dict(obj_in: DataclassInstance) -> dict:
     )
 
 
+def dataclass_to_tag_dict(obj_in: Any) -> Any:
+    """Recursively convert dataclass instance(s) to TLV tag-keyed dict(s).
+
+    Unlike dataclass_to_dict (keyed by field name, used for DEVICE_COMMAND
+    payloads), WRITE_ATTRIBUTE expects struct values keyed by their numeric
+    TLV tag, matching the format already used for attribute reports.
+    """
+    if is_dataclass(obj_in) and not isinstance(obj_in, type):
+        descriptor = getattr(type(obj_in), "descriptor", None)
+        result: dict[str, Any] = {}
+        for field in fields(obj_in):
+            field_descriptor = descriptor.GetFieldByLabel(field.name) if descriptor is not None else None
+            key = str(field_descriptor.Tag) if field_descriptor is not None else field.name
+            result[key] = dataclass_to_tag_dict(getattr(obj_in, field.name))
+        return result
+    if isinstance(obj_in, (list, tuple)):
+        return [dataclass_to_tag_dict(item) for item in obj_in]
+    if isinstance(obj_in, dict):
+        return {key: dataclass_to_tag_dict(value) for key, value in obj_in.items()}
+    return obj_in
+
+
 def parse_utc_timestamp(datetime_string: str) -> datetime:
     """Parse datetime from string."""
     return datetime.fromisoformat(datetime_string)
