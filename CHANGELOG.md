@@ -11,6 +11,7 @@ This page shows a detailed overview of the changes between versions without the 
 
 - Enhancement: Introduces Websocket Schema version 13 (backward compatible)
     - (MindFreeze) Adds Websocket command `get_network_topology` and event `network_topology_updated` to expose the Thread and WiFi network details for external visualization
+- Fix: (lboue) Python client `write_attribute()` now serializes struct/list-of-struct values (e.g. Thermostat `Presets`/`Schedules`) keyed by TLV tag instead of field name, matching the tag-keyed format the server's `WRITE_ATTRIBUTE` handler expects. Previously every struct member fell into an "unknown key" fallback that skipped type conversion, leaving binary handle fields as un-decoded base64 strings and the write rejected with `INVALID_DATA_TYPE`.
 
 ## 1.3.3 (2026-07-28)
 
