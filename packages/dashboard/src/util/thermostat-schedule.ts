@@ -94,7 +94,18 @@ function decodeTransition(raw: unknown): ThermostatScheduleTransition | null {
     if (!obj) return null;
     const dayOfWeek = pickNum(obj, "DayOfWeek", "0");
     const transitionTimeMin = pickNum(obj, "TransitionTime", "1");
-    if (dayOfWeek === null || transitionTimeMin === null) return null;
+    if (
+        dayOfWeek === null ||
+        transitionTimeMin === null ||
+        !Number.isInteger(dayOfWeek) ||
+        dayOfWeek < 0 ||
+        dayOfWeek > 0x7f ||
+        !Number.isInteger(transitionTimeMin) ||
+        transitionTimeMin < 0 ||
+        transitionTimeMin >= 1440
+    ) {
+        return null;
+    }
     return {
         dayOfWeek,
         transitionTimeMin,
@@ -108,13 +119,14 @@ function decodeTransition(raw: unknown): ThermostatScheduleTransition | null {
 function decodeSchedule(raw: unknown): ThermostatSchedule | null {
     const obj = asObject(raw);
     if (!obj) return null;
+    const handle = pickStr(obj, "ScheduleHandle", "0");
     const systemMode = pickNum(obj, "SystemMode", "1");
-    if (systemMode === null) return null;
+    if (handle === null || systemMode === null) return null;
     const transitions = pickArr(obj, "Transitions", "4")
         .map(decodeTransition)
         .filter((t): t is ThermostatScheduleTransition => t !== null);
     return {
-        handle: pickStr(obj, "ScheduleHandle", "0"),
+        handle,
         systemMode,
         name: pickStr(obj, "Name", "2"),
         presetHandle: pickStr(obj, "PresetHandle", "3"),
