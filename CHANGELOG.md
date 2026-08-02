@@ -15,6 +15,7 @@ This page shows a detailed overview of the changes between versions without the 
 - Fix: Dashboard endpoint view refreshes its cluster list when a cluster appears or disappears on the node, or the viewed endpoint changes
 - Fix: Dashboard attribute reads that feed its local cache are now fabric-filtered like the subscription; an unfiltered read is data the server deliberately does not cache, so other fabrics' entries could linger in the dashboard's view — including phantom binding rows that shifted the index the delete button acts on
 - Fix: Dashboard ACL and binding edits abort instead of writing back a truncated list when the preceding read did not return the list; a partial read failure could previously wipe a node's access control list
+- Fix: (lboue) `WRITE_ATTRIBUTE` now also accepts struct members keyed by wire field name (e.g. `presetHandle`), not only by TLV tag; older Python clients that serialize struct values by name instead of tag were falling into the unknown-key fallback, leaving `octstr` fields (like Thermostat preset/schedule handles) as un-decoded base64 and getting rejected by matter.js as malformed
 
 ## 1.3.3 (2026-07-28)
 
