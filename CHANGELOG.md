@@ -10,8 +10,32 @@ This page shows a detailed overview of the changes between versions without the 
 ## **WORK IN PROGRESS**
 
 - Feature: (lboue) Dashboard supports uploading a local `.ota` firmware file for a node, stored via a new `POST /ota-upload` HTTP endpoint
-- Fix: Fixes the DST determination
+- Enhancement: Introduces Websocket Schema version 13 (backward compatible)
+    - (MindFreeze) Adds Websocket command `get_network_topology` and event `network_topology_updated` to expose the Thread and WiFi network details for external visualization
+- Enhancement: (lboue) Dashboard endpoint view shows "Client Clusters" of an endpoint and their binding status when also a Binding cluster is available
+- Enhancement: Dashboard dev mode adds a second read button per attribute that reads across all fabrics and shows the result without caching it
+- Fix: Dashboard endpoint view refreshes its cluster list when a cluster appears or disappears on the node, or the viewed endpoint changes
+- Fix: Dashboard attribute reads are fabric-filtered like the subscription; only a read that needs to see other fabrics' data is non-fabric-filtered, and its result is not cached
+- Fix: Improves Dashboard ACL and binding edit error cases
+- Fix: Dashboard writes (node label, ACL, bindings, Chime, dev-mode attribute write) report a device-side rejection instead of appearing to succeed
+- Fix: Improves ICD LIT UI handling when deactivating
+
+## 1.3.3 (2026-07-28)
+
+- Enhancement: (pkese) Dashboard network graphs space nodes by signal quality (Thread LQI, Wi-Fi RSSI) instead of using one fixed edge length
+- Fix: Update BLE library
+
+## 1.3.2 (2026-07-28)
+
+- Feature: (lboue) Dashboard cluster view shows a "Semantic Tags (TagList)" panel on the Descriptor cluster
+- Enhancement: Thread nodes' neighbor and route tables are re-read a few minutes after startup and every 24h afterward; disabled together with the rest of the Thread diagnostics via `--disable-thread-diagnostics`
+- Enhancement: Optimized the Dashboard "Update Connection Data" dialog for sleepy ICD LIT devices
+- Enhancement: Optimized periodic node work (time synchronization, energy polling, Thread topology refresh) for sleepy ICD LIT devices
+- Fix: Fixes and enhances the DST determination, and sends a second TimeZone entry when the host zone has an upcoming permanent offset change, plus a closing DST entry when the device has room for one
+- Fix: A node reporting that it has no usable time is now resynced right away instead of being held off for up to a day, while reconnect-driven syncs keep their longer spacing
 - Fix: Command responses and events now expose acronym field names in the Python Matter Server casing (e.g. `videoStreamID`, `groupID`, `PAKEPasscodeVerifier`), matching the generated Python client and Home Assistant; the previous lowercased-acronym keys are still emitted alongside for compatibility
+- Fix: Update matter.js to 0.17.7
+    - Fixes and Optimizations
 
 ## 1.3.1 (2026-07-23)
 

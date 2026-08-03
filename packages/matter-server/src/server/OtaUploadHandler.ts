@@ -33,7 +33,14 @@ export class OtaUploadHandler implements WebServerHandler {
                 return;
             }
 
-            const fileName = new URL(req.url, "http://localhost").searchParams.get("file_name") ?? undefined;
+            let fileName: string | undefined;
+            try {
+                fileName = new URL(req.url, "http://localhost").searchParams.get("file_name") ?? undefined;
+            } catch {
+                res.writeHead(400, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ error: "Invalid request URL" }));
+                return;
+            }
             const chunks: Buffer[] = [];
             let size = 0;
             let aborted = false;
@@ -55,8 +62,10 @@ export class OtaUploadHandler implements WebServerHandler {
                 if (aborted) return;
                 void (async () => {
                     try {
-                        const data = new Uint8Array(Buffer.concat(chunks));
-                        const info = await this.#controller.commandHandler.uploadOtaFile(data, fileName);
+                        const info = await this.#controller.commandHandler.uploadOtaFile(
+                            Buffer.concat(chunks),
+                            fileName,
+                        );
                         res.writeHead(200, { "Content-Type": "application/json" });
                         res.end(JSON.stringify(info));
                     } catch (error) {

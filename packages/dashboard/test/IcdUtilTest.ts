@@ -4,12 +4,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { isLongIdleTimeCapable, isLongIdleTimeDevice } from "@matter-server/ws-client";
 import {
     decodeRegisteredClients,
     icdBadge,
     icdInfo,
     isRegisteredByUs,
-    litSpecVersionOk,
     otherFabricClientCount,
     parseIcdFeatures,
     parseMultiAdminDetails,
@@ -111,15 +111,21 @@ describe("icd util", () => {
                 { checkInNodeId: BigInt(1234), monitoredSubject: BigInt(1234), fabricIndex: 2 },
             ]);
         });
-        it("skips malformed entries (missing/wrong-typed fields, non-objects)", () => {
+        it("skips entries without a usable FabricIndex", () => {
             const clients = decodeRegisteredClients([
                 { "1": 1234, "2": 1234, "254": 2 },
-                { "1": 1234, "254": 2 }, // missing MonitoredSubject
                 { "1": 1234, "2": 1234, "254": "2" }, // FabricIndex not a number
                 "not-an-object",
                 null,
             ]);
             expect(clients).to.deep.equal([{ checkInNodeId: 1234, monitoredSubject: 1234, fabricIndex: 2 }]);
+        });
+        it("keeps a foreign-fabric entry stripped to its FabricIndex", () => {
+            // Every other field of MonitoringRegistrationStruct is fabric-sensitive, so this is the
+            // wire form of another fabric's registration on an unfiltered read.
+            expect(decodeRegisteredClients([{ "254": 2 }])).to.deep.equal([
+                { checkInNodeId: undefined, monitoredSubject: undefined, fabricIndex: 2 },
+            ]);
         });
         it("returns empty for absent value", () => {
             expect(decodeRegisteredClients(undefined)).to.deep.equal([]);
@@ -137,6 +143,12 @@ describe("icd util", () => {
         it("false without controller node id", () => {
             expect(isRegisteredByUs(clients, undefined)).to.equal(false);
         });
+        // Characterization: a foreign-fabric entry arrives stripped of CheckInNodeID and must never
+        // read as ours, whatever the controller id is.
+        it("false for a foreign-fabric entry that carries no CheckInNodeID", () => {
+            const stub = [{ checkInNodeId: undefined, monitoredSubject: undefined, fabricIndex: 2 }];
+            expect(isRegisteredByUs(stub, 1234)).to.equal(false);
+        });
     });
 
     describe("otherFabricClientCount", () => {
@@ -149,6 +161,10 @@ describe("icd util", () => {
         });
         it("returns full count when our fabric unknown", () => {
             expect(otherFabricClientCount(clients, undefined)).to.equal(2);
+        });
+        it("counts a foreign registration as the wire delivers it", () => {
+            const wire = [{ "1": 1234, "2": 1234, "254": 1 }, { "254": 2 }];
+            expect(otherFabricClientCount(decodeRegisteredClients(wire), 1)).to.equal(1);
         });
     });
 
@@ -167,18 +183,29 @@ describe("icd util", () => {
         });
     });
 
-    describe("litSpecVersionOk", () => {
+    describe("isLongIdleTimeCapable", () => {
         it("true at exactly 1.4.0", () => {
-            expect(litSpecVersionOk({ "0/40/21": 0x01040000 })).to.equal(true);
-        });
-        it("false below 1.4.0", () => {
-            expect(litSpecVersionOk({ "0/40/21": 0x01030000 })).to.equal(false);
-        });
-        it("false when attribute missing", () => {
-            expect(litSpecVersionOk({})).to.equal(false);
+            expect(isLongIdleTimeCapable(LIT_ATTRS)).to.equal(true);
         });
         it("true above 1.4.0", () => {
-            expect(litSpecVersionOk({ "0/40/21": 0x01040100 })).to.equal(true);
+            expect(isLongIdleTimeCapable({ ...LIT_ATTRS, "0/40/21": 0x01040100 })).to.equal(true);
+        });
+        it("false below 1.4.0", () => {
+            expect(isLongIdleTimeCapable({ ...LIT_ATTRS, "0/40/21": 0x01030000 })).to.equal(false);
+        });
+        it("false when the specification version is missing", () => {
+            expect(isLongIdleTimeCapable({ ...LIT_ATTRS, "0/40/21": undefined })).to.equal(false);
+        });
+        it("false without the LongIdleTimeSupport feature", () => {
+            expect(isLongIdleTimeCapable({ ...LIT_ATTRS, "0/70/65532": 0b0011 })).to.equal(false);
+        });
+        it("false without the IcdManagement cluster", () => {
+            expect(isLongIdleTimeCapable({ "0/40/21": 0x01040000 })).to.equal(false);
+        });
+        it("ignores the operating mode, unlike isLongIdleTimeDevice", () => {
+            const sit = { ...LIT_ATTRS, "0/70/8": 0 };
+            expect(isLongIdleTimeCapable(sit)).to.equal(true);
+            expect(isLongIdleTimeDevice(sit)).to.equal(false);
         });
     });
 

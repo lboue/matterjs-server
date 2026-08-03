@@ -63,6 +63,17 @@ interface ClusterDescription {
     features: { [bit: string]: ClusterFeatureDescription };
 }
 
+interface SemanticTagDescription {
+    id: number;
+    label: string;
+}
+
+interface SemanticTagNamespaceDescription {
+    id: number;
+    label: string;
+    tags: { [tag_id: string]: SemanticTagDescription };
+}
+
 /**
  * Convert a matter.js type to a display-friendly type string.
  */
@@ -149,9 +160,14 @@ function generateDescriptions(): string {
 
         const features: { [id: string]: ClusterFeatureDescription } = {};
         for (const feature of cluster.features) {
-            if (feature.effectiveId === undefined) continue;
-            features[feature.effectiveId] = {
-                bit: feature.effectiveId,
+            // Bitmap children key by constraint (the real bit); effectiveId collapses reserved-bit gaps.
+            const key = feature.key;
+            if (key === undefined || !/^\d+$/.test(key)) {
+                throw new Error(`Cluster ${cluster.name} feature ${feature.name} has non-numeric bit key "${key}"`);
+            }
+            const bit = Number(key);
+            features[bit] = {
+                bit,
                 code: feature.name,
                 label: toLabel(feature.title ?? feature.name, true),
             };
@@ -163,6 +179,27 @@ function generateDescriptions(): string {
             attributes,
             commands,
             features,
+        };
+    }
+
+    // Generate semantic tag namespaces (Descriptor cluster TagList attribute values reference these)
+    const semanticTagNamespaces: Record<number, SemanticTagNamespaceDescription> = {};
+    for (const namespace of Matter.semanticNamespaces) {
+        if (namespace.id === undefined) continue;
+
+        const tags: { [id: string]: SemanticTagDescription } = {};
+        for (const tag of namespace.tags) {
+            if (tag.id === undefined) continue;
+            tags[tag.id] = {
+                id: tag.id,
+                label: toLabel(tag.name, true),
+            };
+        }
+
+        semanticTagNamespaces[namespace.id] = {
+            id: namespace.id,
+            label: toLabel(namespace.name, true),
+            tags,
         };
     }
 
@@ -207,9 +244,22 @@ export interface ClusterDescription {
     features: { [bit: string]: ClusterFeatureDescription };
 }
 
+export interface SemanticTagDescription {
+    id: number;
+    label: string;
+}
+
+export interface SemanticTagNamespaceDescription {
+    id: number;
+    label: string;
+    tags: { [tag_id: string]: SemanticTagDescription };
+}
+
 export const device_types: Record<number, DeviceType> = ${JSON.stringify(deviceTypes, null, 4)};
 
 export const clusters: Record<number, ClusterDescription> = ${JSON.stringify(clusters, null, 4)};
+
+export const semantic_tag_namespaces: Record<number, SemanticTagNamespaceDescription> = ${JSON.stringify(semanticTagNamespaces, null, 4)};
 `.trimStart();
 }
 

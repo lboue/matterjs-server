@@ -105,9 +105,11 @@ import {
 import { formatNodeId } from "../util/formatNodeId.js";
 import { pingIp } from "../util/network.js";
 import { CustomClusterPoller } from "./CustomClusterPoller.js";
+import { NodeAttributeReader } from "./NodeProcessor.js";
 import { Nodes } from "./Nodes.js";
+import { ThreadDetailsPoller } from "./ThreadDetailsPoller.js";
 import { pushNodeTime, TimeSyncInvokers } from "./timeSyncCommands.js";
-import { TIME_FAILURE_EVENT_ID, TIME_SYNC_CLUSTER_ID, TimeSyncManager } from "./TimeSyncManager.js";
+import { SyncTrigger, TIME_FAILURE_EVENT_ID, TIME_SYNC_CLUSTER_ID, TimeSyncManager } from "./TimeSyncManager.js";
 import { attachWebRtcCallbackBridge } from "./WebRtcCallbackBridge.js";
 import {
     isTrackableWebRtcSession,
@@ -167,6 +169,7 @@ export class ControllerCommandHandler {
     #customClusterPoller: CustomClusterPoller;
     /** Manages time synchronization for nodes with the TimeSynchronization cluster */
     #timeSyncManager?: TimeSyncManager;
+    #threadDetailsPoller?: ThreadDetailsPoller;
     /** Per-node ObserverGroups for cleanup on decommission */
     #nodeObservers = new Map<NodeId, ObserverGroup>();
     /** Per-node timers that fire when Reconnecting state exceeds the timeout */
@@ -204,6 +207,7 @@ export class ControllerCommandHandler {
         bleProxyEnabled: boolean,
         otaEnabled: boolean,
         timeSyncEnabled = false,
+        threadDiagnosticsEnabled = false,
     ) {
         this.#controller = controllerInstance;
 
@@ -212,19 +216,26 @@ export class ControllerCommandHandler {
         logger.info(`BLE is ${bleEnabled ? "enabled" : "disabled"}${bleProxyEnabled ? " (proxy mode)" : ""}`);
         this.#otaEnabled = otaEnabled;
 
-        // Initialize custom cluster poller for Eve energy attributes etc.
-        // Reads automatically trigger change events through the normal attribute flow
-        this.#customClusterPoller = new CustomClusterPoller({
+        const attributeReader: NodeAttributeReader = {
             nodeConnected: peer => !!(this.#nodes.has(peer.nodeId) && this.#nodes.get(peer.nodeId).isConnected),
             handleReadAttributes: (peer, paths, fabricFiltered) =>
                 this.handleReadAttributes(peer.nodeId, paths, fabricFiltered),
-        });
+        };
+
+        // Initialize custom cluster poller for Eve energy attributes etc.
+        // Reads automatically trigger change events through the normal attribute flow
+        this.#customClusterPoller = new CustomClusterPoller(attributeReader);
+
+        if (threadDiagnosticsEnabled) {
+            this.#threadDetailsPoller = new ThreadDetailsPoller(attributeReader);
+        }
 
         if (timeSyncEnabled) {
             logger.info("Time synchronization enabled");
             this.#timeSyncManager = new TimeSyncManager({
                 syncTime: peer => this.#syncNodeTime(peer.nodeId),
                 nodeConnected: peer => !!(this.#nodes.has(peer.nodeId) && this.#nodes.get(peer.nodeId).isConnected),
+                commissionedNodeCount: () => this.#controller.getCommissionedNodes().length,
             });
         }
     }
@@ -530,12 +541,24 @@ export class ControllerCommandHandler {
             timer.stop();
         }
         this.#nodeUpdateTimers.clear();
-        await this.#customClusterPoller.stop();
-        await this.#timeSyncManager?.stop();
+        // Observers first: a state change reaching #handleNodeStateChange re-registers the node with
+        // every processor, so stopping them first leaves the processors re-populated.
         for (const observers of this.#nodeObservers.values()) {
             observers.close();
         }
         this.#nodeObservers.clear();
+        // Each stop() awaits an in-flight read against a possibly unresponsive node; serially they
+        // stack their timeouts, and a throw from one would skip the rest of the shutdown.
+        const stopped = await Promise.allSettled([
+            this.#customClusterPoller.stop(),
+            this.#threadDetailsPoller?.stop(),
+            this.#timeSyncManager?.stop(),
+        ]);
+        for (const result of stopped) {
+            if (result.status === "rejected") {
+                logger.warn("Stopping a node processor failed:", result.reason);
+            }
+        }
         if (!this.#started) {
             return;
         }
@@ -583,8 +606,8 @@ export class ControllerCommandHandler {
                 data.path.clusterId === TIME_SYNC_CLUSTER_ID &&
                 data.path.eventId === TIME_FAILURE_EVENT_ID
             ) {
-                logger.debug(`Received timeFailure event from node ${this.formatNode(nodeId)}, triggering time sync`);
-                this.#timeSyncManager.syncNode(this.#peerOf(nodeId));
+                logger.debug(`Received timeFailure event from node ${this.formatNode(nodeId)}`);
+                this.#timeSyncManager.syncNode(this.#peerOf(nodeId), SyncTrigger.TimeFailure);
             }
         });
         nodeObservers.on(node.events.stateChanged, state => {
@@ -618,6 +641,7 @@ export class ControllerCommandHandler {
             if (attributes) {
                 const peer = this.#peerOf(nodeId);
                 this.#customClusterPoller.registerNode(peer, attributes);
+                this.#threadDetailsPoller?.registerNode(peer, attributes);
                 this.#timeSyncManager?.registerNode(peer, attributes);
             }
         }
@@ -682,6 +706,7 @@ export class ControllerCommandHandler {
             if (attributes) {
                 const peer = this.#peerOf(nodeId);
                 this.#customClusterPoller.registerNode(peer, attributes);
+                this.#threadDetailsPoller?.registerNode(peer, attributes);
                 this.#timeSyncManager?.registerNode(peer, attributes);
             }
         }
@@ -1435,6 +1460,7 @@ export class ControllerCommandHandler {
         this.#nodes.delete(nodeId);
         const peer = this.#peerOf(nodeId);
         this.#customClusterPoller.unregisterNode(peer);
+        this.#threadDetailsPoller?.unregisterNode(peer);
         this.#timeSyncManager?.unregisterNode(peer);
         this.#availableUpdates.delete(nodeId);
     }
@@ -1770,7 +1796,7 @@ export class ControllerCommandHandler {
      * @param data Raw bytes of the .ota file
      * @param fileName Original file name, used to namespace the local otaUrl
      */
-    async uploadOtaFile(data: Uint8Array<ArrayBuffer>, fileName?: string): Promise<MatterSoftwareVersion> {
+    async uploadOtaFile(data: Uint8Array, fileName?: string): Promise<MatterSoftwareVersion> {
         if (!this.#otaEnabled) {
             throw ServerError.otaUploadError("OTA is disabled");
         }
@@ -1778,8 +1804,11 @@ export class ControllerCommandHandler {
             const otaService = await this.#controller.node.act(agent => agent.get(DclBehavior).otaUpdateService);
             await otaService.construction;
 
-            const otaUrl = `local://${fileName ?? "upload"}`;
-            const blob = new Blob([data]);
+            const otaUrl = `local://${encodeURIComponent(fileName ?? "upload")}`;
+            // Re-view (not copy) as Uint8Array<ArrayBuffer>: BlobPart requires that exact generic,
+            // but callers (e.g. a Buffer from an HTTP body) may hand in a looser ArrayBufferLike-backed view.
+            const bytes = new Uint8Array(data.buffer as ArrayBuffer, data.byteOffset, data.byteLength);
+            const blob = new Blob([bytes]);
             const updateInfo = await otaService.updateInfoFromStream(blob.stream(), otaUrl);
             await otaService.store(blob.stream(), updateInfo, "local");
 

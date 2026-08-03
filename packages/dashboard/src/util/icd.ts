@@ -4,18 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { isLongIdleTimeCapable, isLongIdleTimeDevice } from "@matter-server/ws-client";
 import { attributeArray } from "./access-control.js";
 import { formatDuration } from "./duration.js";
 
 export const ICD_CLUSTER_ID = 70;
-
-/** BasicInformation SpecificationVersion is encoded 0xMMmmpprr; matter.js only treats LIT as usable at >= 1.4.0. */
-export const MIN_LIT_SPECIFICATION_VERSION = 0x01040000;
-
-export function litSpecVersionOk(attributes: Record<string, unknown>): boolean {
-    const value = attributes["0/40/21"];
-    return typeof value === "number" && value >= MIN_LIT_SPECIFICATION_VERSION;
-}
 
 export interface IcdFeatures {
     checkInProtocolSupport: boolean;
@@ -24,9 +17,13 @@ export interface IcdFeatures {
     dynamicSitLitSupport: boolean;
 }
 
+/**
+ * A registration on the device. Everything but FabricIndex is fabric-sensitive, so an entry another
+ * fabric owns arrives from an unfiltered read carrying only its FabricIndex.
+ */
 export interface IcdRegisteredClient {
-    checkInNodeId: number | bigint;
-    monitoredSubject: number | bigint;
+    checkInNodeId: number | bigint | undefined;
+    monitoredSubject: number | bigint | undefined;
     fabricIndex: number;
 }
 
@@ -69,13 +66,13 @@ function nodeOrSubjectId(value: unknown): number | bigint | undefined {
 
 function decodeRegisteredClient(entry: unknown): IcdRegisteredClient | undefined {
     if (!isRecord(entry)) return undefined;
-    const checkInNodeId = nodeOrSubjectId(entry["1"]);
-    const monitoredSubject = nodeOrSubjectId(entry["2"]);
     const fabricIndex = entry["254"];
-    if (checkInNodeId === undefined || monitoredSubject === undefined || typeof fabricIndex !== "number") {
-        return undefined;
-    }
-    return { checkInNodeId, monitoredSubject, fabricIndex };
+    if (typeof fabricIndex !== "number") return undefined;
+    return {
+        checkInNodeId: nodeOrSubjectId(entry["1"]),
+        monitoredSubject: nodeOrSubjectId(entry["2"]),
+        fabricIndex,
+    };
 }
 
 /** MonitoringRegistrationStruct wire entries are field-tag keyed: "1" CheckInNodeId, "2" MonitoredSubject, "254" FabricIndex. */
@@ -147,13 +144,12 @@ export interface IcdBadge {
 }
 
 /**
- * Tri-state "ICD" badge for LIT-capable nodes (cluster present, LongIdleTimeSupport feature, spec >= 1.4 —
- * below that the controller does not track check-ins, so offline is not "normal sleeping").
- * Returns undefined for nodes that aren't LIT-capable, since neither SIT-only nor unsupported nodes get a badge.
+ * Tri-state "ICD" badge for LIT-capable nodes. Returns undefined for nodes that aren't LIT-capable,
+ * since neither SIT-only nor unsupported nodes get a badge.
  */
 export function icdBadge(attributes: Record<string, unknown>, available: boolean): IcdBadge | undefined {
+    if (!isLongIdleTimeCapable(attributes)) return undefined;
     const info = icdInfo(attributes);
-    if (!info.supported || !info.features.longIdleTimeSupport || !litSpecVersionOk(attributes)) return undefined;
 
     if (info.operatingMode === "SIT") {
         return {
@@ -162,7 +158,7 @@ export function icdBadge(attributes: Record<string, unknown>, available: boolean
         };
     }
 
-    if (info.operatingMode === "LIT") {
+    if (isLongIdleTimeDevice(attributes)) {
         if (!available) {
             const offlineInterval =
                 info.idleModeDuration !== undefined ? formatDuration(info.idleModeDuration) : "its check-in interval";

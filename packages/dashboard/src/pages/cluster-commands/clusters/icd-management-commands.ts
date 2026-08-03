@@ -10,6 +10,7 @@ import "@material/web/progress/circular-progress";
 import "@material/web/radio/radio";
 import {
     ICD_MULTI_ADMIN_ERROR_CODE,
+    isLongIdleTimeCapable,
     ServerCommandError,
     type IcdStateData,
     type MatterNode,
@@ -24,7 +25,6 @@ import {
     ICD_CLUSTER_ID,
     icdInfo,
     isRegisteredByUs,
-    litSpecVersionOk,
     otherFabricClientCount,
     parseMultiAdminDetails,
     wakeInstruction,
@@ -142,12 +142,9 @@ export class IcdManagementClusterCommands extends BaseClusterCommands {
         return isRegisteredByUs(this._info.registeredClients, this.client.serverInfo?.controller_node_id);
     }
 
-    /** matter.js only treats a peer as LIT-capable with LITS feature AND spec version >= 1.4.0. */
+    /** The server's own IcdClient verdict wins; the attribute check is the fallback before it arrives. */
     private get _litSupported(): boolean {
-        return (
-            this._serverState?.lit_supported ??
-            (this._info.features.longIdleTimeSupport && litSpecVersionOk(this.node.attributes))
-        );
+        return this._serverState?.lit_supported ?? isLongIdleTimeCapable(this.node.attributes);
     }
 
     private get _actualMode(): IcdMode {
@@ -168,23 +165,27 @@ export class IcdManagementClusterCommands extends BaseClusterCommands {
                 <summary>Power & Sleep (ICD)</summary>
                 <div class="command-content">
                     <p>This device saves power by sleeping between short check-in windows.</p>
-                    ${info.operatingMode === "LIT"
-                        ? html`<p class="info-banner">
-                              This device is currently in <b>Battery Saver Mode</b>: any action you trigger (commands,
-                              reads, re-subscriptions) may take up to <b>${this._idleText}</b> while the device sleeps.
-                              Updates reported by the device itself (e.g. sensor changes) are not delayed — the device
-                              wakes up on its own to report them.
-                              ${this.node.available
-                                  ? nothing
-                                  : html`<br /><b class="offline-line"
-                                            >The device is currently offline — reconnecting on its own can take up to
-                                            ${this._idleText}.</b
-                                        >`}
-                          </p>`
-                        : html`<p>
-                              Current mode: <b>Standard</b> — the device sleeps between short check-ins and typically
-                              reacts within seconds to a few minutes.
-                          </p>`}
+                    ${
+                        info.operatingMode === "LIT"
+                            ? html`<p class="info-banner">
+                                  This device is currently in <b>Battery Saver Mode</b>: any action you trigger
+                                  (commands, reads, re-subscriptions) may take up to <b>${this._idleText}</b> while the
+                                  device sleeps. Updates reported by the device itself (e.g. sensor changes) are not
+                                  delayed — the device wakes up on its own to report them.
+                                  ${
+                                      this.node.available
+                                          ? nothing
+                                          : html`<br /><b class="offline-line"
+                                                    >The device is currently offline — reconnecting on its own can take
+                                                    up to ${this._idleText}.</b
+                                                >`
+                                  }
+                              </p>`
+                            : html`<p>
+                                  Current mode: <b>Standard</b> — the device sleeps between short check-ins and
+                                  typically reacts within seconds to a few minutes.
+                              </p>`
+                    }
                     ${info.features.userActiveModeTrigger ? this._renderWakeHint(info) : nothing}
                     ${info.features.longIdleTimeSupport || this._registered ? this._renderIcdManagement() : nothing}
                 </div>
@@ -271,10 +272,12 @@ export class IcdManagementClusterCommands extends BaseClusterCommands {
                 Every ecosystem (e.g. Apple, Google) this device is paired with must support Battery Saver Mode (called
                 Matter LIT (Long Idle Time) ICD). You can switch back to Standard Mode later as long as no other
                 ecosystem is registered for it.
-                ${!single && !this._registered
-                    ? html` This device is already paired with <b>${this._commissionedFabrics - 1}</b> other
-                          ecosystem(s).`
-                    : nothing}
+                ${
+                    !single && !this._registered
+                        ? html` This device is already paired with <b>${this._commissionedFabrics - 1}</b> other
+                              ecosystem(s).`
+                        : nothing
+                }
             </p>
             <div class="command-row">
                 <md-filled-button
@@ -290,10 +293,12 @@ export class IcdManagementClusterCommands extends BaseClusterCommands {
                 >
                     Resync state
                 </md-outlined-button>
-                ${this._busy
-                    ? html`<md-circular-progress indeterminate></md-circular-progress>
-                          <span class="busy">${this._busyLabel}</span>`
-                    : nothing}
+                ${
+                    this._busy
+                        ? html`<md-circular-progress indeterminate></md-circular-progress>
+                              <span class="busy">${this._busyLabel}</span>`
+                        : nothing
+                }
             </div>
         `;
     }
@@ -317,13 +322,15 @@ export class IcdManagementClusterCommands extends BaseClusterCommands {
             </p>
             <p>
                 <b>Important:</b>
-                ${single
-                    ? html`every ecosystem (e.g. Apple, Google) you pair this device with later must support Battery
-                      Saver Mode (called Matter LIT (Long Idle Time) ICD). In an ecosystem without support the device
-                      will appear offline or unresponsive.`
-                    : html`this device is already paired with <b>${this._commissionedFabrics - 1}</b> other
-                          ecosystem(s). All of them must support Battery Saver Mode (called Matter LIT (Long Idle Time)
-                          ICD), otherwise the device will appear offline or unresponsive in those ecosystems.`}
+                ${
+                    single
+                        ? html`every ecosystem (e.g. Apple, Google) you pair this device with later must support Battery
+                          Saver Mode (called Matter LIT (Long Idle Time) ICD). In an ecosystem without support the
+                          device will appear offline or unresponsive.`
+                        : html`this device is already paired with <b>${this._commissionedFabrics - 1}</b> other
+                              ecosystem(s). All of them must support Battery Saver Mode (called Matter LIT (Long Idle
+                              Time) ICD), otherwise the device will appear offline or unresponsive in those ecosystems.`
+                }
             </p>
             <p>
                 You can switch back to Standard Mode later as long as no other ecosystem is registered for Battery Saver
@@ -437,7 +444,11 @@ export class IcdManagementClusterCommands extends BaseClusterCommands {
         });
     }
 
-    /** Non-fabric-filtered RegisteredClients read; counts clients on other fabrics. */
+    /**
+     * Non-fabric-filtered RegisteredClients read; counts clients on other fabrics. Its result must not
+     * reach the attribute cache: node ids are per-fabric and can collide, so a foreign entry could
+     * false-positive `isRegisteredByUs`, and the subscription keeps that attribute fabric-filtered.
+     */
     private async _otherClientCount(node: MatterNode, endpoint: number): Promise<number> {
         const ourFabricIndexRaw = node.attributes[CURRENT_FABRIC_INDEX_PATH];
         const result = await this.client.readAttribute(
@@ -445,7 +456,10 @@ export class IcdManagementClusterCommands extends BaseClusterCommands {
             [REGISTERED_CLIENTS_PATH, CURRENT_FABRIC_INDEX_PATH],
             this._actionTimeoutMs,
         );
-        if (this.isSameContext(node, endpoint)) Object.assign(this.node.attributes, result);
+        const currentFabricIndex = result[CURRENT_FABRIC_INDEX_PATH];
+        if (this.isSameContext(node, endpoint) && typeof currentFabricIndex === "number") {
+            this.node.attributes[CURRENT_FABRIC_INDEX_PATH] = currentFabricIndex;
+        }
         const clients = decodeRegisteredClients(result[REGISTERED_CLIENTS_PATH]);
         const ourFabricIndex = result[CURRENT_FABRIC_INDEX_PATH] ?? ourFabricIndexRaw;
         return otherFabricClientCount(clients, typeof ourFabricIndex === "number" ? ourFabricIndex : undefined);
