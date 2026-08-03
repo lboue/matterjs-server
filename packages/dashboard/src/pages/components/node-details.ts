@@ -107,26 +107,30 @@ export class NodeDetails extends LitElement {
                     <ha-svg-icon slot="start" class="device-icon" .path=${getDeviceIcon(this.node)}></ha-svg-icon>
                     <div slot="headline" class="node-label-row">
                         <b>${this.node.nodeLabel || "Node Info"}</b>
-                        ${this.node.available
-                            ? html`
-                                  <md-icon-button
-                                      @click=${() => this._editNodeLabel()}
-                                      aria-label="Edit node label"
-                                      title="Edit node label"
-                                  >
-                                      <ha-svg-icon .path=${mdiPencil}></ha-svg-icon>
-                                  </md-icon-button>
-                              `
-                            : nothing}
+                        ${
+                            this.node.available
+                                ? html`
+                                      <md-icon-button
+                                          @click=${() => this._editNodeLabel()}
+                                          aria-label="Edit node label"
+                                          title="Edit node label"
+                                      >
+                                          <ha-svg-icon .path=${mdiPencil}></ha-svg-icon>
+                                      </md-icon-button>
+                                  `
+                                : nothing
+                        }
                         ${this.node.available ? nothing : html` <span class="status">OFFLINE</span>`}
-                        ${badge
-                            ? html`<a
-                                  class="icd-badge icd-${badge.state}"
-                                  href="#node/${this.node.node_id}/0/${ICD_CLUSTER_ID}"
-                                  title=${badge.hint}
-                                  >ICD</a
-                              >`
-                            : nothing}
+                        ${
+                            badge
+                                ? html`<a
+                                      class="icd-badge icd-${badge.state}"
+                                      href="#node/${this.node.node_id}/0/${ICD_CLUSTER_ID}"
+                                      title=${badge.hint}
+                                      >ICD</a
+                                  >`
+                                : nothing
+                        }
                     </div>
                 </md-list-item>
                 <md-list-item>
@@ -140,40 +144,46 @@ export class NodeDetails extends LitElement {
                     </div>
                     <div slot="supporting-text"><span class="left">Is bridge: </span>${this.node.is_bridge}</div>
                     <div slot="supporting-text"><span class="left">Serialnumber: </span>${this.node.serialNumber}</div>
-                    ${this.node.matter_version
-                        ? html`<div slot="supporting-text">
-                              <span class="left">Matter version: </span>${this.node.matter_version}
-                          </div>`
-                        : nothing}
-                    ${this.node.is_bridge
-                        ? ""
-                        : html` <div slot="supporting-text">
-                              <span class="left">All device types: </span>${getNodeDeviceTypes(this.node)
-                                  .map(deviceType => {
-                                      return deviceType.label;
-                                  })
-                                  .join(" / ")}
-                          </div>`}
+                    ${
+                        this.node.matter_version
+                            ? html`<div slot="supporting-text">
+                                  <span class="left">Matter version: </span>${this.node.matter_version}
+                              </div>`
+                            : nothing
+                    }
+                    ${
+                        this.node.is_bridge
+                            ? ""
+                            : html` <div slot="supporting-text">
+                                  <span class="left">All device types: </span>${getNodeDeviceTypes(this.node)
+                                      .map(deviceType => {
+                                          return deviceType.label;
+                                      })
+                                      .join(" / ")}
+                              </div>`
+                    }
                 </md-list-item>
                 <md-list-item>
                     <div class="btn-row">
                         <md-outlined-button @click=${handleAsync(() => this._reinterview())}
                             >Interview<ha-svg-icon slot="icon" .path=${mdiChatProcessing}></ha-svg-icon
                         ></md-outlined-button>
-                        ${this._updateInitiated
-                            ? html` <md-outlined-button disabled
-                                  >Checking for updates<ha-svg-icon slot="icon" .path=${mdiUpdate}></ha-svg-icon
-                              ></md-outlined-button>`
-                            : (this.node.updateState ?? 0) > 1
-                              ? html` <md-outlined-button disabled
-                                    >${getUpdateStateLabel(
-                                        this.node.updateState!,
-                                        this.node.updateStateProgress,
-                                    )}<ha-svg-icon slot="icon" .path=${mdiUpdate}></ha-svg-icon
-                                ></md-outlined-button>`
-                              : html`<md-outlined-button @click=${handleAsync(() => this._searchUpdate())}
-                                    >Update<ha-svg-icon slot="icon" .path=${mdiUpdate}></ha-svg-icon
-                                ></md-outlined-button>`}
+                        ${
+                            this._updateInitiated
+                                ? html` <md-outlined-button disabled
+                                      >Checking for updates<ha-svg-icon slot="icon" .path=${mdiUpdate}></ha-svg-icon
+                                  ></md-outlined-button>`
+                                : (this.node.updateState ?? 0) > 1
+                                  ? html` <md-outlined-button disabled
+                                        >${getUpdateStateLabel(
+                                            this.node.updateState!,
+                                            this.node.updateStateProgress,
+                                        )}<ha-svg-icon slot="icon" .path=${mdiUpdate}></ha-svg-icon
+                                    ></md-outlined-button>`
+                                  : html`<md-outlined-button @click=${handleAsync(() => this._searchUpdate())}
+                                        >Update<ha-svg-icon slot="icon" .path=${mdiUpdate}></ha-svg-icon
+                                    ></md-outlined-button>`
+                        }
                         <md-outlined-button
                             @click=${handleAsync(() => this._uploadOtaFile())}
                             ?disabled=${this._otaUploadInProgress}
@@ -181,20 +191,22 @@ export class NodeDetails extends LitElement {
                             ${this._otaUploadInProgress ? "Uploading…" : "Upload Firmware"}
                             <ha-svg-icon slot="icon" .path=${mdiUpload}></ha-svg-icon>
                         </md-outlined-button>
-                        ${isCamera
-                            ? html`
-                                  <md-outlined-button
-                                      @click=${() => this._openCameraOverlay()}
-                                      ?disabled=${!this.node.available}
-                                  >
-                                      ${isAudioOnly ? "Listen" : isLiveViewCamera ? "Live View" : "Snapshot"}
-                                      <ha-svg-icon
-                                          slot="icon"
-                                          .path=${isAudioOnly ? mdiMicrophone : isLiveViewCamera ? mdiVideo : mdiCamera}
-                                      ></ha-svg-icon>
-                                  </md-outlined-button>
-                              `
-                            : nothing}
+                        ${
+                            isCamera
+                                ? html`
+                                      <md-outlined-button
+                                          @click=${() => this._openCameraOverlay()}
+                                          ?disabled=${!this.node.available}
+                                      >
+                                          ${isAudioOnly ? "Listen" : isLiveViewCamera ? "Live View" : "Snapshot"}
+                                          <ha-svg-icon
+                                              slot="icon"
+                                              .path=${isAudioOnly ? mdiMicrophone : isLiveViewCamera ? mdiVideo : mdiCamera}
+                                          ></ha-svg-icon>
+                                      </md-outlined-button>
+                                  `
+                                : nothing
+                        }
                         <md-outlined-button @click=${handleAsync(() => this._openCommissioningWindow())}
                             >Share<ha-svg-icon slot="icon" .path=${mdiShareVariant}></ha-svg-icon
                         ></md-outlined-button>
@@ -292,23 +304,26 @@ export class NodeDetails extends LitElement {
             !(await showPromptDialog({
                 title: "Firmware update available",
                 text: html`Found a firmware update for this node on <b>${nodeUpdate.update_source}</b>.
-                    ${isUnverifiedSource
-                        ? html`
-                              <p
-                                  style="
+                    ${
+                        isUnverifiedSource
+                            ? html`
+                                  <p
+                                      style="
                                           background: var(--md-sys-color-error, #b3261e);
                                           color: var(--md-sys-color-on-error, #fff);
                                           padding: 8px 12px;
                                           border-radius: 4px;
                                           font-weight: bold;
                                       "
-                              >
-                                  Warning: This update was found on an unverified source. Updates from test-net or local
-                                  sources have not been certified and may contain untested firmware that could result in
-                                  non-functional devices. Applying these updates is entirely at your own risk.
-                              </p>
-                          `
-                        : nothing}
+                                  >
+                                      Warning: This update was found on an unverified source. Updates from test-net or
+                                      local sources have not been certified and may contain untested firmware that could
+                                      result in non-functional devices. Applying these updates is entirely at your own
+                                      risk.
+                                  </p>
+                              `
+                            : nothing
+                    }
                     <p>
                         Current version: <b>${this._formatSoftwareVersion()}</b><br />
                         Do you want to update this node to version
@@ -355,14 +370,10 @@ export class NodeDetails extends LitElement {
         const fileElem = event.target as HTMLInputElement;
         if (fileElem.files!.length > 0) {
             const selectedFile = fileElem.files![0];
-            const reader = new FileReader();
-            reader.readAsDataURL(selectedFile);
-            reader.onload = async () => {
-                const dataUrl = reader.result?.toString() ?? "";
-                const dataBase64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+            void (async () => {
                 try {
                     this._otaUploadInProgress = true;
-                    const info = await this.client.uploadOtaFile(dataBase64, selectedFile.name);
+                    const info = await this.client.uploadOtaFile(selectedFile, selectedFile.name);
                     const nodeVendorId = this.node?.attributes["0/40/2"];
                     const nodeProductId = this.node?.attributes["0/40/4"];
                     if (nodeVendorId === info.vid && nodeProductId === info.pid) {
@@ -382,7 +393,7 @@ export class NodeDetails extends LitElement {
                     this._otaUploadInProgress = false;
                     fileElem.value = "";
                 }
-            };
+            })();
         }
         event.preventDefault();
     };

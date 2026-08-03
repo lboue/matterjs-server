@@ -446,10 +446,6 @@ export interface APICommands {
         requestArgs: { node_id: number | bigint; software_version: number | string };
         response: MatterSoftwareVersion | null;
     };
-    upload_ota_file: {
-        requestArgs: { data_base64: string; file_name?: string };
-        response: MatterSoftwareVersion;
-    };
     discover_commissionable_nodes: {
         requestArgs: Record<string, never>;
         response: CommissionableNodeData[];

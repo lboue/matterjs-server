@@ -660,23 +660,6 @@ Entry fields:
 }
 ```
 
-**upload_ota_file** - Store a local `.ota` firmware file in the OTA image store
-
-The image is stored by vendor ID / product ID / software version parsed from its header, not
-tied to the node the upload was initiated from — `check_node_update` will surface it for any
-node whose vendor/product matches.
-
-```json
-{
-  "message_id": "1",
-  "command": "upload_ota_file",
-  "args": {
-    "data_base64": "<base64-encoded .ota file contents>",
-    "file_name": "my-device-v2.ota"
-  }
-}
-```
-
 ### ICD Management
 
 Manage this controller's Intermittently Connected Device (ICD) Check-In registration with a peer node.
@@ -790,6 +773,33 @@ Import nodes from Home Assistant diagnostic dumps for testing purposes. Test nod
   }
 }
 ```
+
+## HTTP Endpoints
+
+Some functionality is exposed over plain HTTP instead of the WebSocket command channel,
+served by the same listener/port as `/ws`.
+
+**POST /ota-upload** - Store a local `.ota` firmware file in the OTA image store
+
+The request body is the raw `.ota` file bytes (no base64/JSON envelope), with an optional
+`file_name` query parameter used to namespace the local image. The image is stored by vendor
+ID / product ID / software version parsed from its header, not tied to any particular node —
+`check_node_update` will surface it for any node whose vendor/product matches.
+
+```
+POST /ota-upload?file_name=my-device-v2.ota
+Content-Type: application/octet-stream
+
+<raw .ota file bytes>
+```
+
+Responses:
+
+- `200` with a JSON body matching the `MatterSoftwareVersion` shape (see `update_node`/
+  `check_node_update` above) on success.
+- `400` with `{ "error_code": number, "message": string }` on a corrupt image or disabled OTA
+  support (`error_code` 101, `OtaUploadError` — see Error Codes below).
+- `413` with `{ "error": string }` if the upload exceeds the server's size limit.
 
 ## Events
 
@@ -1008,6 +1018,7 @@ Error codes match the [Python Matter Server](https://github.com/home-assistant-l
 | 10 | UpdateCheckError | OTA update check failed |
 | 11 | UpdateError | OTA update failed |
 | 100 | IcdMultiAdmin | OHF extension (not in Python Matter Server). ICD registration rejected because other-vendor administrator fabrics may not support LIT. `details` is a JSON string: `{"message": string, "admin_vendor_ids": number[]}` |
+| 101 | OtaUploadError | OHF extension (not in Python Matter Server). `POST /ota-upload` failed: corrupt image, disabled OTA support, or store failure |
 
 ## Python Matter Server Compatibility
 

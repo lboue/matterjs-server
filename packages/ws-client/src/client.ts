@@ -381,9 +381,23 @@ export class MatterClient {
         await this.sendCommand("update_node", 10, { node_id: nodeId, software_version: softwareVersion }, timeout);
     }
 
-    async uploadOtaFile(dataBase64: string, fileName?: string, timeout?: number): Promise<MatterSoftwareVersion> {
-        // Store a locally-uploaded .ota firmware file in the server's OTA image store.
-        return await this.sendCommand("upload_ota_file", 13, { data_base64: dataBase64, file_name: fileName }, timeout);
+    /** Store a locally-uploaded .ota firmware file in the server's OTA image store via HTTP POST. */
+    async uploadOtaFile(file: Blob, fileName?: string, timeout?: number): Promise<MatterSoftwareVersion> {
+        const uploadUrl = new URL(this.url.replace(/^ws/, "http"));
+        uploadUrl.pathname = uploadUrl.pathname.replace(/\/ws$/, "") + "/ota-upload";
+        if (fileName) {
+            uploadUrl.searchParams.set("file_name", fileName);
+        }
+        const response = await fetch(uploadUrl, {
+            method: "POST",
+            body: file,
+            signal: timeout ? AbortSignal.timeout(timeout) : undefined,
+        });
+        const body = await response.json();
+        if (!response.ok) {
+            throw new Error(body.message ?? body.error ?? `HTTP ${response.status}`);
+        }
+        return body;
     }
 
     async setACLEntry(nodeId: number | bigint, entry: AccessControlEntry[], timeout?: number) {

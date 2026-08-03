@@ -29,6 +29,7 @@ import { LegacyDataWriter, loadLegacyData, type LegacyData } from "./converter/i
 import { createFileLogger } from "./file-logger.js";
 import { initializeOta } from "./ota.js";
 import { HealthHandler } from "./server/HealthHandler.js";
+import { OtaUploadHandler } from "./server/OtaUploadHandler.js";
 import { StaticFileHandler } from "./server/StaticFileHandler.js";
 import { WebServer } from "./server/WebServer.js";
 import { MATTER_SERVER_VERSION } from "./version.js";
@@ -225,7 +226,7 @@ async function start() {
     }
 
     const wsHandler = new WebSocketControllerHandler(controller, config, MATTER_SERVER_VERSION);
-    const handlers: WebServerHandler[] = [new HealthHandler(wsHandler), wsHandler];
+    const handlers: WebServerHandler[] = [new HealthHandler(wsHandler), new OtaUploadHandler(controller), wsHandler];
     if (bleProxyHandler) {
         handlers.push(bleProxyHandler);
     }

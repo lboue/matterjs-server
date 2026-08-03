@@ -285,12 +285,15 @@ describe("Integration Test", function () {
                 expect(error.details).to.include("999999");
             });
 
-            it("should return OtaUploadError for corrupt OTA upload data", async function () {
-                const error = await client.sendCommandExpectError("upload_ota_file", {
-                    data_base64: Buffer.from("not a real ota file").toString("base64"),
+            it("should return OtaUploadError for corrupt OTA upload data via HTTP", async function () {
+                const response = await fetch(`http://localhost:${SERVER_PORT}/ota-upload`, {
+                    method: "POST",
+                    body: Buffer.from("not a real ota file"),
                 });
 
-                expect(error.error_code).to.equal(ServerErrorCode.OtaUploadError);
+                expect(response.status).to.equal(400);
+                const body = await response.json();
+                expect(body.error_code).to.equal(ServerErrorCode.OtaUploadError);
             });
         });
     });
