@@ -12,6 +12,8 @@ import {
     DAY_LABELS,
     type DaySegment,
     formatHandleShort,
+    formatMinutes,
+    formatSegmentTooltip,
     formatSetpoint,
     isMSCHActive,
     pickSetpointForMode,
@@ -152,45 +154,15 @@ describe("thermostat-schedule util", () => {
     describe("resolveTransitionLabel", () => {
         const presets = [{ handle: HANDLE_1, name: "Night" }];
         it("prefers a matching preset name", () => {
-            const label = resolveTransitionLabel(
-                {
-                    dayOfWeek: 0,
-                    transitionTimeMin: 0,
-                    presetHandle: HANDLE_1,
-                    systemMode: 4,
-                    coolingSetpoint: null,
-                    heatingSetpoint: 1750,
-                },
-                presets,
-            );
+            const label = resolveTransitionLabel({ presetHandle: HANDLE_1, systemMode: 4 }, presets);
             expect(label).to.equal("Night");
         });
         it("falls back to the SystemMode label when no preset matches", () => {
-            const label = resolveTransitionLabel(
-                {
-                    dayOfWeek: 0,
-                    transitionTimeMin: 0,
-                    presetHandle: null,
-                    systemMode: 4,
-                    coolingSetpoint: null,
-                    heatingSetpoint: 1750,
-                },
-                presets,
-            );
+            const label = resolveTransitionLabel({ presetHandle: null, systemMode: 4 }, presets);
             expect(label).to.equal("Heat");
         });
         it("falls back to a generic label when neither is available", () => {
-            const label = resolveTransitionLabel(
-                {
-                    dayOfWeek: 0,
-                    transitionTimeMin: 0,
-                    presetHandle: null,
-                    systemMode: null,
-                    coolingSetpoint: null,
-                    heatingSetpoint: 1750,
-                },
-                presets,
-            );
+            const label = resolveTransitionLabel({ presetHandle: null, systemMode: null }, presets);
             expect(label).to.equal("Setpoint");
         });
     });
@@ -351,36 +323,39 @@ describe("thermostat-schedule util", () => {
     });
 
     describe("computeSetpointRange", () => {
-        it("returns the min/max across heating and cooling setpoints", () => {
-            const schedule: ThermostatSchedule = {
-                handle: null,
-                systemMode: 1,
-                name: null,
-                presetHandle: null,
-                builtIn: null,
-                transitions: [
-                    {
-                        dayOfWeek: 0,
-                        transitionTimeMin: 0,
-                        presetHandle: null,
-                        systemMode: null,
-                        coolingSetpoint: 2600,
-                        heatingSetpoint: 1750,
-                    },
-                    {
-                        dayOfWeek: 0,
-                        transitionTimeMin: 480,
-                        presetHandle: null,
-                        systemMode: null,
-                        coolingSetpoint: null,
-                        heatingSetpoint: 2100,
-                    },
-                ],
-            };
-            expect(computeSetpointRange(schedule)).to.deep.equal({ min: 1750, max: 2600 });
+        const schedule: ThermostatSchedule = {
+            handle: null,
+            systemMode: 1,
+            name: null,
+            presetHandle: null,
+            builtIn: null,
+            transitions: [
+                {
+                    dayOfWeek: 0,
+                    transitionTimeMin: 0,
+                    presetHandle: null,
+                    systemMode: null,
+                    coolingSetpoint: 2600,
+                    heatingSetpoint: 1750,
+                },
+                {
+                    dayOfWeek: 0,
+                    transitionTimeMin: 480,
+                    presetHandle: null,
+                    systemMode: null,
+                    coolingSetpoint: null,
+                    heatingSetpoint: 2100,
+                },
+            ],
+        };
+        it("scopes the range to heating setpoints in heat mode", () => {
+            expect(computeSetpointRange(schedule, "heat")).to.deep.equal({ min: 1750, max: 2100 });
+        });
+        it("scopes the range to cooling setpoints in cool mode, falling back where cooling is absent", () => {
+            expect(computeSetpointRange(schedule, "cool")).to.deep.equal({ min: 2100, max: 2600 });
         });
         it("returns undefined when no numeric setpoints exist", () => {
-            const schedule: ThermostatSchedule = {
+            const empty: ThermostatSchedule = {
                 handle: null,
                 systemMode: 0,
                 name: null,
@@ -397,7 +372,7 @@ describe("thermostat-schedule util", () => {
                     },
                 ],
             };
-            expect(computeSetpointRange(schedule)).to.equal(undefined);
+            expect(computeSetpointRange(empty, "heat")).to.equal(undefined);
         });
     });
 
@@ -448,6 +423,34 @@ describe("thermostat-schedule util", () => {
         });
         it("returns an empty string for null", () => {
             expect(formatHandleShort(null)).to.equal("");
+        });
+    });
+
+    describe("formatMinutes", () => {
+        it("formats minutes-since-midnight as HH:MM", () => {
+            expect(formatMinutes(0)).to.equal("00:00");
+            expect(formatMinutes(90)).to.equal("01:30");
+            expect(formatMinutes(1439)).to.equal("23:59");
+        });
+    });
+
+    describe("formatSegmentTooltip", () => {
+        const segment = (heatingSetpoint: number | null, coolingSetpoint: number | null): DaySegment => ({
+            startMin: 360,
+            endMin: 480,
+            heatingSetpoint,
+            coolingSetpoint,
+            presetHandle: null,
+            systemMode: 4,
+        });
+
+        it("includes the time span, label, and both setpoints when both are present", () => {
+            expect(formatSegmentTooltip(segment(1900, 2500), [])).to.equal(
+                "06:00–08:00 · Heat\nHeat 19.0°C\nCool 25.0°C",
+            );
+        });
+        it("omits the setpoint line for whichever mode is absent", () => {
+            expect(formatSegmentTooltip(segment(1900, null), [])).to.equal("06:00–08:00 · Heat\nHeat 19.0°C");
         });
     });
 });

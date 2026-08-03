@@ -15,6 +15,8 @@ import {
     DAY_LABELS,
     type DaySegment,
     formatHandleShort,
+    formatMinutes,
+    formatSegmentTooltip,
     formatSetpoint,
     isMSCHActive,
     readActiveScheduleHandle,
@@ -31,10 +33,6 @@ import { BaseClusterCommands } from "../base-cluster-commands.js";
 import { registerClusterCommands } from "../registry.js";
 
 const HOUR_TICKS = [0, 4, 8, 12, 16, 20, 24];
-
-function formatMinutes(min: number): string {
-    return `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
-}
 
 @customElement("thermostat-cluster-commands")
 class ThermostatClusterCommands extends BaseClusterCommands {
@@ -69,7 +67,7 @@ class ThermostatClusterCommands extends BaseClusterCommands {
 
         const ownerSchedules = owners.filter((s): s is ThermostatSchedule => s !== undefined);
         const ranges = ownerSchedules
-            .map(computeSetpointRange)
+            .map(s => computeSetpointRange(s, this._colorMode))
             .filter((r): r is { min: number; max: number } => r !== undefined);
         const range =
             ranges.length > 0
@@ -181,6 +179,10 @@ class ThermostatClusterCommands extends BaseClusterCommands {
                                                                                     range,
                                                                                     this._colorMode,
                                                                                 )}`}
+                                                                                title=${formatSegmentTooltip(
+                                                                                    seg,
+                                                                                    presets,
+                                                                                )}
                                                                             ></span>
                                                                         `,
                                                                     )}

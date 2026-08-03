@@ -169,8 +169,13 @@ export function readPresets(node: MatterNode, endpoint: number): ThermostatPrese
     return raw.map(decodePreset).filter((p): p is ThermostatPreset => p !== null);
 }
 
-/** Resolves a transition's human label: matching preset name, else SystemMode, else a generic fallback. */
-export function resolveTransitionLabel(transition: ThermostatScheduleTransition, presets: ThermostatPreset[]): string {
+interface ModeLabelSource {
+    presetHandle: string | null;
+    systemMode: number | null;
+}
+
+/** Resolves a transition's (or day segment's) human label: matching preset name, else SystemMode, else a generic fallback. */
+export function resolveTransitionLabel(transition: ModeLabelSource, presets: ThermostatPreset[]): string {
     if (transition.presetHandle) {
         const preset = presets.find(p => p.handle === transition.presetHandle);
         if (preset?.name) return preset.name;
@@ -233,21 +238,26 @@ export function formatSetpoint(centidegrees: number | undefined | null): string 
     return `${(centidegrees / 100).toFixed(1)}°C`;
 }
 
-export function computeSetpointRange(schedule: ThermostatSchedule): { min: number; max: number } | undefined {
-    const values = schedule.transitions
-        .flatMap(t => [t.heatingSetpoint, t.coolingSetpoint])
-        .filter((v): v is number => v !== null);
-    if (values.length === 0) return undefined;
-    return { min: Math.min(...values), max: Math.max(...values) };
+export function formatMinutes(min: number): string {
+    return `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
 }
 
-/** Clamped 0-100 position of `value` within [min, max], for driving a cold->hot color-mix gradient. */
-export function setpointColorMixPercent(value: number, min: number, max: number): number {
-    if (max <= min) return 50;
-    return Math.min(100, Math.max(0, ((value - min) / (max - min)) * 100));
+/** Hover text for a grid segment: its time span, label, and any setpoints — for a native `title` tooltip. */
+export function formatSegmentTooltip(seg: DaySegment, presets: ThermostatPreset[]): string {
+    const lines = [
+        `${formatMinutes(seg.startMin)}–${formatMinutes(seg.endMin)} · ${resolveTransitionLabel(seg, presets)}`,
+    ];
+    if (seg.heatingSetpoint !== null) lines.push(`Heat ${formatSetpoint(seg.heatingSetpoint)}`);
+    if (seg.coolingSetpoint !== null) lines.push(`Cool ${formatSetpoint(seg.coolingSetpoint)}`);
+    return lines.join("\n");
 }
 
 export type ScheduleColorMode = "heat" | "cool";
+
+interface SetpointPair {
+    heatingSetpoint: number | null;
+    coolingSetpoint: number | null;
+}
 
 /**
  * The setpoint driving a segment's color for the given mode. In Auto mode (both heat and cool
@@ -256,10 +266,30 @@ export type ScheduleColorMode = "heat" | "cool";
  * preserves the actual variation instead. Falls back to whichever setpoint is present when the
  * selected mode's isn't (e.g. a Cool-only schedule while in "heat" mode).
  */
-export function pickSetpointForMode(seg: DaySegment, mode: ScheduleColorMode): number | null {
+export function pickSetpointForMode(seg: SetpointPair, mode: ScheduleColorMode): number | null {
     return mode === "heat"
         ? (seg.heatingSetpoint ?? seg.coolingSetpoint)
         : (seg.coolingSetpoint ?? seg.heatingSetpoint);
+}
+
+/**
+ * Min/max for the given mode's setpoints only. Heat and cool setpoints sit in disjoint
+ * bands (e.g. heat 17-21°C, cool 24-27°C) — pooling them into one range would compress
+ * each mode's gradient into a narrow slice instead of using the full color scale.
+ */
+export function computeSetpointRange(
+    schedule: ThermostatSchedule,
+    mode: ScheduleColorMode,
+): { min: number; max: number } | undefined {
+    const values = schedule.transitions.map(t => pickSetpointForMode(t, mode)).filter((v): v is number => v !== null);
+    if (values.length === 0) return undefined;
+    return { min: Math.min(...values), max: Math.max(...values) };
+}
+
+/** Clamped 0-100 position of `value` within [min, max], for driving a cold->hot color-mix gradient. */
+export function setpointColorMixPercent(value: number, min: number, max: number): number {
+    if (max <= min) return 50;
+    return Math.min(100, Math.max(0, ((value - min) / (max - min)) * 100));
 }
 
 function decodeHandleBytes(base64: string): Uint8Array {
