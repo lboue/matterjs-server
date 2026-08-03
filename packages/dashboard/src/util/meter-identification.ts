@@ -77,15 +77,14 @@ export function meterIdentificationInfo(
     endpoint: number,
 ): MeterIdentificationInfo {
     const featureMap = attr(attributes, endpoint, 65532);
-    const powerThresholdSupported = typeof featureMap === "number" && (featureMap & POWER_THRESHOLD_FEATURE_BIT) !== 0;
-    const meterTypeRaw = attr(attributes, endpoint, 0);
+    const featureBits = numberOrUndefined(featureMap) ?? 0;
+    const powerThresholdSupported = (featureBits & POWER_THRESHOLD_FEATURE_BIT) !== 0;
+    const meterTypeRaw = numberOrUndefined(attr(attributes, endpoint, 0));
 
     return {
         supported: featureMap !== undefined,
         meterType:
-            typeof meterTypeRaw === "number"
-                ? (METER_TYPE_NAMES[meterTypeRaw] ?? `Unknown (${meterTypeRaw})`)
-                : undefined,
+            meterTypeRaw !== undefined ? (METER_TYPE_NAMES[meterTypeRaw] ?? `Unknown (${meterTypeRaw})`) : undefined,
         pointOfDelivery: stringAttr(attributes, endpoint, 1),
         meterSerialNumber: stringAttr(attributes, endpoint, 2),
         protocolVersion: stringAttr(attributes, endpoint, 3),

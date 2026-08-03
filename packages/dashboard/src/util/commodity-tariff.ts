@@ -149,7 +149,11 @@ function stringOrUndefined(value: unknown): string | undefined {
 }
 
 function numberList(value: unknown): number[] {
-    return Array.isArray(value) ? value.filter((v): v is number => typeof v === "number") : [];
+    return Array.isArray(value)
+        ? value
+              .map(v => (typeof v === "number" || typeof v === "bigint" ? Number(v) : NaN))
+              .filter((v): v is number => Number.isFinite(v))
+        : [];
 }
 
 function decodeCurrency(value: unknown): CurrencyInfo | undefined {
@@ -279,7 +283,12 @@ function buildDailySchedule(
 
     return entries.map((entry, index) => {
         const next = entries[index + 1];
-        const endMinutes = next ? next.startMinutes : 24 * 60;
+        const endMinutes =
+            entry.durationMinutes !== undefined
+                ? Math.min(entry.startMinutes + entry.durationMinutes, 24 * 60)
+                : next
+                  ? next.startMinutes
+                  : 24 * 60;
         const period = tariffPeriods.find(p => p.dayEntryIds.includes(entry.id));
         const component = tariffComponents.find(c => c.id === period?.tariffComponentIds[0]);
         return {
