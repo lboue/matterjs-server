@@ -45,6 +45,14 @@ export class OtaUploadHandler implements WebServerHandler {
             let size = 0;
             let aborted = false;
 
+            req.on("error", () => {
+                aborted = true;
+                if (!res.headersSent) {
+                    res.writeHead(400, { "Content-Type": "application/json" });
+                    res.end(JSON.stringify({ error: "Request error" }));
+                }
+            });
+
             req.on("data", (chunk: Buffer) => {
                 if (aborted) return;
                 size += chunk.length;
