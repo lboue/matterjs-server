@@ -32,11 +32,11 @@ def test_dataclass_to_tag_dict_uses_tlv_tags() -> None:
     assert result == {
         "0": b"\x01",
         "1": clusters.Thermostat.Enums.PresetScenarioEnum.kOccupied,
-        "2": None,
         "3": 2500,
         "4": 2100,
         "5": True,
     }
+    assert "2" not in result  # name=None (absent optional field)
 
 
 def test_dataclass_to_tag_dict_is_recursive_through_lists() -> None:
@@ -66,11 +66,46 @@ def test_dataclass_to_tag_dict_is_recursive_through_lists() -> None:
     assert transition == {
         "0": clusters.Thermostat.Bitmaps.ScheduleDayOfWeekBitmap.kMonday,
         "1": 420,
-        "2": None,
-        "3": None,
-        "4": None,
         "5": 2100,
     }
+    for absent_tag in ("2", "3", "4"):  # presetHandle, systemMode, coolingSetpoint
+        assert absent_tag not in transition
+
+
+def test_dataclass_to_tag_dict_omits_none_but_keeps_nullvalue() -> None:
+    """Absent optional fields (None) are omitted; explicit NullValue fields are kept.
+
+    Partial-struct writes (e.g. a heat-only ScheduleTransitionStruct) must not
+    emit unset fields as JSON null, since matter.js rejects null on optional
+    non-nullable members.
+    """
+    transition = clusters.Thermostat.Structs.ScheduleTransitionStruct(
+        dayOfWeek=clusters.Thermostat.Bitmaps.ScheduleDayOfWeekBitmap.kMonday,
+        transitionTime=uint(420),
+        heatingSetpoint=2100,
+    )
+
+    result = dataclass_to_tag_dict(transition)
+
+    assert result == {
+        "0": clusters.Thermostat.Bitmaps.ScheduleDayOfWeekBitmap.kMonday,
+        "1": 420,
+        "5": 2100,
+    }
+
+    preset = clusters.Thermostat.Structs.PresetStruct(
+        presetHandle=b"\x01",
+        presetScenario=clusters.Thermostat.Enums.PresetScenarioEnum.kOccupied,
+        name=NullValue,
+        coolingSetpoint=None,
+        heatingSetpoint=2100,
+        builtIn=True,
+    )
+
+    preset_result = dataclass_to_tag_dict(preset)
+
+    assert preset_result["2"] is NullValue  # name explicitly nulled
+    assert "3" not in preset_result  # coolingSetpoint absent
 
 
 def test_dataclass_to_tag_dict_passes_through_scalars() -> None:

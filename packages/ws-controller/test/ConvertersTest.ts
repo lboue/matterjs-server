@@ -5,7 +5,7 @@
  */
 
 import { Bytes } from "@matter/main";
-import { Thermostat } from "@matter/main/clusters";
+import { GeneralDiagnostics, Thermostat } from "@matter/main/clusters";
 import { ClusterMap } from "../src/model/ModelMapper.js";
 import { convertWebSocketTagBasedToMatter } from "../src/server/Converters.js";
 
@@ -57,5 +57,123 @@ describe("convertWebSocketTagBasedToMatter", () => {
         ) as Record<string, unknown>;
 
         expect(result.notARealField).to.equal("value");
+    });
+
+    const presetMember = (id: number) => {
+        const member = presetStructModel.members.find(m => m.id === id);
+        if (member === undefined) {
+            throw new Error(`PresetStruct member with id ${id} missing`);
+        }
+        return member;
+    };
+
+    it("treats null for an optional non-nullable member as absent (tag path)", () => {
+        const coolingSetpoint = presetMember(3);
+        expect(coolingSetpoint.mandatory).to.equal(false);
+        expect(coolingSetpoint.nullable).to.equal(false);
+
+        const result = convertWebSocketTagBasedToMatter({ "3": null }, presetStructModel, clusterEntry.model) as Record<
+            string,
+            unknown
+        >;
+
+        expect(Object.hasOwn(result, "coolingSetpoint")).to.equal(false);
+    });
+
+    it("treats null for an optional non-nullable member as absent (wire-name path)", () => {
+        const result = convertWebSocketTagBasedToMatter(
+            { coolingSetpoint: null },
+            presetStructModel,
+            clusterEntry.model,
+        ) as Record<string, unknown>;
+
+        expect(Object.hasOwn(result, "coolingSetpoint")).to.equal(false);
+    });
+
+    // Characterization test: documents pre-existing null passthrough, does not prove the null-skip guard
+    it("passes null through for a nullable member", () => {
+        const name = presetMember(2);
+        expect(name.nullable).to.equal(true);
+
+        const result = convertWebSocketTagBasedToMatter({ "2": null }, presetStructModel, clusterEntry.model) as Record<
+            string,
+            unknown
+        >;
+
+        expect(result.name).to.equal(null);
+    });
+
+    // Characterization test: documents that mandatory members are never skipped by the null-skip guard
+    it("passes null through for a mandatory non-nullable member", () => {
+        const presetScenario = presetMember(1);
+        expect(presetScenario.mandatory).to.equal(true);
+        expect(presetScenario.nullable).to.equal(false);
+
+        const result = convertWebSocketTagBasedToMatter({ "1": null }, presetStructModel, clusterEntry.model) as Record<
+            string,
+            unknown
+        >;
+
+        expect(result.presetScenario).to.equal(null);
+    });
+
+    it("only treats purely-numeric keys as TLV tags, not prefixed digits", () => {
+        const result = convertWebSocketTagBasedToMatter(
+            { "5x": "boom" },
+            presetStructModel,
+            clusterEntry.model,
+        ) as Record<string, unknown>;
+
+        expect(result["5x"]).to.equal("boom");
+        expect(result.builtIn).to.equal(undefined);
+    });
+});
+
+describe("convertWebSocketTagBasedToMatter - legacy propertyName wire-name fallback", () => {
+    const clusterEntry = ClusterMap[GeneralDiagnostics.Cluster.id];
+    if (clusterEntry === undefined) {
+        throw new Error("GeneralDiagnostics cluster missing from ClusterMap");
+    }
+    const networkInterfacesAttribute = clusterEntry.attributes.networkinterfaces;
+    if (networkInterfacesAttribute === undefined) {
+        throw new Error("GeneralDiagnostics NetworkInterfaces attribute missing from ClusterMap");
+    }
+    const networkInterfaceStructModel = networkInterfacesAttribute.members.at(0);
+    if (networkInterfaceStructModel === undefined) {
+        throw new Error("GeneralDiagnostics NetworkInterface member model missing");
+    }
+
+    const ipv4AddressesMember = networkInterfaceStructModel.members.find(m => m.name === "IPv4Addresses");
+    if (ipv4AddressesMember === undefined) {
+        throw new Error("NetworkInterface IPv4Addresses member missing");
+    }
+    // The suite is only meaningful while wire name and propertyName genuinely differ here
+    if (ipv4AddressesMember.propertyName === "IPv4Addresses") {
+        throw new Error("Expected IPv4Addresses propertyName to differ from its wire name");
+    }
+
+    it("resolves the legacy matter.js propertyName key, not just the wire name", () => {
+        // The Uint8Array conversion proves resolution: unresolved keys copy the base64 string untouched
+        const addressBase64 = Bytes.toBase64(Bytes.fromHex("0a000001"));
+        const result = convertWebSocketTagBasedToMatter(
+            { [ipv4AddressesMember.propertyName]: [addressBase64] },
+            networkInterfaceStructModel,
+            clusterEntry.model,
+        ) as Record<string, unknown>;
+
+        const addresses = result[ipv4AddressesMember.propertyName] as Uint8Array[];
+        expect(Bytes.toHex(addresses[0])).to.equal("0a000001");
+    });
+
+    it("resolves the chip SDK wire name where it differs from propertyName", () => {
+        const addressBase64 = Bytes.toBase64(Bytes.fromHex("0a000001"));
+        const result = convertWebSocketTagBasedToMatter(
+            { IPv4Addresses: [addressBase64] },
+            networkInterfaceStructModel,
+            clusterEntry.model,
+        ) as Record<string, unknown>;
+
+        const addresses = result[ipv4AddressesMember.propertyName] as Uint8Array[];
+        expect(Bytes.toHex(addresses[0])).to.equal("0a000001");
     });
 });

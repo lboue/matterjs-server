@@ -102,14 +102,22 @@ def dataclass_to_tag_dict(obj_in: Any) -> Any:
     kept name-keyed if `descriptor`/`GetFieldByLabel` is missing/unset for
     that field, which should not happen for real cluster structs; this is a
     defensive fallback, not an expected code path.
+
+    A field whose value is None is omitted, matching CHIP's own TLV encoder
+    (ClusterObjects.PutFieldToTLV), which treats None as absent rather than
+    writing an explicit null; NullValue fields are still emitted.
     """
     if is_dataclass(obj_in) and not isinstance(obj_in, type):
         descriptor = getattr(type(obj_in), "descriptor", None)
         result: dict[str, Any] = {}
         for field in cached_fields(type(obj_in)):
+            value = getattr(obj_in, field.name)
+            if value is None:
+                continue
             field_descriptor = descriptor.GetFieldByLabel(field.name) if descriptor is not None else None
-            key = str(field_descriptor.Tag) if field_descriptor is not None else field.name
-            result[key] = dataclass_to_tag_dict(getattr(obj_in, field.name))
+            tag = field_descriptor.Tag if field_descriptor is not None else None
+            key = str(tag) if tag is not None else field.name
+            result[key] = dataclass_to_tag_dict(value)
         return result
     if isinstance(obj_in, (list, tuple)):
         return [dataclass_to_tag_dict(item) for item in obj_in]

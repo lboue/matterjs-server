@@ -106,9 +106,13 @@ export function convertWebSocketTagBasedToMatter(
         // against the same name that convertMatterToWebSocketNameBased emits.
         const memberByWireName = getStructMembersByWireFieldName(model, clusterModel);
         for (const key of valueKeys) {
-            const tag = parseInt(key);
-            const member = Number.isNaN(tag) ? memberByWireName.get(key) : memberById.get(tag);
+            const isTag = /^\d+$/.test(key);
+            const member = isTag ? memberById.get(parseInt(key)) : memberByWireName.get(key);
             if (member !== undefined) {
+                // Old Python clients send null for unset optional fields instead of omitting them.
+                if (value[key] === null && !member.mandatory && !member.nullable) {
+                    continue;
+                }
                 result[member.propertyName] = convertWebSocketTagBasedToMatter(value[key], member, clusterModel);
             } else {
                 // Keep unknown keys as-is (fallback for unknown attributes)
@@ -306,7 +310,12 @@ function getStructMembersByWireFieldName(model: ValueModel, clusterModel: Cluste
     members = new Map();
     for (const member of model.members) {
         if (member.name === undefined) continue;
-        members.set(matterNameToWireField(member.name, clusterModel.name), member);
+        const wireName = matterNameToWireField(member.name, clusterModel.name);
+        members.set(wireName, member);
+        // A member's wire name must win any key collision with another member's propertyName alias
+        if (member.propertyName !== wireName && !members.has(member.propertyName)) {
+            members.set(member.propertyName, member);
+        }
     }
     byModel.set(model, members);
     return members;
