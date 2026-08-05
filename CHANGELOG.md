@@ -18,7 +18,9 @@ This page shows a detailed overview of the changes between versions without the 
 - Fix: Dashboard attribute reads are fabric-filtered like the subscription; only a read that needs to see other fabrics' data is non-fabric-filtered, and its result is not cached
 - Fix: Improves Dashboard ACL and binding edit error cases
 - Fix: Dashboard writes (node label, ACL, bindings, Chime, dev-mode attribute write) report a device-side rejection instead of appearing to succeed
-- Fix: Improves ICD LIT UI handling when deactivating
+- Fix: Improves ICD UI handling when deactivating the LIT mode
+- Fix: `WRITE_ATTRIBUTE` now also accepts struct members keyed by wire field name, not only by TLV tag
+- Fix: (lboue) Python client `write_attribute()` now serializes struct/list-of-struct values keyed by TLV tag instead of field name as the server's `WRITE_ATTRIBUTE` handler expects
 
 ## 1.3.3 (2026-07-28)
 

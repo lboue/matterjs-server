@@ -548,6 +548,24 @@ class TestAttributeOperations:
         attrs = await client.read_attribute(env["node_id"], "0/40/5")
         assert attrs["0/40/5"] == "Integration Test Node"
 
+    async def test_32a_write_struct_list_attribute(self, env):
+        """Write UserLabel.LabelList with a real CHIP struct and verify."""
+        from chip.clusters import Objects as Clusters
+
+        _require_state(env, "node_id")
+        client: MatterTestClient = env["client"]
+        result = await client.write_attribute(
+            env["node_id"],
+            "1/65/0",
+            [Clusters.UserLabel.Structs.LabelStruct(label="room", value="den")],
+        )
+        assert isinstance(result, list)
+        assert result[0]["Status"] == 0
+
+        # Read back
+        attrs = await client.read_attribute(env["node_id"], "1/65/0")
+        assert attrs["1/65/0"] == [{"0": "room", "1": "den"}]
+
 
 # ============================================================================
 # Section 6 -- Device Commands
