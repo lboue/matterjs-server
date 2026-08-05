@@ -59,6 +59,15 @@ describe("meter identification util", () => {
         expect(info.powerThreshold?.source).to.equal("Meter equipment limit");
     });
 
+    it("drops a threshold no number can hold exactly instead of rounding it", () => {
+        const info = meterIdentificationInfo(
+            { ...METER_ATTRS, "1/2822/4": { "0": 9_007_199_254_740_993n, "1": 5000, "2": 0 } },
+            1,
+        );
+        expect(info.powerThreshold?.powerThresholdW).to.equal(undefined);
+        expect(info.powerThreshold?.apparentPowerThresholdVA).to.equal(5);
+    });
+
     it("treats a struct whose fields are all null as absent", () => {
         const info = meterIdentificationInfo({ ...METER_ATTRS, "1/2822/4": { "0": null, "1": null, "2": null } }, 1);
         expect(info.powerThreshold).to.equal(undefined);

@@ -26,9 +26,17 @@ export function tagField(value: unknown, tag: number): unknown {
     return asObject(value)?.[String(tag)];
 }
 
-/** int64/uint64 fields arrive as bigint, smaller ones as number. */
+/**
+ * int64/uint64 fields arrive as bigint, smaller ones as number. parseBigIntAwareJson only yields a bigint
+ * beyond the safe integer range, so converting one there would round it: such a value reads as absent
+ * rather than as a wrong number.
+ */
 export function toNumber(value: unknown): number | undefined {
-    return typeof value === "number" || typeof value === "bigint" ? Number(value) : undefined;
+    if (typeof value === "number") return value;
+    if (typeof value !== "bigint") return undefined;
+    return value >= BigInt(Number.MIN_SAFE_INTEGER) && value <= BigInt(Number.MAX_SAFE_INTEGER)
+        ? Number(value)
+        : undefined;
 }
 
 /** A blank string carries no display value, so it reads as absent. */

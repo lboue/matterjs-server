@@ -100,6 +100,9 @@ describe("commodity tariff util", () => {
         it("is absent without a currency, since the scale is then unknown", () => {
             expect(formatPrice(1579, undefined)).to.equal(undefined);
         });
+        it("is absent for a money value no number can hold exactly", () => {
+            expect(formatPrice(9_007_199_254_740_993n, EUR)).to.equal(undefined);
+        });
     });
 
     describe("formatMinutesOfDay", () => {
