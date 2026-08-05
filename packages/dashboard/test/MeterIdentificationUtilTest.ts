@@ -52,6 +52,18 @@ describe("meter identification util", () => {
         expect(info.powerThresholdSupported).to.equal(false);
     });
 
+    it("reads the number form of the threshold fields, which is what the wire carries", () => {
+        const info = meterIdentificationInfo({ ...METER_ATTRS, "1/2822/4": { "0": 4600, "1": 5000, "2": 2 } }, 1);
+        expect(info.powerThreshold?.powerThresholdW).to.equal(4.6);
+        expect(info.powerThreshold?.apparentPowerThresholdVA).to.equal(5);
+        expect(info.powerThreshold?.source).to.equal("Meter equipment limit");
+    });
+
+    it("treats a struct whose fields are all null as absent", () => {
+        const info = meterIdentificationInfo({ ...METER_ATTRS, "1/2822/4": { "0": null, "1": null, "2": null } }, 1);
+        expect(info.powerThreshold).to.equal(undefined);
+    });
+
     it("treats a null threshold struct and blank strings as absent", () => {
         const info = meterIdentificationInfo(
             { ...METER_ATTRS, "1/2822/3": "  ", "1/2822/4": null, "1/2822/0": null },
