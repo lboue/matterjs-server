@@ -119,6 +119,29 @@ function decodeSchedule(raw: unknown): ThermostatSchedule | null {
     };
 }
 
+export interface ScheduleDecodeStats {
+    droppedSchedules: number;
+    droppedTransitions: number;
+}
+
+/** Decodes a raw Schedules list, tallying entries decodeSchedule/decodeTransition rejected as malformed. */
+function decodeSchedules(raw: unknown[]): { schedules: ThermostatSchedule[]; stats: ScheduleDecodeStats } {
+    const schedules = new Array<ThermostatSchedule>();
+    let droppedSchedules = 0;
+    let droppedTransitions = 0;
+    for (const entry of raw) {
+        const decoded = decodeSchedule(entry);
+        if (decoded === null) {
+            droppedSchedules++;
+            continue;
+        }
+        const rawTransitionCount = pickArray(asObject(entry) ?? {}, "4").length;
+        droppedTransitions += rawTransitionCount - decoded.transitions.length;
+        schedules.push(decoded);
+    }
+    return { schedules, stats: { droppedSchedules, droppedTransitions } };
+}
+
 function decodePreset(raw: unknown): ThermostatPreset | null {
     const obj = asObject(raw);
     if (!obj) return null;
@@ -149,7 +172,19 @@ export function readActiveScheduleHandle(node: MatterNode, endpoint: number): st
 export function readSchedules(node: MatterNode, endpoint: number): ThermostatSchedule[] | undefined {
     const raw = readAttr(node, endpoint, ATTR_SCHEDULES);
     if (!Array.isArray(raw)) return undefined;
-    return raw.map(decodeSchedule).filter((s): s is ThermostatSchedule => s !== null);
+    return decodeSchedules(raw).schedules;
+}
+
+/**
+ * Counts Schedules-attribute entries the decoder dropped as malformed (missing ScheduleHandle/SystemMode,
+ * the reserved Vacation bit, an out-of-range TransitionTime, …) — a device reporting such entries can leave
+ * the panel showing "No schedules configured." or a thinner grid than the device actually has. Dev/tester
+ * diagnostic only; zeroed out when the attribute itself is absent.
+ */
+export function readScheduleDecodeStats(node: MatterNode, endpoint: number): ScheduleDecodeStats {
+    const raw = readAttr(node, endpoint, ATTR_SCHEDULES);
+    if (!Array.isArray(raw)) return { droppedSchedules: 0, droppedTransitions: 0 };
+    return decodeSchedules(raw).stats;
 }
 
 /** Best-effort: only meaningful when the Presets (PRES) feature is supported, but harmless to read regardless. */

@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { mdiCheck, mdiClockOutline, mdiFire, mdiSnowflake } from "@mdi/js";
+import { mdiAlert, mdiCheck, mdiClockOutline, mdiFire, mdiSnowflake } from "@mdi/js";
 import { css, type CSSResultGroup, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import "../../../components/ha-svg-icon.js";
@@ -24,9 +24,11 @@ import {
     readPresets,
     pickSetpointForMode,
     readSchedules,
+    readScheduleDecodeStats,
     resolveScheduleDefaults,
     resolveTransitionLabel,
     type ScheduleColorMode,
+    type ScheduleDecodeStats,
     setpointColorMixPercent,
     THERMOSTAT_CLUSTER_ID,
 } from "../../../util/thermostat-schedule.js";
@@ -60,6 +62,7 @@ class ThermostatClusterCommands extends BaseClusterCommands {
         const schedules = readSchedules(this.node, this.endpoint);
         const activeHandle = readActiveScheduleHandle(this.node, this.endpoint);
         const presets = readPresets(this.node, this.endpoint);
+        const decodeStats = readScheduleDecodeStats(this.node, this.endpoint);
 
         const pickedSchedule =
             (this._selectedHandle !== null ? schedules?.find(s => s.handle === this._selectedHandle) : undefined) ??
@@ -85,6 +88,7 @@ class ThermostatClusterCommands extends BaseClusterCommands {
                     <span class="feature-map-badge">FeatureMap: MSCH</span>
                 </summary>
                 <div class="command-content">
+                    ${this._renderDecodeStatsBadge(decodeStats)}
                     ${
                         schedules === undefined
                             ? html`<p class="empty">Schedules attribute not available.</p>`
@@ -257,6 +261,28 @@ class ThermostatClusterCommands extends BaseClusterCommands {
                     }
                 </div>
             </details>
+        `;
+    }
+
+    /** Dev/tester-facing warning when the device reported schedule entries the decoder had to drop as malformed. */
+    private _renderDecodeStatsBadge(stats: ScheduleDecodeStats) {
+        if (stats.droppedSchedules === 0 && stats.droppedTransitions === 0) return nothing;
+        const parts = [
+            stats.droppedSchedules > 0
+                ? `${stats.droppedSchedules} schedule${stats.droppedSchedules === 1 ? "" : "s"}`
+                : "",
+            stats.droppedTransitions > 0
+                ? `${stats.droppedTransitions} transition${stats.droppedTransitions === 1 ? "" : "s"}`
+                : "",
+        ].filter(Boolean);
+        return html`
+            <span
+                class="decode-warning"
+                title="Missing/invalid ScheduleHandle, SystemMode, or TransitionTime, or the reserved Vacation bit — check the raw Schedules attribute."
+            >
+                <ha-svg-icon .path=${mdiAlert}></ha-svg-icon>
+                ${parts.join(", ")} dropped
+            </span>
         `;
     }
 
@@ -524,6 +550,22 @@ class ThermostatClusterCommands extends BaseClusterCommands {
             .empty {
                 color: var(--md-sys-color-on-surface-variant);
                 margin: 0;
+            }
+
+            .decode-warning {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                padding: 4px 10px;
+                margin-bottom: 12px;
+                border-radius: 8px;
+                font-size: 0.8rem;
+                background: var(--md-sys-color-error-container);
+                color: var(--md-sys-color-on-error-container);
+            }
+
+            .decode-warning ha-svg-icon {
+                --mdc-icon-size: 16px;
             }
         `,
     ];

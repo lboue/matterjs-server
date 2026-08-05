@@ -20,6 +20,7 @@ import {
     pickSetpointForMode,
     readActiveScheduleHandle,
     readPresets,
+    readScheduleDecodeStats,
     readSchedules,
     resolveScheduleDefaults,
     resolveTransitionLabel,
@@ -191,6 +192,51 @@ describe("thermostat-schedule util", () => {
             expect(readSchedules(node({}), 6)).to.equal(undefined);
             expect(readSchedules(node({ "6/513/81": null }), 6)).to.equal(undefined);
             expect(readSchedules(node({ "6/513/81": [] }), 6)).to.deep.equal([]);
+        });
+    });
+
+    describe("readScheduleDecodeStats", () => {
+        it("is zeroed when nothing is dropped", () => {
+            const attrs = { "6/513/81": [{ "0": HANDLE_1, "1": 4, "4": [{ "0": MON, "1": 0 }] }] };
+            expect(readScheduleDecodeStats(node(attrs), 6)).to.deep.equal({
+                droppedSchedules: 0,
+                droppedTransitions: 0,
+            });
+        });
+        it("counts whole schedules dropped for missing required fields", () => {
+            const attrs = {
+                "6/513/81": [{ "1": 4 }, { "0": HANDLE_1, "1": 4 }],
+            };
+            expect(readScheduleDecodeStats(node(attrs), 6)).to.deep.equal({
+                droppedSchedules: 1,
+                droppedTransitions: 0,
+            });
+        });
+        it("counts transitions dropped within an otherwise-valid schedule", () => {
+            const attrs = {
+                "6/513/81": [
+                    {
+                        "0": HANDLE_1,
+                        "1": 4,
+                        "4": [
+                            { "0": MON, "1": 0 },
+                            { "0": 0x80 | TUE, "1": 60 },
+                            { "0": WED, "1": -1 },
+                        ],
+                    },
+                ],
+            };
+            expect(readScheduleDecodeStats(node(attrs), 6)).to.deep.equal({
+                droppedSchedules: 0,
+                droppedTransitions: 2,
+            });
+        });
+        it("is zeroed when the attribute is absent or empty", () => {
+            expect(readScheduleDecodeStats(node({}), 6)).to.deep.equal({ droppedSchedules: 0, droppedTransitions: 0 });
+            expect(readScheduleDecodeStats(node({ "6/513/81": [] }), 6)).to.deep.equal({
+                droppedSchedules: 0,
+                droppedTransitions: 0,
+            });
         });
     });
 
