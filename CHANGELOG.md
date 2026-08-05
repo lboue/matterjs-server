@@ -13,13 +13,13 @@ This page shows a detailed overview of the changes between versions without the 
     - (MindFreeze) Adds Websocket command `get_network_topology` and event `network_topology_updated` to expose the Thread and WiFi network details for external visualization
 - Enhancement: (lboue) Dashboard endpoint view shows "Client Clusters" of an endpoint and their binding status when also a Binding cluster is available
 - Enhancement: Dashboard dev mode adds a second read button per attribute that reads across all fabrics and shows the result without caching it
-- Fix: (lboue) Python client `write_attribute()` now serializes struct/list-of-struct values (e.g. Thermostat `Presets`/`Schedules`) keyed by TLV tag instead of field name, matching the tag-keyed format the server's `WRITE_ATTRIBUTE` handler expects. Previously every struct member fell into an "unknown key" fallback that skipped type conversion, leaving binary handle fields as un-decoded base64 strings and the write rejected with `INVALID_DATA_TYPE`. Unset optional struct fields (Python `None`) are now omitted from the payload instead of being sent as explicit `null`, matching the CHIP TLV encoder; `NullValue` still travels as `null`.
 - Fix: Dashboard endpoint view refreshes its cluster list when a cluster appears or disappears on the node, or the viewed endpoint changes
 - Fix: Dashboard attribute reads are fabric-filtered like the subscription; only a read that needs to see other fabrics' data is non-fabric-filtered, and its result is not cached
 - Fix: Improves Dashboard ACL and binding edit error cases
 - Fix: Dashboard writes (node label, ACL, bindings, Chime, dev-mode attribute write) report a device-side rejection instead of appearing to succeed
-- Fix: Improves ICD LIT UI handling when deactivating
-- Fix: (lboue) `WRITE_ATTRIBUTE` now also accepts struct members keyed by wire field name (e.g. `presetHandle`), not only by TLV tag; older Python clients that serialize struct values by name instead of tag were falling into the same unknown-key fallback server-side, leaving `octstr` fields (like Thermostat preset/schedule handles) as un-decoded base64 and getting rejected by matter.js as malformed. `null` for an optional non-nullable struct member is treated as omitted (like the command-invoke path already did), only purely-numeric keys are interpreted as TLV tags, and legacy matter.js property names (e.g. `iPv4Addresses`) are accepted alongside wire field names
+- Fix: Improves ICD UI handling when deactivating the LIT mode
+- Fix: `WRITE_ATTRIBUTE` now also accepts struct members keyed by wire field name, not only by TLV tag
+- Fix: (lboue) Python client `write_attribute()` now serializes struct/list-of-struct values keyed by TLV tag instead of field name as the server's `WRITE_ATTRIBUTE` handler expects
 
 ## 1.3.3 (2026-07-28)
 
