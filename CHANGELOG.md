@@ -9,10 +9,10 @@ This page shows a detailed overview of the changes between versions without the 
 
 ## **WORK IN PROGRESS**
 
-- Enhancement: (lboue) Dashboard Thermostat cluster view shows a Schedule Configuration panel (MSCH feature) visualizing schedules as a weekly setpoint grid with legend and transition list
 - Enhancement: Introduces Websocket Schema version 13 (backward compatible)
     - (MindFreeze) Adds Websocket command `get_network_topology` and event `network_topology_updated` to expose the Thread and WiFi network details for external visualization
 - Enhancement: (lboue) Dashboard endpoint view shows "Client Clusters" of an endpoint and their binding status when also a Binding cluster is available
+- Enhancement: (lboue) Added a Schedule Configuration panel (Thermostat cluster MSCH feature) to Dashboard visualizing schedules
 - Enhancement: Dashboard dev mode adds a second read button per attribute that reads across all fabrics and shows the result without caching it
 - Fix: Dashboard endpoint view refreshes its cluster list when a cluster appears or disappears on the node, or the viewed endpoint changes
 - Fix: Dashboard attribute reads are fabric-filtered like the subscription; only a read that needs to see other fabrics' data is non-fabric-filtered, and its result is not cached
