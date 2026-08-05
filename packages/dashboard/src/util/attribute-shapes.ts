@@ -21,6 +21,16 @@ export function pickString(obj: Record<string, unknown>, key: string): string | 
     return typeof v === "string" ? v : null;
 }
 
+export function pickBoolean(obj: Record<string, unknown>, key: string): boolean | null {
+    const v = obj[key];
+    return typeof v === "boolean" ? v : null;
+}
+
+export function pickArray(obj: Record<string, unknown>, key: string): unknown[] {
+    const v = obj[key];
+    return Array.isArray(v) ? v : [];
+}
+
 export function extractAttributeValue(attributesData: unknown): unknown {
     const obj = asObject(attributesData);
     if (!obj) return attributesData;
