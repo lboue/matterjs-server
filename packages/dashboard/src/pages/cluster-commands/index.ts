@@ -27,3 +27,4 @@ import "./clusters/icd-management-commands.js";
 import "./clusters/level-control-commands.js";
 import "./clusters/meter-identification-commands.js";
 import "./clusters/on-off-commands.js";
+import "./clusters/thermostat-commands.js";
