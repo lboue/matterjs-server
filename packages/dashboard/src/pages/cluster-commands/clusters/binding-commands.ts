@@ -285,7 +285,7 @@ class BindingClusterCommands extends BaseClusterCommands {
     ];
 }
 
-registerClusterCommands(CLUSTER_ID, "binding-cluster-commands");
+registerClusterCommands(CLUSTER_ID, "binding-cluster-commands", { renderWhenOffline: true });
 
 declare global {
     interface HTMLElementTagNameMap {
