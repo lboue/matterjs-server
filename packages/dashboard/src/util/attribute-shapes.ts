@@ -21,6 +21,22 @@ export function pickString(obj: Record<string, unknown>, key: string): string | 
     return typeof v === "string" ? v : null;
 }
 
+/** Struct attributes reach the dashboard field-tag keyed (`{"0": …}`) via convertMatterToWebSocketTagBased. */
+export function tagField(value: unknown, tag: number): unknown {
+    return asObject(value)?.[String(tag)];
+}
+
+/** int64/uint64 fields arrive as bigint, smaller ones as number. */
+export function toNumber(value: unknown): number | undefined {
+    return typeof value === "number" || typeof value === "bigint" ? Number(value) : undefined;
+}
+
+/** A blank string carries no display value, so it reads as absent. */
+export function toText(value: unknown): string | undefined {
+    const text = typeof value === "string" ? value.trim() : "";
+    return text.length > 0 ? text : undefined;
+}
+
 export function extractAttributeValue(attributesData: unknown): unknown {
     const obj = asObject(attributesData);
     if (!obj) return attributesData;

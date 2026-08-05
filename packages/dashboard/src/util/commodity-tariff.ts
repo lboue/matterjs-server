@@ -4,7 +4,27 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { tagField as field, toNumber, toText } from "./attribute-shapes.js";
+
 export const COMMODITY_TARIFF_CLUSTER_ID = 1792;
+
+const ATTR_TARIFF_INFO = 0;
+const ATTR_TARIFF_UNIT = 1;
+const ATTR_START_DATE = 2;
+const ATTR_DAY_ENTRIES = 3;
+const ATTR_CURRENT_DAY = 7;
+const ATTR_NEXT_DAY = 8;
+const ATTR_CURRENT_DAY_ENTRY = 9;
+const ATTR_CURRENT_DAY_ENTRY_DATE = 10;
+const ATTR_NEXT_DAY_ENTRY = 11;
+const ATTR_NEXT_DAY_ENTRY_DATE = 12;
+const ATTR_TARIFF_COMPONENTS = 13;
+const ATTR_TARIFF_PERIODS = 14;
+const ATTR_CURRENT_TARIFF_COMPONENTS = 15;
+const ATTR_NEXT_TARIFF_COMPONENTS = 16;
+const ATTR_FEATURE_MAP = 0xfffc;
+
+const MINUTES_PER_DAY = 24 * 60;
 
 const BLOCK_MODE_NAMES: Record<number, string> = {
     0: "No usage blocks",
@@ -33,16 +53,6 @@ const CURRENCY_SYMBOLS: Record<number, string> = { 978: "€", 840: "$", 826: "�
 
 /** Matter epoch-s values count seconds since 2000-01-01T00:00:00Z, not the Unix epoch. */
 const MATTER_EPOCH_OFFSET_SECONDS = 946_684_800;
-
-/** CommodityTariff FeatureMap bits per Matter 1.6 §9.12.4. */
-const FEATURE_BITS = {
-    pricing: 0b1,
-    friendlyCredit: 0b10,
-    auxiliaryLoad: 0b100,
-    peakPeriod: 0b1000,
-    powerThreshold: 0b10000,
-    randomization: 0b100000,
-} as const;
 
 export interface CurrencyInfo {
     code: number;
@@ -78,6 +88,8 @@ export interface DayEntryInfo {
 }
 
 export interface TariffPeriodInfo {
+    /** Position in the TariffPeriods list; identifies a period, since labels are neither unique nor mandatory. */
+    index: number;
     label?: string;
     dayEntryIds: number[];
     tariffComponentIds: number[];
@@ -104,18 +116,8 @@ export interface TariffRange {
     end?: number;
 }
 
-export interface CommodityTariffFeatures {
-    pricing: boolean;
-    friendlyCredit: boolean;
-    auxiliaryLoad: boolean;
-    peakPeriod: boolean;
-    powerThreshold: boolean;
-    randomization: boolean;
-}
-
 export interface CommodityTariffInfo {
     supported: boolean;
-    features: CommodityTariffFeatures;
     tariffInfo?: TariffInfo;
     tariffUnit?: string;
     startDate?: number;
@@ -123,49 +125,38 @@ export interface CommodityTariffInfo {
     nextComponent?: TariffComponentInfo;
     currentRange?: TariffRange;
     nextRange?: TariffRange;
+    todayType?: string;
+    tomorrowType?: string;
     todaySchedule: ScheduleRow[];
     tomorrowSchedule: ScheduleRow[];
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null;
-}
-
-/** Wire-format structs are field-tag keyed (e.g. `{"0": ..., "1": ...}`), not camelCase field names. */
-function field(value: unknown, tag: number): unknown {
-    return isRecord(value) ? value[String(tag)] : undefined;
 }
 
 function attr(attributes: Record<string, unknown>, endpoint: number, attributeId: number): unknown {
     return attributes[`${endpoint}/${COMMODITY_TARIFF_CLUSTER_ID}/${attributeId}`];
 }
 
-function numberOrUndefined(value: unknown): number | undefined {
-    return typeof value === "number" || typeof value === "bigint" ? Number(value) : undefined;
-}
-
-function stringOrUndefined(value: unknown): string | undefined {
-    return typeof value === "string" ? value : undefined;
-}
-
 function numberList(value: unknown): number[] {
     return Array.isArray(value)
-        ? value
-              .map(v => (typeof v === "number" || typeof v === "bigint" ? Number(v) : NaN))
-              .filter((v): v is number => Number.isFinite(v))
+        ? value.map(toNumber).filter((v): v is number => v !== undefined && Number.isFinite(v))
         : [];
 }
 
+function enumName(value: unknown, names: Record<number, string>): string | undefined {
+    const raw = toNumber(value);
+    if (raw === undefined) return undefined;
+    return names[raw] ?? `Unknown (${raw})`;
+}
+
 function decodeCurrency(value: unknown): CurrencyInfo | undefined {
-    const code = field(value, 0);
-    const decimalPoints = field(value, 1);
-    if (typeof code !== "number" || typeof decimalPoints !== "number") return undefined;
+    const code = toNumber(field(value, 0));
+    const decimalPoints = toNumber(field(value, 1));
+    if (code === undefined || decimalPoints === undefined) return undefined;
     return { code, decimalPoints, symbol: CURRENCY_SYMBOLS[code] };
 }
 
 /** Formats a raw tariff price integer using the currency's decimal point scale (e.g. 1579 @ 4dp -> "0.1579 €"). */
 export function formatPrice(price: unknown, currency: CurrencyInfo | undefined): string | undefined {
-    const raw = numberOrUndefined(price);
+    const raw = toNumber(price);
     if (raw === undefined) return undefined;
     const decimalPoints = currency?.decimalPoints ?? 0;
     const amount = (raw / 10 ** decimalPoints).toFixed(decimalPoints);
@@ -174,40 +165,36 @@ export function formatPrice(price: unknown, currency: CurrencyInfo | undefined):
 }
 
 function decodeTariffInfo(value: unknown): TariffInfo | undefined {
-    if (!isRecord(value)) return undefined;
-    const blockMode = field(value, 3);
+    const blockMode = toNumber(field(value, 3));
+    if (blockMode === undefined && field(value, 0) === undefined && field(value, 1) === undefined) return undefined;
     return {
-        label: stringOrUndefined(field(value, 0)),
-        providerName: stringOrUndefined(field(value, 1)),
+        label: toText(field(value, 0)),
+        providerName: toText(field(value, 1)),
         currency: decodeCurrency(field(value, 2)),
-        blockMode:
-            typeof blockMode === "number" ? (BLOCK_MODE_NAMES[blockMode] ?? `Unknown (${blockMode})`) : undefined,
-        blockModeDescription: typeof blockMode === "number" ? BLOCK_MODE_DESCRIPTIONS[blockMode] : undefined,
+        blockMode: enumName(blockMode, BLOCK_MODE_NAMES),
+        blockModeDescription: blockMode !== undefined ? BLOCK_MODE_DESCRIPTIONS[blockMode] : undefined,
     };
 }
 
 function decodeTariffPrice(value: unknown, currency: CurrencyInfo | undefined): TariffPriceInfo | undefined {
-    if (!isRecord(value)) return undefined;
-    const priceType = field(value, 0);
+    const priceType = toNumber(field(value, 0));
+    const price = field(value, 1);
+    if (priceType === undefined && price === undefined) return undefined;
     return {
-        priceType:
-            typeof priceType === "number"
-                ? (TARIFF_PRICE_TYPE_NAMES[priceType] ?? `Unknown (${priceType})`)
-                : "Unknown",
-        amount: formatPrice(field(value, 1), currency),
-        priceLevel: numberOrUndefined(field(value, 2)),
+        priceType: enumName(priceType, TARIFF_PRICE_TYPE_NAMES) ?? "Unknown",
+        amount: formatPrice(price, currency),
+        priceLevel: toNumber(field(value, 2)),
     };
 }
 
 function decodeTariffComponent(value: unknown, currency: CurrencyInfo | undefined): TariffComponentInfo | undefined {
-    if (!isRecord(value)) return undefined;
-    const id = field(value, 0);
-    if (typeof id !== "number") return undefined;
+    const id = toNumber(field(value, 0));
+    if (id === undefined) return undefined;
     return {
         id,
-        label: stringOrUndefined(field(value, 7)),
+        label: toText(field(value, 7)),
         price: decodeTariffPrice(field(value, 1), currency),
-        threshold: numberOrUndefined(field(value, 6)),
+        threshold: toNumber(field(value, 6)),
     };
 }
 
@@ -220,52 +207,104 @@ function decodeTariffComponents(value: unknown, currency: CurrencyInfo | undefin
 }
 
 function decodeDayEntry(value: unknown): DayEntryInfo | undefined {
-    const id = field(value, 0);
-    const startTime = field(value, 1);
-    if (typeof id !== "number" || typeof startTime !== "number") return undefined;
-    return { id, startMinutes: startTime, durationMinutes: numberOrUndefined(field(value, 2)) };
+    const id = toNumber(field(value, 0));
+    const startMinutes = toNumber(field(value, 1));
+    if (id === undefined || startMinutes === undefined) return undefined;
+    return { id, startMinutes, durationMinutes: toNumber(field(value, 2)) };
 }
 
 function decodeDayEntries(value: unknown): DayEntryInfo[] {
     return Array.isArray(value) ? value.map(decodeDayEntry).filter((e): e is DayEntryInfo => e !== undefined) : [];
 }
 
-function decodeTariffPeriod(value: unknown): TariffPeriodInfo | undefined {
-    if (!isRecord(value)) return undefined;
-    return {
-        label: stringOrUndefined(field(value, 0)),
-        dayEntryIds: numberList(field(value, 1)),
-        tariffComponentIds: numberList(field(value, 2)),
-    };
-}
-
 function decodeTariffPeriods(value: unknown): TariffPeriodInfo[] {
     return Array.isArray(value)
-        ? value.map(decodeTariffPeriod).filter((p): p is TariffPeriodInfo => p !== undefined)
+        ? value.map((entry, index) => ({
+              index,
+              label: toText(field(entry, 0)),
+              dayEntryIds: numberList(field(entry, 1)),
+              tariffComponentIds: numberList(field(entry, 2)),
+          }))
         : [];
 }
 
 function decodeDay(value: unknown): DayInfo | undefined {
-    if (!isRecord(value)) return undefined;
-    const dayType = field(value, 1);
-    return {
-        date: numberOrUndefined(field(value, 0)),
-        dayType: typeof dayType === "number" ? (DAY_TYPE_NAMES[dayType] ?? `Unknown (${dayType})`) : undefined,
-        dayEntryIds: numberList(field(value, 2)),
-    };
+    const dayEntryIds = numberList(field(value, 2));
+    const date = toNumber(field(value, 0));
+    const dayType = enumName(field(value, 1), DAY_TYPE_NAMES);
+    if (dayEntryIds.length === 0 && date === undefined && dayType === undefined) return undefined;
+    return { date, dayType, dayEntryIds };
 }
 
-/** CommodityTariff FeatureMap is a raw bitmap integer on the wire, not a named-boolean object. */
-function decodeFeatures(value: unknown): CommodityTariffFeatures {
-    const bits = typeof value === "number" ? value : 0;
-    return {
-        pricing: (bits & FEATURE_BITS.pricing) !== 0,
-        friendlyCredit: (bits & FEATURE_BITS.friendlyCredit) !== 0,
-        auxiliaryLoad: (bits & FEATURE_BITS.auxiliaryLoad) !== 0,
-        peakPeriod: (bits & FEATURE_BITS.peakPeriod) !== 0,
-        powerThreshold: (bits & FEATURE_BITS.powerThreshold) !== 0,
-        randomization: (bits & FEATURE_BITS.randomization) !== 0,
-    };
+/** The day's entries in time order; ids the DayEntries attribute doesn't describe are dropped. */
+function orderedDayEntries(day: DayInfo | undefined, dayEntries: DayEntryInfo[]): DayEntryInfo[] {
+    if (!day) return [];
+    return day.dayEntryIds
+        .map(id => dayEntries.find(entry => entry.id === id))
+        .filter((entry): entry is DayEntryInfo => entry !== undefined)
+        .sort((a, b) => a.startMinutes - b.startMinutes);
+}
+
+function periodOf(entryId: number, tariffPeriods: TariffPeriodInfo[]): TariffPeriodInfo | undefined {
+    return tariffPeriods.find(period => period.dayEntryIds.includes(entryId));
+}
+
+/** A period lists every component that applies to it (price, friendly credit, thresholds); price is what a panel shows. */
+function resolveComponent(
+    period: TariffPeriodInfo | undefined,
+    tariffComponents: TariffComponentInfo[],
+): TariffComponentInfo | undefined {
+    const candidates =
+        period?.tariffComponentIds
+            .map(id => tariffComponents.find(component => component.id === id))
+            .filter((component): component is TariffComponentInfo => component !== undefined) ?? [];
+    return candidates.find(component => component.price !== undefined) ?? candidates[0];
+}
+
+interface TimelineSlot {
+    entryId: number;
+    /** Minutes since the start of the timeline's first day, so a slot on the following day is >= 1440. */
+    startMinutes: number;
+    periodIndex?: number;
+}
+
+/**
+ * Lays consecutive days' entries onto one minute axis. A period active at day-end and resumed at day-start
+ * (e.g. an off-peak block spanning midnight) is modeled as two DayEntry records because DayEntry.startTime
+ * can't cross midnight, so spotting where a period really ends needs the following day's entries too.
+ */
+function buildTimeline(
+    days: (DayInfo | undefined)[],
+    dayEntries: DayEntryInfo[],
+    tariffPeriods: TariffPeriodInfo[],
+): TimelineSlot[] {
+    return days.flatMap((day, dayOffset) =>
+        orderedDayEntries(day, dayEntries).map(entry => ({
+            entryId: entry.id,
+            startMinutes: entry.startMinutes + dayOffset * MINUTES_PER_DAY,
+            periodIndex: periodOf(entry.id, tariffPeriods)?.index,
+        })),
+    );
+}
+
+function findSlot(timeline: TimelineSlot[], entryId: number, afterPosition: number): number {
+    return timeline.findIndex((slot, position) => position > afterPosition && slot.entryId === entryId);
+}
+
+/**
+ * Epoch seconds at which the period starting at `position` gives way to another one, or undefined when the
+ * timeline doesn't reach that far. Offsets are wall-clock minutes, so a DST change inside the range shifts
+ * the computed end by an hour.
+ */
+function rangeEnd(startEpochSeconds: number, timeline: TimelineSlot[], position: number): number | undefined {
+    const from = timeline[position];
+    if (from === undefined) return undefined;
+    for (const slot of timeline.slice(position + 1)) {
+        if (slot.periodIndex !== from.periodIndex) {
+            return startEpochSeconds + (slot.startMinutes - from.startMinutes) * 60;
+        }
+    }
+    return undefined;
 }
 
 /** Resolves a day's entry ids into time-ordered rows, each showing the period label and price active during it. */
@@ -275,76 +314,27 @@ function buildDailySchedule(
     tariffPeriods: TariffPeriodInfo[],
     tariffComponents: TariffComponentInfo[],
 ): ScheduleRow[] {
-    if (!day) return [];
-    const entries = day.dayEntryIds
-        .map(id => dayEntries.find(entry => entry.id === id))
-        .filter((entry): entry is DayEntryInfo => entry !== undefined)
-        .sort((a, b) => a.startMinutes - b.startMinutes);
-
+    const entries = orderedDayEntries(day, dayEntries);
     return entries.map((entry, index) => {
-        const next = entries[index + 1];
-        const endMinutes =
-            entry.durationMinutes !== undefined
-                ? Math.min(entry.startMinutes + entry.durationMinutes, 24 * 60)
-                : next
-                  ? next.startMinutes
-                  : 24 * 60;
-        const period = tariffPeriods.find(p => p.dayEntryIds.includes(entry.id));
-        const component = tariffComponents.find(c => c.id === period?.tariffComponentIds[0]);
+        const nextStart = entries[index + 1]?.startMinutes ?? MINUTES_PER_DAY;
+        const period = periodOf(entry.id, tariffPeriods);
+        const component = resolveComponent(period, tariffComponents);
         return {
             entryId: entry.id,
             startMinutes: entry.startMinutes,
-            endMinutes,
+            endMinutes:
+                entry.durationMinutes !== undefined
+                    ? Math.min(entry.startMinutes + entry.durationMinutes, nextStart)
+                    : nextStart,
             label: period?.label ?? component?.label,
             price: component?.price,
         };
     });
 }
 
-function resolveEntryPeriod(
-    entryId: number,
-    tariffPeriods: TariffPeriodInfo[],
-    tariffComponents: TariffComponentInfo[],
-): { label?: string; componentId?: number } {
-    const period = tariffPeriods.find(p => p.dayEntryIds.includes(entryId));
-    const componentId = period?.tariffComponentIds[0];
-    return { label: period?.label ?? tariffComponents.find(c => c.id === componentId)?.label, componentId };
-}
-
-/**
- * A period active at day-end and resumed at day-start (e.g. an off-peak block spanning midnight) is
- * modeled as two separate DayEntry records because DayEntry.startTime can't cross midnight. Finds when
- * `fromEntryId`'s period actually ends by walking the daily entry cycle forward (wrapping past midnight)
- * until the resolved period changes; returns the offset in minutes from `fromEntryId`'s own start, or
- * undefined if the cycle never changes period (e.g. a single entry, or all entries share one period).
- */
-function minutesUntilNextTransition(
-    fromEntryId: number,
-    dayEntries: DayEntryInfo[],
-    tariffPeriods: TariffPeriodInfo[],
-    tariffComponents: TariffComponentInfo[],
-): number | undefined {
-    if (dayEntries.length < 2) return undefined;
-    const sorted = [...dayEntries].sort((a, b) => a.startMinutes - b.startMinutes);
-    const fromIndex = sorted.findIndex(entry => entry.id === fromEntryId);
-    if (fromIndex === -1) return undefined;
-    const fromPeriod = resolveEntryPeriod(fromEntryId, tariffPeriods, tariffComponents);
-
-    for (let step = 1; step <= sorted.length; step++) {
-        const position = fromIndex + step;
-        const entry = sorted[position % sorted.length];
-        const period = resolveEntryPeriod(entry.id, tariffPeriods, tariffComponents);
-        if (period.label !== fromPeriod.label || period.componentId !== fromPeriod.componentId) {
-            const wraps = Math.floor(position / sorted.length);
-            return entry.startMinutes + wraps * 24 * 60 - sorted[fromIndex].startMinutes;
-        }
-    }
-    return undefined;
-}
-
 /** Formats minutes-since-midnight as "HH:MM"; 1440 (end of day) renders as "24:00". */
 export function formatMinutesOfDay(minutes: number): string {
-    if (minutes >= 24 * 60) return "24:00";
+    if (minutes >= MINUTES_PER_DAY) return "24:00";
     const hours = Math.floor(minutes / 60);
     const mins = minutes % 60;
     return `${String(hours).padStart(2, "0")}:${String(mins).padStart(2, "0")}`;
@@ -362,55 +352,46 @@ export function formatEpochTime(matterEpochSeconds: number, relativeTo: Date = n
 }
 
 export function commodityTariffInfo(attributes: Record<string, unknown>, endpoint: number): CommodityTariffInfo {
-    const featureMap = attr(attributes, endpoint, 65532);
-    const tariffInfo = decodeTariffInfo(attr(attributes, endpoint, 0));
+    const featureMap = attr(attributes, endpoint, ATTR_FEATURE_MAP);
+    const tariffInfo = decodeTariffInfo(attr(attributes, endpoint, ATTR_TARIFF_INFO));
     const currency = tariffInfo?.currency;
-    const tariffUnitRaw = attr(attributes, endpoint, 1);
-    const dayEntries = decodeDayEntries(attr(attributes, endpoint, 3));
-    const tariffPeriods = decodeTariffPeriods(attr(attributes, endpoint, 14));
-    const tariffComponents = decodeTariffComponents(attr(attributes, endpoint, 13), currency);
-    const currentComponents = decodeTariffComponents(attr(attributes, endpoint, 15), currency);
-    const nextComponents = decodeTariffComponents(attr(attributes, endpoint, 16), currency);
-    const currentDayEntryDate = numberOrUndefined(attr(attributes, endpoint, 10));
-    const nextDayEntryDate = numberOrUndefined(attr(attributes, endpoint, 12));
-    const nextDayEntry = decodeDayEntry(attr(attributes, endpoint, 11));
-    const nextEndOffsetMinutes =
-        nextDayEntry !== undefined
-            ? minutesUntilNextTransition(nextDayEntry.id, dayEntries, tariffPeriods, tariffComponents)
-            : undefined;
+    const dayEntries = decodeDayEntries(attr(attributes, endpoint, ATTR_DAY_ENTRIES));
+    const tariffPeriods = decodeTariffPeriods(attr(attributes, endpoint, ATTR_TARIFF_PERIODS));
+    const tariffComponents = decodeTariffComponents(attr(attributes, endpoint, ATTR_TARIFF_COMPONENTS), currency);
+    const currentComponents = decodeTariffComponents(
+        attr(attributes, endpoint, ATTR_CURRENT_TARIFF_COMPONENTS),
+        currency,
+    );
+    const nextComponents = decodeTariffComponents(attr(attributes, endpoint, ATTR_NEXT_TARIFF_COMPONENTS), currency);
+    const today = decodeDay(attr(attributes, endpoint, ATTR_CURRENT_DAY));
+    const tomorrow = decodeDay(attr(attributes, endpoint, ATTR_NEXT_DAY));
+
+    const timeline = buildTimeline([today, tomorrow], dayEntries, tariffPeriods);
+    const currentDayEntry = decodeDayEntry(attr(attributes, endpoint, ATTR_CURRENT_DAY_ENTRY));
+    const currentPosition = currentDayEntry !== undefined ? findSlot(timeline, currentDayEntry.id, -1) : -1;
+    const nextDayEntry = decodeDayEntry(attr(attributes, endpoint, ATTR_NEXT_DAY_ENTRY));
+    const nextPosition = nextDayEntry !== undefined ? findSlot(timeline, nextDayEntry.id, currentPosition) : -1;
+    const currentDayEntryDate = toNumber(attr(attributes, endpoint, ATTR_CURRENT_DAY_ENTRY_DATE));
+    const nextDayEntryDate = toNumber(attr(attributes, endpoint, ATTR_NEXT_DAY_ENTRY_DATE));
 
     return {
         supported: featureMap !== undefined,
-        features: decodeFeatures(featureMap),
         tariffInfo,
-        tariffUnit:
-            typeof tariffUnitRaw === "number"
-                ? (TARIFF_UNIT_NAMES[tariffUnitRaw] ?? `Unknown (${tariffUnitRaw})`)
-                : undefined,
-        startDate: numberOrUndefined(attr(attributes, endpoint, 2)),
+        tariffUnit: enumName(attr(attributes, endpoint, ATTR_TARIFF_UNIT), TARIFF_UNIT_NAMES),
+        startDate: toNumber(attr(attributes, endpoint, ATTR_START_DATE)),
         currentComponent: currentComponents[0],
         nextComponent: nextComponents[0],
         currentRange:
-            currentDayEntryDate !== undefined ? { start: currentDayEntryDate, end: nextDayEntryDate } : undefined,
+            currentDayEntryDate !== undefined
+                ? { start: currentDayEntryDate, end: rangeEnd(currentDayEntryDate, timeline, currentPosition) }
+                : undefined,
         nextRange:
             nextDayEntryDate !== undefined
-                ? {
-                      start: nextDayEntryDate,
-                      end:
-                          nextEndOffsetMinutes !== undefined ? nextDayEntryDate + nextEndOffsetMinutes * 60 : undefined,
-                  }
+                ? { start: nextDayEntryDate, end: rangeEnd(nextDayEntryDate, timeline, nextPosition) }
                 : undefined,
-        todaySchedule: buildDailySchedule(
-            decodeDay(attr(attributes, endpoint, 7)),
-            dayEntries,
-            tariffPeriods,
-            tariffComponents,
-        ),
-        tomorrowSchedule: buildDailySchedule(
-            decodeDay(attr(attributes, endpoint, 8)),
-            dayEntries,
-            tariffPeriods,
-            tariffComponents,
-        ),
+        todayType: today?.dayType,
+        tomorrowType: tomorrow?.dayType,
+        todaySchedule: buildDailySchedule(today, dayEntries, tariffPeriods, tariffComponents),
+        tomorrowSchedule: buildDailySchedule(tomorrow, dayEntries, tariffPeriods, tariffComponents),
     };
 }

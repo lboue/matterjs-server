@@ -18,18 +18,6 @@ import {
 import { BaseClusterCommands } from "../base-cluster-commands.js";
 import { registerClusterCommands } from "../registry.js";
 
-const FEATURE_LABELS: [
-    key: "pricing" | "friendlyCredit" | "auxiliaryLoad" | "peakPeriod" | "powerThreshold" | "randomization",
-    text: string,
-][] = [
-    ["pricing", "Pricing"],
-    ["friendlyCredit", "Friendly Credit"],
-    ["auxiliaryLoad", "Auxiliary Load"],
-    ["peakPeriod", "Peak Period"],
-    ["powerThreshold", "Power Threshold"],
-    ["randomization", "Randomization"],
-];
-
 /**
  * Read-only decoding panel for the CommodityTariff cluster (ID: 0x700 / 1792).
  */
@@ -40,17 +28,17 @@ export class CommodityTariffClusterCommands extends BaseClusterCommands {
         const info = commodityTariffInfo(this.node.attributes, this.endpoint);
         if (!info.supported) return nothing;
 
-        const features = FEATURE_LABELS.filter(([key]) => info.features[key]).map(([, text]) => text);
+        const { label, providerName } = info.tariffInfo ?? {};
 
         return html`
             <details class="command-panel" open>
                 <summary>Commodity Tariff</summary>
                 <div class="command-content">
                     ${
-                        info.tariffInfo?.label || info.tariffInfo?.providerName
+                        label !== undefined || providerName !== undefined
                             ? html`<p class="tariff-header">
-                                  ${info.tariffInfo.label ? html`<b>${info.tariffInfo.label}</b>` : nothing}
-                                  ${info.tariffInfo.providerName ? html` — ${info.tariffInfo.providerName}` : nothing}
+                                  ${label !== undefined ? html`<b>${label}</b>` : nothing}
+                                  ${providerName !== undefined ? html` — ${providerName}` : nothing}
                               </p>`
                             : nothing
                     }
@@ -60,22 +48,8 @@ export class CommodityTariffClusterCommands extends BaseClusterCommands {
                         ${this._renderPriceLine("next", info.nextComponent, info.nextRange)}
                     </div>
 
-                    ${
-                        info.todaySchedule.length > 0
-                            ? html`<details class="schedule">
-                                  <summary>Today's schedule</summary>
-                                  ${this._renderScheduleTable(info.todaySchedule)}
-                              </details>`
-                            : nothing
-                    }
-                    ${
-                        info.tomorrowSchedule.length > 0
-                            ? html`<details class="schedule">
-                                  <summary>Tomorrow's schedule</summary>
-                                  ${this._renderScheduleTable(info.tomorrowSchedule)}
-                              </details>`
-                            : nothing
-                    }
+                    ${this._renderSchedule("Today", info.todaySchedule, info.todayType)}
+                    ${this._renderSchedule("Tomorrow", info.tomorrowSchedule, info.tomorrowType)}
 
                     <dl class="info-grid">
                         ${
@@ -96,12 +70,6 @@ export class CommodityTariffClusterCommands extends BaseClusterCommands {
                                       <dd title=${info.tariffInfo.blockModeDescription ?? nothing}>
                                           ${info.tariffInfo.blockMode}
                                       </dd>`
-                                : nothing
-                        }
-                        ${
-                            features.length > 0
-                                ? html`<dt>Features</dt>
-                                      <dd>${features.join(", ")}</dd>`
                                 : nothing
                         }
                     </dl>
@@ -129,6 +97,20 @@ export class CommodityTariffClusterCommands extends BaseClusterCommands {
                 <span class="text">${text}${amount ? html` — ${amount}` : nothing}</span>
                 <span class="range">${rangeText}</span>
             </div>
+        `;
+    }
+
+    private _renderSchedule(
+        day: string,
+        rows: ScheduleRow[],
+        dayType: string | undefined,
+    ): TemplateResult | typeof nothing {
+        if (rows.length === 0) return nothing;
+        return html`
+            <details class="schedule">
+                <summary>${day}'s schedule${dayType ? html` — ${dayType}` : nothing}</summary>
+                ${this._renderScheduleTable(rows)}
+            </details>
         `;
     }
 
