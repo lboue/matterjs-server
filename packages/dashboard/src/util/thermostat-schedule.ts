@@ -6,10 +6,10 @@
 
 import type { MatterNode } from "@matter-server/ws-client";
 import { clusters } from "../client/models/descriptions.js";
-import { asObject } from "./attribute-shapes.js";
+import { asObject, pickArray, pickBoolean, pickNumber, pickString } from "./attribute-shapes.js";
 import { computeActiveClusterFeatures } from "./cluster-features.js";
 
-/** Thermostat cluster (Matter spec §4.4). */
+/** Thermostat cluster (Matter spec §4.3). */
 export const THERMOSTAT_CLUSTER_ID = 513; // 0x0201
 
 const ATTR_PRESETS = 0x50;
@@ -43,7 +43,7 @@ export interface ThermostatScheduleTransition {
 }
 
 export interface ThermostatSchedule {
-    handle: string | null;
+    handle: string;
     systemMode: number;
     name: string | null;
     presetHandle: string | null;
@@ -54,6 +54,8 @@ export interface ThermostatSchedule {
 export interface ThermostatPreset {
     handle: string;
     name: string | null;
+    coolingSetpoint: number | null;
+    heatingSetpoint: number | null;
 }
 
 export interface DaySegment {
@@ -69,31 +71,13 @@ function readAttr(node: MatterNode, endpoint: number, attrId: number): unknown {
     return node.attributes[`${endpoint}/${THERMOSTAT_CLUSTER_ID}/${attrId}`];
 }
 
-function pickStr(obj: Record<string, unknown>, name: string, tag: string): string | null {
-    const v = obj[name] ?? obj[tag];
-    return typeof v === "string" ? v : null;
-}
-
-function pickNum(obj: Record<string, unknown>, name: string, tag: string): number | null {
-    const v = obj[name] ?? obj[tag];
-    return typeof v === "number" && Number.isFinite(v) ? v : null;
-}
-
-function pickBool(obj: Record<string, unknown>, name: string, tag: string): boolean | null {
-    const v = obj[name] ?? obj[tag];
-    return typeof v === "boolean" ? v : null;
-}
-
-function pickArr(obj: Record<string, unknown>, name: string, tag: string): unknown[] {
-    const v = obj[name] ?? obj[tag];
-    return Array.isArray(v) ? v : [];
-}
-
+// Struct attributes reach the dashboard through convertMatterToWebSocketTagBased, so fields are keyed
+// by numeric field tag only — never by name, unlike the invoke/event converters.
 function decodeTransition(raw: unknown): ThermostatScheduleTransition | null {
     const obj = asObject(raw);
     if (!obj) return null;
-    const dayOfWeek = pickNum(obj, "DayOfWeek", "0");
-    const transitionTimeMin = pickNum(obj, "TransitionTime", "1");
+    const dayOfWeek = pickNumber(obj, "0");
+    const transitionTimeMin = pickNumber(obj, "1");
     if (
         dayOfWeek === null ||
         transitionTimeMin === null ||
@@ -109,38 +93,43 @@ function decodeTransition(raw: unknown): ThermostatScheduleTransition | null {
     return {
         dayOfWeek,
         transitionTimeMin,
-        presetHandle: pickStr(obj, "PresetHandle", "2"),
-        systemMode: pickNum(obj, "SystemMode", "3"),
-        coolingSetpoint: pickNum(obj, "CoolingSetpoint", "4"),
-        heatingSetpoint: pickNum(obj, "HeatingSetpoint", "5"),
+        presetHandle: pickString(obj, "2"),
+        systemMode: pickNumber(obj, "3"),
+        coolingSetpoint: pickNumber(obj, "4"),
+        heatingSetpoint: pickNumber(obj, "5"),
     };
 }
 
 function decodeSchedule(raw: unknown): ThermostatSchedule | null {
     const obj = asObject(raw);
     if (!obj) return null;
-    const handle = pickStr(obj, "ScheduleHandle", "0");
-    const systemMode = pickNum(obj, "SystemMode", "1");
+    const handle = pickString(obj, "0");
+    const systemMode = pickNumber(obj, "1");
     if (handle === null || systemMode === null) return null;
-    const transitions = pickArr(obj, "Transitions", "4")
+    const transitions = pickArray(obj, "4")
         .map(decodeTransition)
         .filter((t): t is ThermostatScheduleTransition => t !== null);
     return {
         handle,
         systemMode,
-        name: pickStr(obj, "Name", "2"),
-        presetHandle: pickStr(obj, "PresetHandle", "3"),
+        name: pickString(obj, "2"),
+        presetHandle: pickString(obj, "3"),
         transitions,
-        builtIn: pickBool(obj, "BuiltIn", "5"),
+        builtIn: pickBoolean(obj, "5"),
     };
 }
 
 function decodePreset(raw: unknown): ThermostatPreset | null {
     const obj = asObject(raw);
     if (!obj) return null;
-    const handle = pickStr(obj, "PresetHandle", "0");
+    const handle = pickString(obj, "0");
     if (handle === null) return null;
-    return { handle, name: pickStr(obj, "Name", "2") };
+    return {
+        handle,
+        name: pickString(obj, "2"),
+        coolingSetpoint: pickNumber(obj, "3"),
+        heatingSetpoint: pickNumber(obj, "4"),
+    };
 }
 
 /** Whether the Thermostat cluster's FeatureMap includes MatterScheduleConfiguration (MSCH). */
@@ -156,9 +145,10 @@ export function readActiveScheduleHandle(node: MatterNode, endpoint: number): st
     return typeof v === "string" ? v : null;
 }
 
-export function readSchedules(node: MatterNode, endpoint: number): ThermostatSchedule[] {
+/** Decoded Schedules, or undefined when the attribute is not in the node's attribute cache. */
+export function readSchedules(node: MatterNode, endpoint: number): ThermostatSchedule[] | undefined {
     const raw = readAttr(node, endpoint, ATTR_SCHEDULES);
-    if (!Array.isArray(raw)) return [];
+    if (!Array.isArray(raw)) return undefined;
     return raw.map(decodeSchedule).filter((s): s is ThermostatSchedule => s !== null);
 }
 
@@ -187,47 +177,112 @@ export function resolveTransitionLabel(transition: ModeLabelSource, presets: The
 }
 
 /**
- * For each day (Mon..Sun), finds the first schedule whose DayOfWeek bitmap claims it.
- * A schedule "claims" a day if any of its transitions include that day.
+ * Resolves each transition's effective preset and setpoints by the §4.3.10.27 order of precedence: an own
+ * PresetHandle wins, else the transition's own setpoints, and only a transition providing neither falls
+ * through to the schedule's default PresetHandle. SystemMode always defaults to the schedule's (§4.3.10.26.2).
  */
-export function assignDaysToSchedules(schedules: ThermostatSchedule[]): (ThermostatSchedule | undefined)[] {
-    return DAY_BIT.map(bit => schedules.find(s => s.transitions.some(t => (t.dayOfWeek & (1 << bit)) !== 0)));
+export function resolveScheduleDefaults(schedule: ThermostatSchedule, presets: ThermostatPreset[]): ThermostatSchedule {
+    return {
+        ...schedule,
+        transitions: schedule.transitions.map(t => {
+            const reportsSetpoint = t.heatingSetpoint !== null || t.coolingSetpoint !== null;
+            const presetHandle = t.presetHandle ?? (reportsSetpoint ? null : schedule.presetHandle);
+            const preset = presetHandle !== null ? presets.find(p => p.handle === presetHandle) : undefined;
+            return {
+                ...t,
+                presetHandle,
+                systemMode: t.systemMode ?? schedule.systemMode,
+                coolingSetpoint: preset?.coolingSetpoint ?? t.coolingSetpoint,
+                heatingSetpoint: preset?.heatingSetpoint ?? t.heatingSetpoint,
+            };
+        }),
+    };
+}
+
+/** Display-order (Mon..Sun) day indices a ScheduleDayOfWeekBitmap claims. */
+function claimedDays(dayOfWeek: number): number[] {
+    return DAY_BIT.map((bit, day) => ((dayOfWeek & (1 << bit)) !== 0 ? day : -1)).filter(day => day >= 0);
+}
+
+/** First claimed day in Mon..Sun display order; 7 when the bitmap claims none, so unclaimed rows sort last. */
+export function firstClaimedDay(dayOfWeek: number): number {
+    return claimedDays(dayOfWeek)[0] ?? 7;
+}
+
+/** Mon..Sun day labels for a ScheduleDayOfWeekBitmap, consecutive runs compressed (e.g. "Mon–Wed, Fri"). */
+export function formatDayOfWeek(dayOfWeek: number): string {
+    const days = claimedDays(dayOfWeek);
+    if (days.length === 0) return "—";
+    if (days.length === DAY_LABELS.length) return "Every day";
+    const parts = new Array<string>();
+    for (let start = 0; start < days.length;) {
+        let end = start;
+        while (end + 1 < days.length && days[end + 1] === days[end] + 1) end++;
+        if (end - start >= 2) {
+            parts.push(`${DAY_LABELS[days[start]]}–${DAY_LABELS[days[end]]}`);
+        } else {
+            for (let i = start; i <= end; i++) parts.push(DAY_LABELS[days[i]]);
+        }
+        start = end + 1;
+    }
+    return parts.join(", ");
+}
+
+/** Row order for the transitions list: by first claimed day in Mon..Sun display order, then by time. */
+export function compareTransitionsForDisplay(a: ThermostatScheduleTransition, b: ThermostatScheduleTransition): number {
+    return firstClaimedDay(a.dayOfWeek) - firstClaimedDay(b.dayOfWeek) || a.transitionTimeMin - b.transitionTimeMin;
+}
+
+function transitionsForDay(schedule: ThermostatSchedule, day: number): ThermostatScheduleTransition[] {
+    const bit = DAY_BIT[day];
+    return schedule.transitions
+        .filter(t => (t.dayOfWeek & (1 << bit)) !== 0)
+        .sort((a, b) => a.transitionTimeMin - b.transitionTimeMin);
+}
+
+function segmentOf(t: ThermostatScheduleTransition, startMin: number, endMin: number): DaySegment {
+    return {
+        startMin,
+        endMin,
+        heatingSetpoint: t.heatingSetpoint,
+        coolingSetpoint: t.coolingSetpoint,
+        presetHandle: t.presetHandle,
+        systemMode: t.systemMode,
+    };
+}
+
+function findCarryOverTransition(schedule: ThermostatSchedule, day: number): ThermostatScheduleTransition | undefined {
+    for (let back = 1; back < DAY_LABELS.length; back++) {
+        const previous = transitionsForDay(schedule, (day + DAY_LABELS.length - back) % DAY_LABELS.length);
+        if (previous.length > 0) return previous[previous.length - 1];
+    }
+    return undefined;
 }
 
 /**
- * Builds the ordered, gap-free list of setpoint segments covering a full day (0-1440 min) for one schedule.
- * The period before the day's first transition carries the *last* transition's setpoint, since Matter
- * schedules apply until the next transition — including across the midnight boundary.
+ * Ordered, gap-free setpoint segments covering one day (0-1440 min) of a schedule. Per cluster
+ * §4.3.10.26.5 the band before the day's first transition carries the last transition of the most
+ * recent earlier day the schedule covers.
  */
 export function buildDaySegments(schedule: ThermostatSchedule, day: number): DaySegment[] {
-    const bit = DAY_BIT[day];
-    const dayTransitions = schedule.transitions
-        .filter(t => (t.dayOfWeek & (1 << bit)) !== 0)
-        .sort((a, b) => a.transitionTimeMin - b.transitionTimeMin);
-    if (dayTransitions.length === 0) return [];
+    const dayTransitions = transitionsForDay(schedule, day);
+    const segments = new Array<DaySegment>();
+    if (dayTransitions.length === 0) return segments;
 
-    const segments: DaySegment[] = [];
-    const last = dayTransitions[dayTransitions.length - 1];
-    if (dayTransitions[0].transitionTimeMin > 0) {
-        segments.push({
-            startMin: 0,
-            endMin: dayTransitions[0].transitionTimeMin,
-            heatingSetpoint: last.heatingSetpoint,
-            coolingSetpoint: last.coolingSetpoint,
-            presetHandle: last.presetHandle,
-            systemMode: last.systemMode,
-        });
+    const first = dayTransitions[0];
+    if (first.transitionTimeMin > 0) {
+        const carried = findCarryOverTransition(schedule, day) ?? dayTransitions[dayTransitions.length - 1];
+        segments.push(segmentOf(carried, 0, first.transitionTimeMin));
     }
     for (let i = 0; i < dayTransitions.length; i++) {
         const t = dayTransitions[i];
-        segments.push({
-            startMin: t.transitionTimeMin,
-            endMin: i + 1 < dayTransitions.length ? dayTransitions[i + 1].transitionTimeMin : 1440,
-            heatingSetpoint: t.heatingSetpoint,
-            coolingSetpoint: t.coolingSetpoint,
-            presetHandle: t.presetHandle,
-            systemMode: t.systemMode,
-        });
+        segments.push(
+            segmentOf(
+                t,
+                t.transitionTimeMin,
+                i + 1 < dayTransitions.length ? dayTransitions[i + 1].transitionTimeMin : 1440,
+            ),
+        );
     }
     return segments;
 }
@@ -259,24 +314,14 @@ interface SetpointPair {
     coolingSetpoint: number | null;
 }
 
-/**
- * The setpoint driving a segment's color for the given mode. In Auto mode (both heat and cool
- * present), averaging the two would flatten the gradient to a single muddy blend whenever the
- * band is centered on the same setpoint all day — showing one bound at a time (user-toggleable)
- * preserves the actual variation instead. Falls back to whichever setpoint is present when the
- * selected mode's isn't (e.g. a Cool-only schedule while in "heat" mode).
- */
+/** The setpoint driving a segment's color, falling back to the other mode's when the selected one is absent. */
 export function pickSetpointForMode(seg: SetpointPair, mode: ScheduleColorMode): number | null {
     return mode === "heat"
         ? (seg.heatingSetpoint ?? seg.coolingSetpoint)
         : (seg.coolingSetpoint ?? seg.heatingSetpoint);
 }
 
-/**
- * Min/max for the given mode's setpoints only. Heat and cool setpoints sit in disjoint
- * bands (e.g. heat 17-21°C, cool 24-27°C) — pooling them into one range would compress
- * each mode's gradient into a narrow slice instead of using the full color scale.
- */
+/** Heat and cool setpoints occupy disjoint value bands, so the range covers only the selected mode's setpoints. */
 export function computeSetpointRange(
     schedule: ThermostatSchedule,
     mode: ScheduleColorMode,

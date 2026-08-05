@@ -5,15 +5,16 @@
  */
 
 import { mdiCheck, mdiClockOutline, mdiFire, mdiSnowflake } from "@mdi/js";
-import { css, html, nothing } from "lit";
+import { css, type CSSResultGroup, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import "../../../components/ha-svg-icon.js";
 import {
-    assignDaysToSchedules,
     buildDaySegments,
+    compareTransitionsForDisplay,
     computeSetpointRange,
     DAY_LABELS,
     type DaySegment,
+    formatDayOfWeek,
     formatHandleShort,
     formatMinutes,
     formatSegmentTooltip,
@@ -23,11 +24,11 @@ import {
     readPresets,
     pickSetpointForMode,
     readSchedules,
+    resolveScheduleDefaults,
     resolveTransitionLabel,
     type ScheduleColorMode,
     setpointColorMixPercent,
     THERMOSTAT_CLUSTER_ID,
-    type ThermostatSchedule,
 } from "../../../util/thermostat-schedule.js";
 import { BaseClusterCommands } from "../base-cluster-commands.js";
 import { registerClusterCommands } from "../registry.js";
@@ -46,6 +47,7 @@ class ThermostatClusterCommands extends BaseClusterCommands {
         const context = `${String(this.node.node_id)}/${this.endpoint}/${this.cluster}`;
         if (this._scheduleContext !== undefined && this._scheduleContext !== context) {
             this._selectedHandle = null;
+            this._colorMode = "heat";
         }
         this._scheduleContext = context;
     }
@@ -58,24 +60,22 @@ class ThermostatClusterCommands extends BaseClusterCommands {
         const schedules = readSchedules(this.node, this.endpoint);
         const activeHandle = readActiveScheduleHandle(this.node, this.endpoint);
         const presets = readPresets(this.node, this.endpoint);
-        const owners = assignDaysToSchedules(schedules);
 
-        const selectedSchedule: ThermostatSchedule | undefined =
-            (this._selectedHandle !== null ? schedules.find(s => s.handle === this._selectedHandle) : undefined) ??
-            (activeHandle !== null ? schedules.find(s => s.handle === activeHandle) : undefined) ??
-            schedules[0];
+        const pickedSchedule =
+            (this._selectedHandle !== null ? schedules?.find(s => s.handle === this._selectedHandle) : undefined) ??
+            (activeHandle !== null ? schedules?.find(s => s.handle === activeHandle) : undefined) ??
+            schedules?.[0];
+        const selectedSchedule =
+            pickedSchedule !== undefined ? resolveScheduleDefaults(pickedSchedule, presets) : undefined;
+        const resolvedTransitions = selectedSchedule?.transitions ?? [];
+        const transitionRows = resolvedTransitions
+            .map((resolved, index) => ({ resolved, reported: pickedSchedule?.transitions[index] }))
+            .sort((a, b) => compareTransitionsForDisplay(a.resolved, b.resolved));
 
-        const ownerSchedules = owners.filter((s): s is ThermostatSchedule => s !== undefined);
-        const ranges = ownerSchedules
-            .map(s => computeSetpointRange(s, this._colorMode))
-            .filter((r): r is { min: number; max: number } => r !== undefined);
-        const range =
-            ranges.length > 0
-                ? { min: Math.min(...ranges.map(r => r.min)), max: Math.max(...ranges.map(r => r.max)) }
-                : undefined;
-        const hasDualSetpoints = ownerSchedules.some(s =>
-            s.transitions.some(t => t.heatingSetpoint !== null && t.coolingSetpoint !== null),
-        );
+        const range = selectedSchedule ? computeSetpointRange(selectedSchedule, this._colorMode) : undefined;
+        const hasDualSetpoints =
+            resolvedTransitions.some(t => t.heatingSetpoint !== null) &&
+            resolvedTransitions.some(t => t.coolingSetpoint !== null);
 
         return html`
             <details class="command-panel" open>
@@ -86,181 +86,191 @@ class ThermostatClusterCommands extends BaseClusterCommands {
                 </summary>
                 <div class="command-content">
                     ${
-                        schedules.length === 0
-                            ? html`<p class="empty">No schedules configured.</p>`
-                            : html`
-                                  <ul class="schedule-chips">
-                                      ${schedules.map((s, index) => {
-                                          const isActive = s.handle !== null && s.handle === activeHandle;
-                                          return html`
-                                              <li>
-                                                  <button
-                                                      class="schedule-chip ${isActive ? "active" : ""} ${
-                                                          selectedSchedule === s ? "selected" : ""
-                                                      }"
-                                                      @click=${() => {
-                                                          this._selectedHandle = s.handle;
-                                                      }}
-                                                  >
-                                                      <span>${s.name ?? `Schedule ${index + 1}`}</span>
-                                                      <span class="chip-handle">${formatHandleShort(s.handle)}</span>
-                                                      ${
-                                                          isActive
-                                                              ? html`<span class="active-badge">
-                                                                    <ha-svg-icon .path=${mdiCheck}></ha-svg-icon>
-                                                                    Active
-                                                                </span>`
-                                                              : nothing
-                                                      }
-                                                  </button>
-                                              </li>
-                                          `;
-                                      })}
-                                  </ul>
-
-                                  ${
-                                      selectedSchedule
-                                          ? html`
-                                                ${
-                                                    hasDualSetpoints
-                                                        ? html`
-                                                              <div class="grid-toolbar">
-                                                                  <span class="grid-toolbar-label">Color by</span>
-                                                                  <button
-                                                                      class="mode-toggle ${
-                                                                          this._colorMode === "heat" ? "active" : ""
-                                                                      }"
-                                                                      @click=${() => {
-                                                                          this._colorMode = "heat";
-                                                                      }}
-                                                                  >
-                                                                      <ha-svg-icon .path=${mdiFire}></ha-svg-icon>
-                                                                      Heat
-                                                                  </button>
-                                                                  <button
-                                                                      class="mode-toggle ${
-                                                                          this._colorMode === "cool" ? "active" : ""
-                                                                      }"
-                                                                      @click=${() => {
-                                                                          this._colorMode = "cool";
-                                                                      }}
-                                                                  >
-                                                                      <ha-svg-icon .path=${mdiSnowflake}></ha-svg-icon>
-                                                                      Cool
-                                                                  </button>
-                                                              </div>
-                                                          `
-                                                        : nothing
-                                                }
-                                                <div class="schedule-grid">
-                                                    <div class="grid-ticks">
-                                                        ${HOUR_TICKS.map(
-                                                            h => html`<span>${String(h).padStart(2, "0")}:00</span>`,
-                                                        )}
-                                                    </div>
-                                                    ${DAY_LABELS.map((label, day) => {
-                                                        const owner = owners[day];
-                                                        const isSelectedDay = owner === selectedSchedule;
-                                                        const segments = owner ? buildDaySegments(owner, day) : [];
-                                                        return html`
-                                                            <div class="grid-row ${isSelectedDay ? "" : "dimmed"}">
-                                                                <span class="day-label">${label}</span>
-                                                                <div class="day-timeline">
-                                                                    ${segments.map(
-                                                                        seg => html`
-                                                                            <span
-                                                                                class="segment"
-                                                                                style=${`left:${(seg.startMin / 1440) * 100}%;width:${
-                                                                                    ((seg.endMin - seg.startMin) /
-                                                                                        1440) *
-                                                                                    100
-                                                                                }%;background:${this._segmentColor(
-                                                                                    seg,
-                                                                                    range,
-                                                                                    this._colorMode,
-                                                                                )}`}
-                                                                                title=${formatSegmentTooltip(
-                                                                                    seg,
-                                                                                    presets,
-                                                                                )}
-                                                                            ></span>
-                                                                        `,
-                                                                    )}
-                                                                </div>
-                                                            </div>
-                                                        `;
-                                                    })}
-                                                </div>
-
-                                                ${
-                                                    range
-                                                        ? html`
-                                                              <div class="legend">
-                                                                  <ha-svg-icon .path=${mdiSnowflake}></ha-svg-icon>
-                                                                  <span>${formatSetpoint(range.min)}</span>
-                                                                  <span class="legend-bar"></span>
-                                                                  <span>${formatSetpoint(range.max)}</span>
-                                                                  <ha-svg-icon .path=${mdiFire}></ha-svg-icon>
-                                                              </div>
-                                                          `
-                                                        : nothing
-                                                }
-
-                                                <div class="transitions">
-                                                    <div class="transitions-header">
-                                                        TRANSITIONS ·
+                        schedules === undefined
+                            ? html`<p class="empty">Schedules attribute not available.</p>`
+                            : schedules.length === 0
+                              ? html`<p class="empty">No schedules configured.</p>`
+                              : html`
+                                    <ul class="schedule-chips">
+                                        ${schedules.map((s, index) => {
+                                            const isActive = s.handle === activeHandle;
+                                            return html`
+                                                <li>
+                                                    <button
+                                                        class="schedule-chip ${isActive ? "active" : ""} ${
+                                                            selectedSchedule?.handle === s.handle ? "selected" : ""
+                                                        }"
+                                                        @click=${() => {
+                                                            this._selectedHandle = s.handle;
+                                                        }}
+                                                    >
+                                                        <span>${s.name ?? `Schedule ${index + 1}`}</span>
+                                                        <span class="chip-handle">${formatHandleShort(s.handle)}</span>
                                                         ${
-                                                            selectedSchedule.name ??
-                                                            formatHandleShort(selectedSchedule.handle)
+                                                            isActive
+                                                                ? html`<span class="active-badge">
+                                                                      <ha-svg-icon .path=${mdiCheck}></ha-svg-icon>
+                                                                      Active
+                                                                  </span>`
+                                                                : nothing
                                                         }
-                                                    </div>
-                                                    <ul class="transitions-list">
-                                                        ${[...selectedSchedule.transitions]
-                                                            .sort((a, b) => a.transitionTimeMin - b.transitionTimeMin)
-                                                            .map(
-                                                                t => html`
-                                                                    <li class="transition-row">
-                                                                        <span class="transition-time">
-                                                                            ${formatMinutes(t.transitionTimeMin)}
-                                                                        </span>
-                                                                        <span class="transition-label">
-                                                                            ${resolveTransitionLabel(t, presets)}
-                                                                        </span>
-                                                                        <span class="transition-setpoint">
-                                                                            ${
-                                                                                t.heatingSetpoint !== null
-                                                                                    ? html`<ha-svg-icon
-                                                                                              .path=${mdiFire}
-                                                                                          ></ha-svg-icon>
-                                                                                          ${formatSetpoint(
-                                                                                              t.heatingSetpoint,
-                                                                                          )}`
-                                                                                    : nothing
-                                                                            }
-                                                                            ${
-                                                                                t.coolingSetpoint !== null
-                                                                                    ? html`<ha-svg-icon
-                                                                                              .path=${mdiSnowflake}
-                                                                                          ></ha-svg-icon>
-                                                                                          ${formatSetpoint(
-                                                                                              t.coolingSetpoint,
-                                                                                          )}`
-                                                                                    : nothing
-                                                                            }
-                                                                        </span>
-                                                                    </li>
-                                                                `,
-                                                            )}
-                                                    </ul>
-                                                </div>
-                                            `
-                                          : nothing
-                                  }
-                              `
+                                                    </button>
+                                                </li>
+                                            `;
+                                        })}
+                                    </ul>
+
+                                    ${
+                                        selectedSchedule
+                                            ? html`
+                                                  ${
+                                                      hasDualSetpoints
+                                                          ? html`
+                                                                <div class="grid-toolbar">
+                                                                    <span class="grid-toolbar-label">Color by</span>
+                                                                    <button
+                                                                        class="mode-toggle ${
+                                                                            this._colorMode === "heat" ? "active" : ""
+                                                                        }"
+                                                                        @click=${() => {
+                                                                            this._colorMode = "heat";
+                                                                        }}
+                                                                    >
+                                                                        <ha-svg-icon .path=${mdiFire}></ha-svg-icon>
+                                                                        Heat
+                                                                    </button>
+                                                                    <button
+                                                                        class="mode-toggle ${
+                                                                            this._colorMode === "cool" ? "active" : ""
+                                                                        }"
+                                                                        @click=${() => {
+                                                                            this._colorMode = "cool";
+                                                                        }}
+                                                                    >
+                                                                        <ha-svg-icon
+                                                                            .path=${mdiSnowflake}
+                                                                        ></ha-svg-icon>
+                                                                        Cool
+                                                                    </button>
+                                                                </div>
+                                                            `
+                                                          : nothing
+                                                  }
+                                                  <div class="schedule-grid">
+                                                      <div class="grid-ticks">
+                                                          ${HOUR_TICKS.map(
+                                                              h => html`<span>${String(h).padStart(2, "0")}:00</span>`,
+                                                          )}
+                                                      </div>
+                                                      ${DAY_LABELS.map((label, day) => {
+                                                          const segments = buildDaySegments(selectedSchedule, day);
+                                                          return html`
+                                                              <div
+                                                                  class="grid-row ${segments.length > 0 ? "" : "dimmed"}"
+                                                              >
+                                                                  <span class="day-label">${label}</span>
+                                                                  <div class="day-timeline">
+                                                                      ${segments.map(
+                                                                          seg => html`
+                                                                              <span
+                                                                                  class="segment"
+                                                                                  style=${`left:${(seg.startMin / 1440) * 100}%;width:${
+                                                                                      ((seg.endMin - seg.startMin) /
+                                                                                          1440) *
+                                                                                      100
+                                                                                  }%;background:${this._segmentColor(
+                                                                                      seg,
+                                                                                      range,
+                                                                                      this._colorMode,
+                                                                                  )}`}
+                                                                                  title=${formatSegmentTooltip(seg, presets)}
+                                                                              ></span>
+                                                                          `,
+                                                                      )}
+                                                                  </div>
+                                                              </div>
+                                                          `;
+                                                      })}
+                                                  </div>
+
+                                                  ${
+                                                      range
+                                                          ? html`
+                                                                <div class="legend">
+                                                                    ${
+                                                                        range.min === range.max
+                                                                            ? html`<span>
+                                                                                  ${formatSetpoint(range.min)}
+                                                                              </span>`
+                                                                            : html`<span>
+                                                                                      ${formatSetpoint(range.min)}
+                                                                                  </span>
+                                                                                  <span class="legend-bar"></span>
+                                                                                  <span>
+                                                                                      ${formatSetpoint(range.max)}
+                                                                                  </span>`
+                                                                    }
+                                                                </div>
+                                                            `
+                                                          : nothing
+                                                  }
+
+                                                  <div class="transitions">
+                                                      <div class="transitions-header">
+                                                          TRANSITIONS ·
+                                                          ${selectedSchedule.name ?? formatHandleShort(selectedSchedule.handle)}
+                                                      </div>
+                                                      <ul class="transitions-list">
+                                                          ${transitionRows.map(
+                                                              ({ resolved: t, reported }) => html`
+                                                                  <li class="transition-row">
+                                                                      <span class="transition-days">
+                                                                          ${formatDayOfWeek(t.dayOfWeek)}
+                                                                      </span>
+                                                                      <span class="transition-time">
+                                                                          ${formatMinutes(t.transitionTimeMin)}
+                                                                      </span>
+                                                                      <span class="transition-label">
+                                                                          ${resolveTransitionLabel(t, presets)}
+                                                                      </span>
+                                                                      <span class="transition-setpoint">
+                                                                          ${this._setpointCell(
+                                                                              mdiFire,
+                                                                              t.heatingSetpoint,
+                                                                              reported?.heatingSetpoint ?? null,
+                                                                          )}
+                                                                          ${this._setpointCell(
+                                                                              mdiSnowflake,
+                                                                              t.coolingSetpoint,
+                                                                              reported?.coolingSetpoint ?? null,
+                                                                          )}
+                                                                      </span>
+                                                                  </li>
+                                                              `,
+                                                          )}
+                                                      </ul>
+                                                  </div>
+                                              `
+                                            : nothing
+                                    }
+                                `
                     }
                 </div>
             </details>
         `;
+    }
+
+    /** A value the device did not report for this transition comes from its preset, so it is marked as derived. */
+    private _setpointCell(icon: string, resolved: number | null, reported: number | null) {
+        if (resolved === null) return nothing;
+        const fromPreset = resolved !== reported;
+        return html`<span
+            class="setpoint-value ${fromPreset ? "inherited" : ""}"
+            title=${fromPreset ? "From preset" : nothing}
+        >
+            <ha-svg-icon .path=${icon}></ha-svg-icon>
+            ${formatSetpoint(resolved)}
+        </span>`;
     }
 
     private _segmentColor(
@@ -269,13 +279,15 @@ class ThermostatClusterCommands extends BaseClusterCommands {
         mode: ScheduleColorMode,
     ): string {
         const value = pickSetpointForMode(seg, mode);
-        if (value === null || !range) return "var(--md-sys-color-surface-container-high)";
+        if (value === null || !range) {
+            return "repeating-linear-gradient(45deg, var(--md-sys-color-outline) 0 3px, transparent 3px 7px)";
+        }
         const pct = setpointColorMixPercent(value, range.min, range.max);
         return `color-mix(in srgb, var(--schedule-color-cold), var(--schedule-color-hot) ${pct}%)`;
     }
 
-    static override styles = [
-        ...(Array.isArray(BaseClusterCommands.styles) ? BaseClusterCommands.styles : [BaseClusterCommands.styles]),
+    static override styles: CSSResultGroup = [
+        BaseClusterCommands.styles,
         css`
             .feature-map-badge {
                 margin-left: auto;
@@ -328,11 +340,12 @@ class ThermostatClusterCommands extends BaseClusterCommands {
                 align-items: center;
                 gap: 2px;
                 font-size: 0.75rem;
-                color: var(--success-color);
+                color: var(--md-sys-color-on-secondary-container);
             }
 
             .active-badge ha-svg-icon {
                 --mdc-icon-size: 14px;
+                --icon-primary-color: var(--success-color, #2e7d32);
             }
 
             .grid-toolbar {
@@ -403,7 +416,7 @@ class ThermostatClusterCommands extends BaseClusterCommands {
 
             .grid-row:not(.dimmed) .day-label {
                 font-weight: 700;
-                color: var(--md-sys-color-primary);
+                color: var(--md-sys-color-on-surface);
             }
 
             .day-timeline {
@@ -412,13 +425,14 @@ class ThermostatClusterCommands extends BaseClusterCommands {
                 height: 18px;
                 border-radius: 4px;
                 overflow: hidden;
-                background: var(--md-sys-color-surface-container-high);
+                background: var(--md-sys-color-surface-container-highest);
             }
 
             .segment {
                 position: absolute;
                 top: 0;
                 bottom: 0;
+                min-width: 2px;
             }
 
             .legend {
@@ -428,10 +442,6 @@ class ThermostatClusterCommands extends BaseClusterCommands {
                 font-size: 0.8rem;
                 color: var(--md-sys-color-on-surface-variant);
                 padding: 8px 0 16px 48px;
-            }
-
-            .legend ha-svg-icon {
-                --mdc-icon-size: 16px;
             }
 
             .legend-bar {
@@ -466,7 +476,15 @@ class ThermostatClusterCommands extends BaseClusterCommands {
                 gap: 12px;
                 padding: 8px 12px;
                 border-radius: 8px;
-                background: var(--md-sys-color-surface-container-high);
+                background: var(--md-sys-color-surface-container-highest);
+            }
+
+            .transition-days {
+                min-width: 104px;
+                flex-shrink: 0;
+                font-size: 0.8rem;
+                font-weight: 500;
+                color: var(--md-sys-color-on-surface-variant);
             }
 
             .transition-time {
@@ -489,6 +507,18 @@ class ThermostatClusterCommands extends BaseClusterCommands {
 
             .transition-setpoint ha-svg-icon {
                 --mdc-icon-size: 16px;
+            }
+
+            .setpoint-value {
+                display: inline-flex;
+                align-items: center;
+                gap: 4px;
+            }
+
+            .setpoint-value.inherited {
+                font-style: italic;
+                font-weight: 400;
+                color: var(--md-sys-color-on-surface-variant);
             }
 
             .empty {

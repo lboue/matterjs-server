@@ -6,11 +6,12 @@
 
 import { MatterNode, type MatterNodeData } from "@matter-server/ws-client";
 import {
-    assignDaysToSchedules,
     buildDaySegments,
+    compareTransitionsForDisplay,
     computeSetpointRange,
-    DAY_LABELS,
     type DaySegment,
+    firstClaimedDay,
+    formatDayOfWeek,
     formatHandleShort,
     formatMinutes,
     formatSegmentTooltip,
@@ -20,9 +21,12 @@ import {
     readActiveScheduleHandle,
     readPresets,
     readSchedules,
+    resolveScheduleDefaults,
     resolveTransitionLabel,
     setpointColorMixPercent,
+    type ThermostatPreset,
     type ThermostatSchedule,
+    type ThermostatScheduleTransition,
 } from "../src/util/thermostat-schedule.js";
 
 function node(attributes: Record<string, unknown>, node_id: number | bigint = 1): MatterNode {
@@ -42,6 +46,50 @@ function node(attributes: Record<string, unknown>, node_id: number | bigint = 1)
 // Single-byte schedule handles, base64-encoded (0x01 -> "AQ==", 0x02 -> "Ag==").
 const HANDLE_1 = "AQ==";
 const HANDLE_2 = "Ag==";
+
+// ScheduleDayOfWeekBitmap bits (Sunday = bit 0 .. Saturday = bit 6).
+const SUN = 1 << 0;
+const MON = 1 << 1;
+const TUE = 1 << 2;
+const WED = 1 << 3;
+const THU = 1 << 4;
+const FRI = 1 << 5;
+const SAT = 1 << 6;
+
+function transition(
+    dayOfWeek: number,
+    transitionTimeMin: number,
+    overrides: Partial<ThermostatScheduleTransition> = {},
+): ThermostatScheduleTransition {
+    return {
+        dayOfWeek,
+        transitionTimeMin,
+        presetHandle: null,
+        systemMode: null,
+        coolingSetpoint: null,
+        heatingSetpoint: null,
+        ...overrides,
+    };
+}
+
+function schedule(
+    transitions: ThermostatScheduleTransition[],
+    overrides: Partial<ThermostatSchedule> = {},
+): ThermostatSchedule {
+    return {
+        handle: HANDLE_1,
+        systemMode: 4,
+        name: null,
+        presetHandle: null,
+        builtIn: null,
+        transitions,
+        ...overrides,
+    };
+}
+
+function preset(handle: string, overrides: Partial<ThermostatPreset> = {}): ThermostatPreset {
+    return { handle, name: null, coolingSetpoint: null, heatingSetpoint: null, ...overrides };
+}
 
 describe("thermostat-schedule util", () => {
     describe("isMSCHActive", () => {
@@ -67,15 +115,17 @@ describe("thermostat-schedule util", () => {
     });
 
     describe("readSchedules", () => {
-        it("decodes named-keyed struct fields, including nested transitions", () => {
+        it("decodes field-tag-keyed structs, including nested transitions", () => {
             const schedules = readSchedules(
                 node({
                     "6/513/81": [
                         {
-                            ScheduleHandle: HANDLE_1,
-                            SystemMode: 4,
-                            Name: "Weekdays",
-                            Transitions: [{ DayOfWeek: 0b0111110, TransitionTime: 480, HeatingSetpoint: 2100 }],
+                            "0": HANDLE_1,
+                            "1": 4,
+                            "2": "Weekdays",
+                            "3": HANDLE_2,
+                            "4": [{ "0": 0b0111110, "1": 480, "2": HANDLE_2, "3": 4, "4": 2600, "5": 2100 }],
+                            "5": true,
                         },
                     ],
                 }),
@@ -86,64 +136,78 @@ describe("thermostat-schedule util", () => {
                     handle: HANDLE_1,
                     systemMode: 4,
                     name: "Weekdays",
-                    presetHandle: null,
-                    builtIn: null,
+                    presetHandle: HANDLE_2,
+                    builtIn: true,
                     transitions: [
                         {
                             dayOfWeek: 0b0111110,
                             transitionTimeMin: 480,
-                            presetHandle: null,
-                            systemMode: null,
-                            coolingSetpoint: null,
+                            presetHandle: HANDLE_2,
+                            systemMode: 4,
+                            coolingSetpoint: 2600,
                             heatingSetpoint: 2100,
                         },
                     ],
                 },
             ]);
         });
-        it("decodes field-tag-keyed wire entries", () => {
+        it("leaves optional fields null when the struct omits them", () => {
             const schedules = readSchedules(
-                node({
-                    "6/513/81": [
-                        {
-                            "0": HANDLE_2,
-                            "1": 4,
-                            "4": [{ "0": 0b1000001, "1": 0, "5": 1750 }],
-                        },
-                    ],
-                }),
+                node({ "6/513/81": [{ "0": HANDLE_2, "1": 4, "4": [{ "0": SAT | SUN, "1": 0, "5": 1750 }] }] }),
                 6,
             );
-            expect(schedules[0].handle).to.equal(HANDLE_2);
-            expect(schedules[0].transitions[0]).to.deep.equal({
-                dayOfWeek: 0b1000001,
-                transitionTimeMin: 0,
+            expect(schedules?.[0]).to.deep.equal({
+                handle: HANDLE_2,
+                systemMode: 4,
+                name: null,
                 presetHandle: null,
-                systemMode: null,
-                coolingSetpoint: null,
-                heatingSetpoint: 1750,
+                builtIn: null,
+                transitions: [
+                    {
+                        dayOfWeek: SAT | SUN,
+                        transitionTimeMin: 0,
+                        presetHandle: null,
+                        systemMode: null,
+                        coolingSetpoint: null,
+                        heatingSetpoint: 1750,
+                    },
+                ],
             });
         });
-        it("drops entries missing a required field and returns empty for a non-array attribute", () => {
-            expect(readSchedules(node({ "6/513/81": [{ Name: "no mode or handle" }] }), 6)).to.deep.equal([]);
-            expect(readSchedules(node({}), 6)).to.deep.equal([]);
+        it("drops entries missing a required field, including name-keyed structs", () => {
+            expect(readSchedules(node({ "6/513/81": [{ "1": 4 }] }), 6)).to.deep.equal([]);
+            expect(readSchedules(node({ "6/513/81": [{ ScheduleHandle: HANDLE_1, SystemMode: 4 }] }), 6)).to.deep.equal(
+                [],
+            );
+        });
+        it("drops a transition whose DayOfWeek sets the reserved Vacation bit", () => {
+            const schedules = readSchedules(
+                node({ "6/513/81": [{ "0": HANDLE_1, "1": 4, "4": [{ "0": 0x80 | MON, "1": 0 }] }] }),
+                6,
+            );
+            expect(schedules?.[0].transitions).to.deep.equal([]);
+        });
+        it("distinguishes an absent attribute from an empty list", () => {
+            expect(readSchedules(node({}), 6)).to.equal(undefined);
+            expect(readSchedules(node({ "6/513/81": null }), 6)).to.equal(undefined);
+            expect(readSchedules(node({ "6/513/81": [] }), 6)).to.deep.equal([]);
         });
     });
 
     describe("readPresets", () => {
-        it("decodes named- and tag-keyed presets", () => {
+        it("decodes tag-keyed presets including their setpoints", () => {
             const presets = readPresets(
                 node({
                     "6/513/80": [
-                        { PresetHandle: HANDLE_1, PresetScenario: 4, Name: "Night" },
-                        { "0": HANDLE_2, "1": 4, "2": "Morning" },
+                        { "0": HANDLE_1, "1": 4, "2": "Night", "4": 1700 },
+                        { "0": HANDLE_2, "1": 1, "2": "Morning", "3": 2600, "4": 2100 },
                     ],
                 }),
                 6,
             );
             expect(presets).to.deep.equal([
-                { handle: HANDLE_1, name: "Night" },
-                { handle: HANDLE_2, name: "Morning" },
+                { handle: HANDLE_1, name: "Night", coolingSetpoint: null, heatingSetpoint: 1700 },
+                { handle: HANDLE_2, name: "Morning", coolingSetpoint: 2600, heatingSetpoint: 2100 },
             ]);
         });
         it("returns empty when absent", () => {
@@ -152,7 +216,7 @@ describe("thermostat-schedule util", () => {
     });
 
     describe("resolveTransitionLabel", () => {
-        const presets = [{ handle: HANDLE_1, name: "Night" }];
+        const presets = [preset(HANDLE_1, { name: "Night" })];
         it("prefers a matching preset name", () => {
             const label = resolveTransitionLabel({ presetHandle: HANDLE_1, systemMode: 4 }, presets);
             expect(label).to.equal("Night");
@@ -167,93 +231,183 @@ describe("thermostat-schedule util", () => {
         });
     });
 
-    describe("assignDaysToSchedules", () => {
-        it("assigns Mon-Fri to Weekdays and Sat-Sun to Weekend", () => {
-            const weekdays: ThermostatSchedule = {
-                handle: HANDLE_1,
-                systemMode: 4,
-                name: "Weekdays",
-                presetHandle: null,
-                builtIn: null,
-                transitions: [
-                    {
-                        dayOfWeek: 0b0111110, // Mon..Fri
-                        transitionTimeMin: 0,
-                        presetHandle: null,
-                        systemMode: null,
-                        coolingSetpoint: null,
-                        heatingSetpoint: 1750,
-                    },
-                ],
-            };
-            const weekend: ThermostatSchedule = {
-                handle: HANDLE_2,
-                systemMode: 4,
-                name: "Weekend",
-                presetHandle: null,
-                builtIn: null,
-                transitions: [
-                    {
-                        dayOfWeek: 0b1000001, // Sat + Sun
-                        transitionTimeMin: 0,
-                        presetHandle: null,
-                        systemMode: null,
-                        coolingSetpoint: null,
-                        heatingSetpoint: 1750,
-                    },
-                ],
-            };
-            const owners = assignDaysToSchedules([weekdays, weekend]);
-            expect(owners.map(s => s?.name)).to.deep.equal(
-                DAY_LABELS.map(d => (d === "Sat" || d === "Sun" ? "Weekend" : "Weekdays")),
+    describe("resolveScheduleDefaults", () => {
+        const presets = [preset(HANDLE_2, { name: "Night", coolingSetpoint: 2600, heatingSetpoint: 1700 })];
+
+        it("fills absent setpoints from the referenced preset", () => {
+            const resolved = resolveScheduleDefaults(
+                schedule([transition(MON, 480, { presetHandle: HANDLE_2 })]),
+                presets,
             );
+            expect(resolved.transitions[0].heatingSetpoint).to.equal(1700);
+            expect(resolved.transitions[0].coolingSetpoint).to.equal(2600);
         });
-        it("leaves a day unowned when no schedule claims it", () => {
-            const owners = assignDaysToSchedules([]);
-            expect(owners).to.deep.equal(new Array(7).fill(undefined));
+        it("resolves setpoints through the schedule's default PresetHandle", () => {
+            const resolved = resolveScheduleDefaults(
+                schedule([transition(MON, 480)], { presetHandle: HANDLE_2 }),
+                presets,
+            );
+            expect(resolved.transitions[0].presetHandle).to.equal(HANDLE_2);
+            expect(resolved.transitions[0].heatingSetpoint).to.equal(1700);
+            expect(resolved.transitions[0].coolingSetpoint).to.equal(2600);
+        });
+        it("prefers the transition's own PresetHandle over the schedule default", () => {
+            const resolved = resolveScheduleDefaults(
+                schedule([transition(MON, 480, { presetHandle: HANDLE_1 })], { presetHandle: HANDLE_2 }),
+                [...presets, preset(HANDLE_1, { name: "Day", heatingSetpoint: 2100 })],
+            );
+            expect(resolved.transitions[0].heatingSetpoint).to.equal(2100);
+            expect(resolved.transitions[0].coolingSetpoint).to.equal(null);
+        });
+        it("defaults a transition's SystemMode to the schedule's", () => {
+            const resolved = resolveScheduleDefaults(
+                schedule([transition(MON, 0), transition(TUE, 0, { systemMode: 3 })], { systemMode: 4 }),
+                presets,
+            );
+            expect(resolved.transitions.map(t => t.systemMode)).to.deep.equal([4, 3]);
+        });
+        it("lets the transition's own preset win over setpoints a device sent alongside it", () => {
+            const resolved = resolveScheduleDefaults(
+                schedule([transition(MON, 480, { presetHandle: HANDLE_2, heatingSetpoint: 2100 })]),
+                presets,
+            );
+            expect(resolved.transitions[0].heatingSetpoint).to.equal(1700);
+            expect(resolved.transitions[0].coolingSetpoint).to.equal(2600);
+        });
+        it("uses a reported setpoint only for a bound its own preset leaves unset", () => {
+            const resolved = resolveScheduleDefaults(
+                schedule([transition(MON, 480, { presetHandle: HANDLE_1, coolingSetpoint: 2400 })]),
+                [preset(HANDLE_1, { name: "Day", heatingSetpoint: 2100 })],
+            );
+            expect(resolved.transitions[0].heatingSetpoint).to.equal(2100);
+            expect(resolved.transitions[0].coolingSetpoint).to.equal(2400);
+        });
+        it("keeps reported setpoints out of the schedule's default preset and off its label", () => {
+            const resolved = resolveScheduleDefaults(
+                schedule([transition(MON, 480, { heatingSetpoint: 2100 })], {
+                    presetHandle: HANDLE_2,
+                    systemMode: 4,
+                }),
+                presets,
+            );
+            expect(resolved.transitions[0].presetHandle).to.equal(null);
+            expect(resolved.transitions[0].heatingSetpoint).to.equal(2100);
+            expect(resolved.transitions[0].coolingSetpoint).to.equal(null);
+            expect(resolveTransitionLabel(resolved.transitions[0], presets)).to.equal("Heat");
+        });
+        it("leaves setpoints null when neither the transition nor the schedule references a known preset", () => {
+            const resolved = resolveScheduleDefaults(
+                schedule([transition(MON, 0), transition(TUE, 0, { presetHandle: HANDLE_1 })]),
+                presets,
+            );
+            expect(resolved.transitions.map(t => t.heatingSetpoint)).to.deep.equal([null, null]);
+        });
+        it("does not mutate the input schedule", () => {
+            const original = schedule([transition(MON, 480, { presetHandle: HANDLE_2 })]);
+            resolveScheduleDefaults(original, presets);
+            expect(original.transitions[0].heatingSetpoint).to.equal(null);
+        });
+    });
+
+    describe("compareTransitionsForDisplay", () => {
+        it("orders by first claimed display day before time", () => {
+            const rows = [
+                transition(SAT, 360),
+                transition(MON | TUE | WED | THU | FRI, 1320),
+                transition(SUN, 0),
+                transition(MON, 480),
+            ].sort(compareTransitionsForDisplay);
+            expect(rows.map(t => [firstClaimedDay(t.dayOfWeek), t.transitionTimeMin])).to.deep.equal([
+                [0, 480],
+                [0, 1320],
+                [5, 360],
+                [6, 0],
+            ]);
+        });
+        it("sorts a transition claiming no day last", () => {
+            const rows = [transition(0, 0), transition(SUN, 1320)].sort(compareTransitionsForDisplay);
+            expect(rows[0].dayOfWeek).to.equal(SUN);
+        });
+    });
+
+    describe("formatDayOfWeek", () => {
+        it("compresses runs of three or more days with a dash", () => {
+            expect(formatDayOfWeek(MON | TUE | WED | THU | FRI)).to.equal("Mon–Fri");
+            expect(formatDayOfWeek(MON | TUE | WED | FRI)).to.equal("Mon–Wed, Fri");
+        });
+        it("lists short runs and single days separately", () => {
+            expect(formatDayOfWeek(SAT | SUN)).to.equal("Sat, Sun");
+            expect(formatDayOfWeek(WED)).to.equal("Wed");
+            expect(formatDayOfWeek(MON | WED | FRI)).to.equal("Mon, Wed, Fri");
+        });
+        it("labels the full week, and a bitmap claiming no day with a dash", () => {
+            expect(formatDayOfWeek(0x7f)).to.equal("Every day");
+            expect(formatDayOfWeek(0)).to.equal("—");
+        });
+    });
+
+    describe("firstClaimedDay", () => {
+        it("returns the first claimed day in Mon..Sun display order", () => {
+            expect(firstClaimedDay(MON)).to.equal(0);
+            expect(firstClaimedDay(SAT | SUN)).to.equal(5);
+            expect(firstClaimedDay(SUN)).to.equal(6);
+        });
+        it("sorts an empty bitmap last", () => {
+            expect(firstClaimedDay(0)).to.equal(7);
         });
     });
 
     describe("buildDaySegments", () => {
         it("returns no segments when the schedule has no transitions for that day", () => {
-            const schedule: ThermostatSchedule = {
-                handle: null,
-                systemMode: 4,
-                name: null,
-                presetHandle: null,
-                builtIn: null,
-                transitions: [],
-            };
-            expect(buildDaySegments(schedule, 0)).to.deep.equal([]);
+            expect(buildDaySegments(schedule([]), 0)).to.deep.equal([]);
         });
-        it("carries the last transition's setpoint into the wraparound segment before the first transition", () => {
-            const schedule: ThermostatSchedule = {
-                handle: null,
-                systemMode: 4,
-                name: null,
-                presetHandle: null,
-                builtIn: null,
-                transitions: [
-                    // Monday = bit 1
-                    {
-                        dayOfWeek: 0b10,
-                        transitionTimeMin: 480,
-                        presetHandle: null,
-                        systemMode: null,
-                        coolingSetpoint: null,
-                        heatingSetpoint: 1800,
-                    },
-                    {
-                        dayOfWeek: 0b10,
-                        transitionTimeMin: 1320,
-                        presetHandle: null,
-                        systemMode: null,
-                        coolingSetpoint: null,
-                        heatingSetpoint: 2100,
-                    },
-                ],
-            };
-            expect(buildDaySegments(schedule, 0)).to.deep.equal([
+        it("carries the previous day's last transition across midnight", () => {
+            const monday = buildDaySegments(
+                schedule([
+                    transition(MON, 480, { heatingSetpoint: 2100 }),
+                    transition(SUN, 1320, { heatingSetpoint: 1700 }),
+                ]),
+                0,
+            );
+            expect(monday).to.deep.equal([
+                {
+                    startMin: 0,
+                    endMin: 480,
+                    heatingSetpoint: 1700,
+                    coolingSetpoint: null,
+                    presetHandle: null,
+                    systemMode: null,
+                },
+                {
+                    startMin: 480,
+                    endMin: 1440,
+                    heatingSetpoint: 2100,
+                    coolingSetpoint: null,
+                    presetHandle: null,
+                    systemMode: null,
+                },
+            ]);
+        });
+        it("uses the nearest earlier covered day when several are covered", () => {
+            const tuesday = buildDaySegments(
+                schedule([
+                    transition(SUN, 1320, { heatingSetpoint: 1700 }),
+                    transition(MON, 1320, { heatingSetpoint: 1800 }),
+                    transition(TUE, 480, { heatingSetpoint: 2100 }),
+                ]),
+                1,
+            );
+            expect(tuesday[0].heatingSetpoint).to.equal(1800);
+        });
+        it("falls back to the day's own last transition when the schedule covers no other day", () => {
+            const monday = buildDaySegments(
+                schedule([
+                    transition(MON, 480, { heatingSetpoint: 1800 }),
+                    transition(MON, 1320, { heatingSetpoint: 2100 }),
+                ]),
+                0,
+            );
+            expect(monday).to.deep.equal([
                 {
                     startMin: 0,
                     endMin: 480,
@@ -281,24 +435,7 @@ describe("thermostat-schedule util", () => {
             ]);
         });
         it("skips the wraparound segment when the first transition is already at midnight", () => {
-            const schedule: ThermostatSchedule = {
-                handle: null,
-                systemMode: 4,
-                name: null,
-                presetHandle: null,
-                builtIn: null,
-                transitions: [
-                    {
-                        dayOfWeek: 0b10,
-                        transitionTimeMin: 0,
-                        presetHandle: null,
-                        systemMode: null,
-                        coolingSetpoint: null,
-                        heatingSetpoint: 1750,
-                    },
-                ],
-            };
-            expect(buildDaySegments(schedule, 0)).to.deep.equal([
+            expect(buildDaySegments(schedule([transition(MON, 0, { heatingSetpoint: 1750 })]), 0)).to.deep.equal([
                 {
                     startMin: 0,
                     endMin: 1440,
@@ -308,6 +445,12 @@ describe("thermostat-schedule util", () => {
                     systemMode: null,
                 },
             ]);
+        });
+        it("carries preset-resolved setpoints when the schedule is resolved first", () => {
+            const resolved = resolveScheduleDefaults(schedule([transition(MON, 480, { presetHandle: HANDLE_2 })]), [
+                preset(HANDLE_2, { heatingSetpoint: 1900 }),
+            ]);
+            expect(buildDaySegments(resolved, 0).map(s => s.heatingSetpoint)).to.deep.equal([1900, 1900]);
         });
     });
 
@@ -323,56 +466,27 @@ describe("thermostat-schedule util", () => {
     });
 
     describe("computeSetpointRange", () => {
-        const schedule: ThermostatSchedule = {
-            handle: null,
-            systemMode: 1,
-            name: null,
-            presetHandle: null,
-            builtIn: null,
-            transitions: [
-                {
-                    dayOfWeek: 0,
-                    transitionTimeMin: 0,
-                    presetHandle: null,
-                    systemMode: null,
-                    coolingSetpoint: 2600,
-                    heatingSetpoint: 1750,
-                },
-                {
-                    dayOfWeek: 0,
-                    transitionTimeMin: 480,
-                    presetHandle: null,
-                    systemMode: null,
-                    coolingSetpoint: null,
-                    heatingSetpoint: 2100,
-                },
+        const dual = schedule(
+            [
+                transition(0, 0, { coolingSetpoint: 2600, heatingSetpoint: 1750 }),
+                transition(0, 480, { heatingSetpoint: 2100 }),
             ],
-        };
+            { systemMode: 1 },
+        );
         it("scopes the range to heating setpoints in heat mode", () => {
-            expect(computeSetpointRange(schedule, "heat")).to.deep.equal({ min: 1750, max: 2100 });
+            expect(computeSetpointRange(dual, "heat")).to.deep.equal({ min: 1750, max: 2100 });
         });
         it("scopes the range to cooling setpoints in cool mode, falling back where cooling is absent", () => {
-            expect(computeSetpointRange(schedule, "cool")).to.deep.equal({ min: 2100, max: 2600 });
+            expect(computeSetpointRange(dual, "cool")).to.deep.equal({ min: 2100, max: 2600 });
         });
         it("returns undefined when no numeric setpoints exist", () => {
-            const empty: ThermostatSchedule = {
-                handle: null,
-                systemMode: 0,
-                name: null,
-                presetHandle: null,
-                builtIn: null,
-                transitions: [
-                    {
-                        dayOfWeek: 0,
-                        transitionTimeMin: 0,
-                        presetHandle: null,
-                        systemMode: null,
-                        coolingSetpoint: null,
-                        heatingSetpoint: null,
-                    },
-                ],
-            };
-            expect(computeSetpointRange(empty, "heat")).to.equal(undefined);
+            expect(computeSetpointRange(schedule([transition(0, 0)], { systemMode: 0 }), "heat")).to.equal(undefined);
+        });
+        it("covers setpoints that only a preset supplies", () => {
+            const resolved = resolveScheduleDefaults(schedule([transition(MON, 0, { presetHandle: HANDLE_2 })]), [
+                preset(HANDLE_2, { heatingSetpoint: 1900 }),
+            ]);
+            expect(computeSetpointRange(resolved, "heat")).to.deep.equal({ min: 1900, max: 1900 });
         });
     });
 
