@@ -100,7 +100,9 @@ export class MeterIdentificationClusterCommands extends BaseClusterCommands {
     ];
 }
 
-registerClusterCommands(METER_IDENTIFICATION_CLUSTER_ID, "meter-identification-cluster-commands");
+registerClusterCommands(METER_IDENTIFICATION_CLUSTER_ID, "meter-identification-cluster-commands", {
+    renderWhenOffline: true,
+});
 
 declare global {
     interface HTMLElementTagNameMap {

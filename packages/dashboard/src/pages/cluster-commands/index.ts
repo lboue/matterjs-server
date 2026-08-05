@@ -10,7 +10,13 @@
  */
 
 // Registry exports
-export { getClusterCommandsTag, hasClusterCommands, registerClusterCommands } from "./registry.js";
+export {
+    getClusterCommandsTag,
+    hasClusterCommands,
+    registerClusterCommands,
+    rendersClusterCommandsWhenOffline,
+    type ClusterCommandsRegistration,
+} from "./registry.js";
 
 // Base class for creating new cluster commands
 export { BaseClusterCommands } from "./base-cluster-commands.js";

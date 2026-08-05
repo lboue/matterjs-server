@@ -558,7 +558,8 @@ export class IcdManagementClusterCommands extends BaseClusterCommands {
     ];
 }
 
-registerClusterCommands(ICD_CLUSTER_ID, "icd-management-cluster-commands");
+// Commands here target a sleeping device, so they stay actionable while it counts as unreachable.
+registerClusterCommands(ICD_CLUSTER_ID, "icd-management-cluster-commands", { renderWhenOffline: true });
 
 declare global {
     interface HTMLElementTagNameMap {

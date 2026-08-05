@@ -213,7 +213,9 @@ export class CommodityTariffClusterCommands extends BaseClusterCommands {
     ];
 }
 
-registerClusterCommands(COMMODITY_TARIFF_CLUSTER_ID, "commodity-tariff-cluster-commands");
+registerClusterCommands(COMMODITY_TARIFF_CLUSTER_ID, "commodity-tariff-cluster-commands", {
+    renderWhenOffline: true,
+});
 
 declare global {
     interface HTMLElementTagNameMap {
