@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { OtaUploadRegistry } from "../src/controller/OtaUploadRegistry.js";
@@ -152,12 +152,22 @@ describe("OtaUploadRegistry", () => {
 
     describe("cleanupOrphans", () => {
         it("removes files left behind by a previous process", async () => {
-            await writeFile(join(tempDir, "abc123.ota"), "leftover");
+            await writeFile(join(tempDir, "0123456789abcdef0123456789abcdef.ota"), "leftover");
             const registry = new OtaUploadRegistry({ tempDir });
 
             await registry.cleanupOrphans();
 
             expect(await readdir(tempDir)).to.be.empty;
+        });
+
+        it("leaves files and directories that aren't staged uploads alone", async () => {
+            await writeFile(join(tempDir, "not-an-upload.txt"), "unrelated");
+            await mkdir(join(tempDir, "some-subdir"));
+            const registry = new OtaUploadRegistry({ tempDir });
+
+            await registry.cleanupOrphans();
+
+            expect(await readdir(tempDir)).to.have.members(["not-an-upload.txt", "some-subdir"]);
         });
 
         it("tolerates a missing staging directory", async () => {

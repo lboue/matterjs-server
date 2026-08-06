@@ -18,6 +18,9 @@ const RESERVATION_TTL_MS = 60_000;
 
 const DEFAULT_MAX_IN_FLIGHT = 5;
 
+/** Filename of a staged upload: the 32-hex upload id `reserve()` generates, plus the `.ota` suffix. */
+const STAGED_UPLOAD_NAME = /^[0-9a-f]{32}\.ota$/;
+
 /**
  * Placeholder sized on observation, not on spec: shipping Matter images run ~1-8 MB (ESP32/nRF
  * class) and tens of MB for camera-class devices, so 64 MB is headroom rather than a real limit.
@@ -154,8 +157,11 @@ export class OtaUploadRegistry {
         }
 
         for (const entry of entries) {
+            if (!STAGED_UPLOAD_NAME.test(entry)) {
+                continue;
+            }
             try {
-                await rm(join(this.#tempDir, entry), { force: true, recursive: true });
+                await rm(join(this.#tempDir, entry), { force: true });
                 logger.info(`Removed orphaned OTA upload ${entry}`);
             } catch (error) {
                 logger.warn(`Failed to remove orphaned OTA upload ${entry}:`, error);
