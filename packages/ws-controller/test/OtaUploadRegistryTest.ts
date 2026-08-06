@@ -56,6 +56,15 @@ describe("OtaUploadRegistry", () => {
             expect(error.message).to.include("Too many OTA uploads in flight");
         });
 
+        it("enforces the limit against concurrent reserve() calls, not just sequential ones", async () => {
+            const registry = new OtaUploadRegistry({ tempDir, maxInFlight: 2 });
+
+            const results = await Promise.allSettled([registry.reserve(), registry.reserve(), registry.reserve()]);
+
+            expect(results.filter(result => result.status === "fulfilled")).to.have.lengthOf(2);
+            expect(results.filter(result => result.status === "rejected")).to.have.lengthOf(1);
+        });
+
         it("frees the slot once a reservation is released", async () => {
             const registry = new OtaUploadRegistry({ tempDir, maxInFlight: 1 });
 

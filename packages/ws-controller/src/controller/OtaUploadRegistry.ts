@@ -72,13 +72,16 @@ export class OtaUploadRegistry {
     /** Issue an upload id and hold an in-flight slot for it. */
     async reserve(): Promise<OtaUploadTicket> {
         await this.sweepExpired();
+        await mkdir(this.#tempDir, { recursive: true });
+
+        // The size check must happen right before the insert, with no `await` in between: WebSocket
+        // messages are handled concurrently, so two `reserve()` calls racing past a check taken
+        // earlier (e.g. before the `mkdir` above) could both slip through and exceed maxInFlight.
         if (this.#reservations.size >= this.#maxInFlight) {
             throw ServerError.otaUploadError(
                 `Too many OTA uploads in flight (limit ${this.#maxInFlight}); retry once one completes`,
             );
         }
-
-        await mkdir(this.#tempDir, { recursive: true });
 
         const uploadId = randomBytes(16).toString("hex");
         this.#reservations.set(uploadId, {
