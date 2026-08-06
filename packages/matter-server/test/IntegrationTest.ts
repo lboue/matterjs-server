@@ -286,7 +286,7 @@ describe("Integration Test", function () {
             });
 
             it("should return OtaUploadError for corrupt OTA upload data via HTTP", async function () {
-                const ticket = await client.sendCommand("initiate_ota_upload", 0, {});
+                const ticket = await client.sendCommand("initiate_ota_upload", 13, {});
 
                 const response = await fetch(`http://localhost:${SERVER_PORT}/ota-upload/${ticket.upload_id}`, {
                     method: "POST",
@@ -299,7 +299,7 @@ describe("Integration Test", function () {
             });
 
             it("should reject an OTA upload id that was already used", async function () {
-                const ticket = await client.sendCommand("initiate_ota_upload", 0, {});
+                const ticket = await client.sendCommand("initiate_ota_upload", 13, {});
                 const url = `http://localhost:${SERVER_PORT}/ota-upload/${ticket.upload_id}`;
 
                 await fetch(url, { method: "POST", body: Buffer.from("not a real ota file") });
@@ -308,10 +308,13 @@ describe("Integration Test", function () {
                 expect(replay.status).to.equal(400);
                 const body = await replay.json();
                 expect(body.error_code).to.equal(ServerErrorCode.OtaUploadError);
+                // The reservation is gone once the first POST finished, so the id reads as unknown
+                // rather than "already used" — that one answers a POST racing the first.
+                expect(body.message).to.include("Unknown OTA upload id");
             });
 
             it("should reject an OTA upload larger than the configured limit", async function () {
-                const ticket = await client.sendCommand("initiate_ota_upload", 0, {});
+                const ticket = await client.sendCommand("initiate_ota_upload", 13, {});
 
                 const response = await fetch(`http://localhost:${SERVER_PORT}/ota-upload/${ticket.upload_id}`, {
                     method: "POST",

@@ -192,7 +192,8 @@ async function start() {
             enableTimeSync: cliOptions.enableTimeSync,
             disableThreadDiagnostics: cliOptions.disableThreadDiagnostics,
             otaUpload: {
-                tempDir: join(cliOptions.storagePath, "ota-uploads"),
+                // Staged next to the images it feeds, so importing one never crosses a filesystem.
+                tempDir: join(cliOptions.otaProviderDir ?? cliOptions.storagePath, "ota-uploads"),
                 maxInFlight: cliOptions.otaUploadMaxInFlight,
                 maxSizeBytes: cliOptions.otaUploadMaxSizeMb * 1024 * 1024,
             },
@@ -201,7 +202,7 @@ async function start() {
     );
 
     if (!cliOptions.disableOta) {
-        await controller.commandHandler.otaUploads.cleanupOrphans();
+        await controller.otaUploads.cleanupOrphans();
         controller.commandHandler.events.started.once(async () => await initializeOta(controller, cliOptions));
     }
 
@@ -233,12 +234,17 @@ async function start() {
     }
 
     const wsHandler = new WebSocketControllerHandler(controller, config, MATTER_SERVER_VERSION);
-    const handlers: WebServerHandler[] = [new HealthHandler(wsHandler), new OtaUploadHandler(controller), wsHandler];
+    const handlers: WebServerHandler[] = [new HealthHandler(wsHandler), wsHandler];
+    const reservedPaths = new Array<string>();
+    if (!cliOptions.disableOta) {
+        handlers.push(new OtaUploadHandler(controller.otaUploads));
+        reservedPaths.push("/ota-upload");
+    }
     if (bleProxyHandler) {
         handlers.push(bleProxyHandler);
     }
     if (!cliOptions.disableDashboard) {
-        handlers.push(new StaticFileHandler(cliOptions.productionMode));
+        handlers.push(new StaticFileHandler(cliOptions.productionMode, reservedPaths));
     } else {
         logger.info("Dashboard disabled via CLI flag");
     }

@@ -37,6 +37,20 @@ function toNodeKey(nodeId: number | bigint): string {
     return String(nodeId);
 }
 
+/**
+ * HTTP URL taking the bytes of a reserved OTA upload, derived from the WebSocket URL: same origin
+ * and mount point, `/ws` swapped for `/ota-upload/<upload_id>`.
+ */
+export function otaUploadUrl(wsUrl: string, uploadId: string): string {
+    const url = new URL(wsUrl);
+    url.protocol = url.protocol === "wss:" ? "https:" : "http:";
+    const mountPoint = url.pathname.replace(/\/ws\/?$/, "").replace(/\/$/, "");
+    url.pathname = `${mountPoint}/ota-upload/${uploadId}`;
+    url.search = "";
+    url.hash = "";
+    return url.href;
+}
+
 /** Default timeout for WebSocket commands in milliseconds (5 minutes) */
 export const DEFAULT_COMMAND_TIMEOUT = 5 * 60 * 1000;
 
@@ -389,24 +403,29 @@ export class MatterClient {
      * over HTTP against the returned single-use id.
      */
     async uploadOtaFile(file: Blob, timeout?: number): Promise<MatterSoftwareVersion> {
-        const ticket = await this.sendCommand("initiate_ota_upload", 0, {}, timeout);
-        if (file.size > ticket.max_size) {
-            throw new Error(
-                `Firmware image is ${Math.round(file.size / 1024 / 1024)} MB; the server accepts at most ` +
-                    `${Math.round(ticket.max_size / 1024 / 1024)} MB`,
-            );
-        }
+        // An oversized image is rejected by the server (413) rather than here: a reservation holds
+        // one of the server's few upload slots for a minute, and there is no way to hand it back.
+        const ticket = await this.sendCommand("initiate_ota_upload", 13, {}, timeout);
 
-        const uploadUrl = new URL(this.url.replace(/^ws/, "http"));
-        uploadUrl.pathname = uploadUrl.pathname.replace(/\/ws$/, "") + `/ota-upload/${ticket.upload_id}`;
-        const response = await fetch(uploadUrl, {
+        const response = await fetch(otaUploadUrl(this.url, ticket.upload_id), {
             method: "POST",
             body: file,
             signal: timeout ? AbortSignal.timeout(timeout) : undefined,
         });
-        const body = await response.json();
+
+        // A proxy in front of the server can answer with HTML, so the status is the only thing that
+        // can be trusted to be there.
+        let body: MatterSoftwareVersion & { error?: string; message?: string };
+        try {
+            body = await response.json();
+        } catch {
+            if (!response.ok) {
+                throw new Error(`Firmware upload failed: HTTP ${response.status} ${response.statusText}`);
+            }
+            throw new Error("Firmware upload returned a response that is no JSON");
+        }
         if (!response.ok) {
-            throw new Error(body.message ?? body.error ?? `HTTP ${response.status}`);
+            throw new Error(body.message ?? body.error ?? `HTTP ${response.status} ${response.statusText}`);
         }
         return body;
     }
