@@ -10,7 +10,7 @@ import { createWriteStream, type WriteStream } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { pipeline } from "node:stream/promises";
 
-const logger = Logger.get("MatterServer.OtaUpload");
+const logger = Logger.get("OtaUploadHandler");
 
 const UPLOAD_PATH = /^\/ota-upload\/([0-9a-f]{32})$/;
 
