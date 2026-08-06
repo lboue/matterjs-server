@@ -24,6 +24,7 @@ import {
     WebSocketControllerHandler,
 } from "@matter-server/ws-controller";
 import { Ble } from "@matter/main/protocol";
+import { join } from "node:path";
 import { getCliOptions, getOriginalArgv, type LogLevel as CliLogLevel } from "./cli.js";
 import { LegacyDataWriter, loadLegacyData, type LegacyData } from "./converter/index.js";
 import { createFileLogger } from "./file-logger.js";
@@ -190,11 +191,17 @@ async function start() {
             bleProxyEnabled: cliOptions.bleProxy,
             enableTimeSync: cliOptions.enableTimeSync,
             disableThreadDiagnostics: cliOptions.disableThreadDiagnostics,
+            otaUpload: {
+                tempDir: join(cliOptions.storagePath, "ota-uploads"),
+                maxInFlight: cliOptions.otaUploadMaxInFlight,
+                maxSizeBytes: cliOptions.otaUploadMaxSizeMb * 1024 * 1024,
+            },
         },
         legacyServerData,
     );
 
     if (!cliOptions.disableOta) {
+        await controller.commandHandler.otaUploads.cleanupOrphans();
         controller.commandHandler.events.started.once(async () => await initializeOta(controller, cliOptions));
     }
 

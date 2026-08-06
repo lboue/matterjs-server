@@ -805,6 +805,9 @@ export class WebSocketControllerHandler implements WebServerHandler {
                 case "update_node":
                     result = await this.#handleUpdateNode(args);
                     break;
+                case "initiate_ota_upload":
+                    result = await this.#commandHandler.initiateOtaUpload();
+                    break;
                 case "server_info":
                     result = await this.#getServerInfo();
                     break;

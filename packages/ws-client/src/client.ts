@@ -382,13 +382,23 @@ export class MatterClient {
         await this.sendCommand("update_node", 10, { node_id: nodeId, software_version: softwareVersion }, timeout);
     }
 
-    /** Store a locally-uploaded .ota firmware file in the server's OTA image store via HTTP POST. */
-    async uploadOtaFile(file: Blob, fileName?: string, timeout?: number): Promise<MatterSoftwareVersion> {
-        const uploadUrl = new URL(this.url.replace(/^ws/, "http"));
-        uploadUrl.pathname = uploadUrl.pathname.replace(/\/ws$/, "") + "/ota-upload";
-        if (fileName) {
-            uploadUrl.searchParams.set("file_name", fileName);
+    /**
+     * Store a locally-uploaded .ota firmware file in the server's OTA image store.
+     *
+     * Two steps: the WebSocket session authorizes the upload and reserves a slot, then the bytes go
+     * over HTTP against the returned single-use id.
+     */
+    async uploadOtaFile(file: Blob, timeout?: number): Promise<MatterSoftwareVersion> {
+        const ticket = await this.sendCommand("initiate_ota_upload", 0, {}, timeout);
+        if (file.size > ticket.max_size) {
+            throw new Error(
+                `Firmware image is ${Math.round(file.size / 1024 / 1024)} MB; the server accepts at most ` +
+                    `${Math.round(ticket.max_size / 1024 / 1024)} MB`,
+            );
         }
+
+        const uploadUrl = new URL(this.url.replace(/^ws/, "http"));
+        uploadUrl.pathname = uploadUrl.pathname.replace(/\/ws$/, "") + `/ota-upload/${ticket.upload_id}`;
         const response = await fetch(uploadUrl, {
             method: "POST",
             body: file,

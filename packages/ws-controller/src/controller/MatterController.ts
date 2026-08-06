@@ -40,6 +40,7 @@ import { ConfigStorage } from "../server/ConfigStorage.js";
 import { ControllerCommandHandler } from "./ControllerCommandHandler.js";
 import { LegacyDataInjector, LegacyServerData } from "./LegacyDataInjector.js";
 import { NetworkTopologyService } from "./NetworkTopologyService.js";
+import { OtaUploadOptions } from "./OtaUploadRegistry.js";
 import { resolveServerId } from "./ServerIdResolver.js";
 import { ThreadDiagnosticsService } from "./ThreadDiagnosticsService.js";
 
@@ -98,6 +99,8 @@ export interface MatterControllerOptions {
      * dataset from config) is unaffected. Defaults to false.
      */
     disableThreadDiagnostics?: boolean;
+    /** Staging directory and limits for two-step OTA firmware uploads. */
+    otaUpload?: OtaUploadOptions;
 }
 
 /**
@@ -205,6 +208,7 @@ export class MatterController {
     #bleProxyEnabled = false;
     #enableTimeSync = false;
     #threadDiagnosticsDisabled = false;
+    #otaUploadOptions: OtaUploadOptions = {};
     readonly #borderRouterRegistry: BorderRouterRegistry;
     /** Background init tasks kept off the node-init critical path but given a bounded chance to settle on stop(). */
     readonly #backgroundInit = new Array<Promise<unknown>>();
@@ -295,6 +299,7 @@ export class MatterController {
         this.#bleProxyEnabled = options.bleProxyEnabled ?? this.#bleProxyEnabled;
         this.#enableTimeSync = options.enableTimeSync ?? this.#enableTimeSync;
         this.#threadDiagnosticsDisabled = options.disableThreadDiagnostics ?? this.#threadDiagnosticsDisabled;
+        this.#otaUploadOptions = options.otaUpload ?? this.#otaUploadOptions;
         this.#services = this.#env.asDependent();
         this.#threadDiagnostics = new ThreadDiagnosticsService({
             enabled: !this.#threadDiagnosticsDisabled,
@@ -407,6 +412,7 @@ export class MatterController {
                 !this.#disableOtaProvider,
                 this.#enableTimeSync,
                 !this.#threadDiagnosticsDisabled,
+                this.#otaUploadOptions,
             );
 
             this.#commandHandler.events.started.once(async () => {

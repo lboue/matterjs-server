@@ -5,15 +5,25 @@
  */
 
 import type { HttpServer, MatterController, WebServerHandler } from "@matter-server/ws-controller";
-import { ServerError } from "@matter-server/ws-controller";
+import { Logger, ServerError } from "@matter-server/ws-controller";
+import { createWriteStream } from "node:fs";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { pipeline } from "node:stream/promises";
 
-// Real firmware images are well under this; guards against unbounded memory use since the
-// body is buffered in full (DclOtaUpdateService needs to read the bytes twice: header then store).
-const MAX_OTA_UPLOAD_SIZE = 512 * 1024 * 1024;
+const logger = Logger.get("MatterServer.OtaUpload");
+
+const UPLOAD_PATH = /^\/ota-upload\/([0-9a-f]{1,64})$/;
+
+/** Thrown once the streamed body passes the configured limit, to distinguish it from I/O failures. */
+class UploadTooLargeError extends Error {}
 
 /**
- * Stores a local `.ota` firmware file into the server's OTA image store.
- * Responds to POST /ota-upload with a raw binary body and an optional `file_name` query param.
+ * Receives the body of an OTA firmware upload authorized by the `initiate_ota_upload` WebSocket
+ * command and imports it into the server's OTA image store.
+ *
+ * Responds to POST /ota-upload/<upload_id>, where the id is the single-use ticket issued over the
+ * WebSocket session. Bytes stream straight to a file named after that id, so an upload never costs
+ * more than a chunk of memory and no client-supplied string ever reaches the filesystem path.
  */
 export class OtaUploadHandler implements WebServerHandler {
     #controller: MatterController;
@@ -24,7 +34,8 @@ export class OtaUploadHandler implements WebServerHandler {
 
     async register(server: HttpServer): Promise<void> {
         server.on("request", (req, res) => {
-            if (req.url?.split("?")[0] !== "/ota-upload") {
+            const path = req.url?.split("?")[0];
+            if (path === undefined || (path !== "/ota-upload" && !path.startsWith("/ota-upload/"))) {
                 return;
             }
             if (req.method !== "POST") {
@@ -33,61 +44,96 @@ export class OtaUploadHandler implements WebServerHandler {
                 return;
             }
 
-            let fileName: string | undefined;
-            try {
-                fileName = new URL(req.url, "http://localhost").searchParams.get("file_name") ?? undefined;
-            } catch {
-                res.writeHead(400, { "Content-Type": "application/json" });
-                res.end(JSON.stringify({ error: "Invalid request URL" }));
+            const uploadId = UPLOAD_PATH.exec(path)?.[1];
+            if (uploadId === undefined) {
+                this.#respondError(res, 404, "Upload id missing; request one via the initiate_ota_upload command");
+                req.resume();
                 return;
             }
-            const chunks: Buffer[] = [];
-            let size = 0;
-            let aborted = false;
 
-            req.on("error", () => {
-                aborted = true;
-                if (!res.headersSent) {
-                    res.writeHead(400, { "Content-Type": "application/json" });
-                    res.end(JSON.stringify({ error: "Request error" }));
-                }
-            });
-
-            req.on("data", (chunk: Buffer) => {
-                if (aborted) return;
-                size += chunk.length;
-                if (size > MAX_OTA_UPLOAD_SIZE) {
-                    aborted = true;
-                    res.writeHead(413, { "Content-Type": "application/json" });
-                    res.end(JSON.stringify({ error: "File too large" }));
-                    req.destroy();
-                    return;
-                }
-                chunks.push(chunk);
-            });
-
-            req.on("end", () => {
-                if (aborted) return;
-                void (async () => {
-                    try {
-                        const info = await this.#controller.commandHandler.uploadOtaFile(
-                            Buffer.concat(chunks),
-                            fileName,
-                        );
-                        res.writeHead(200, { "Content-Type": "application/json" });
-                        res.end(JSON.stringify(info));
-                    } catch (error) {
-                        if (error instanceof ServerError) {
-                            res.writeHead(400, { "Content-Type": "application/json" });
-                            res.end(JSON.stringify({ error_code: error.code, message: error.message }));
-                        } else {
-                            res.writeHead(500, { "Content-Type": "application/json" });
-                            res.end(JSON.stringify({ error: "Failed to store OTA image" }));
-                        }
-                    }
-                })();
-            });
+            void this.#handleUpload(req, res, uploadId);
         });
+    }
+
+    async #handleUpload(req: IncomingMessage, res: ServerResponse, uploadId: string): Promise<void> {
+        const registry = this.#controller.commandHandler.otaUploads;
+
+        let filePath: string;
+        try {
+            filePath = registry.claim(uploadId);
+        } catch (error) {
+            // Nothing was reserved, so there is no slot to release and no file to remove.
+            req.resume();
+            this.#respondServerError(res, error);
+            return;
+        }
+
+        try {
+            // Rejecting on the declared length is the only way the client reliably reads the 413:
+            // once the body is flowing, aborting the write tears down the socket with it.
+            const declaredSize = Number(req.headers["content-length"]);
+            if (Number.isFinite(declaredSize) && declaredSize > registry.maxSizeBytes) {
+                throw new UploadTooLargeError();
+            }
+
+            await this.#streamToFile(req, filePath, registry.maxSizeBytes);
+            const info = await this.#controller.commandHandler.completeOtaUpload(uploadId);
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify(info));
+        } catch (error) {
+            if (error instanceof UploadTooLargeError) {
+                this.#respondError(
+                    res,
+                    413,
+                    `Firmware image exceeds the ${Math.round(registry.maxSizeBytes / 1024 / 1024)} MB limit`,
+                );
+            } else if (error instanceof ServerError) {
+                this.#respondServerError(res, error);
+            } else {
+                logger.warn(`OTA upload ${uploadId} failed:`, error);
+                this.#respondError(res, 500, "Failed to store OTA image");
+            }
+        } finally {
+            // Releases the in-flight slot and discards the staged file; `store` has its own copy.
+            await registry.release(uploadId);
+        }
+    }
+
+    async #streamToFile(req: IncomingMessage, filePath: string, maxSizeBytes: number): Promise<void> {
+        let size = 0;
+        await pipeline(
+            req,
+            async function* (source: AsyncIterable<Buffer>) {
+                for await (const chunk of source) {
+                    size += chunk.length;
+                    if (size > maxSizeBytes) {
+                        throw new UploadTooLargeError();
+                    }
+                    yield chunk;
+                }
+            },
+            createWriteStream(filePath),
+        );
+    }
+
+    #respondServerError(res: ServerResponse, error: unknown) {
+        if (error instanceof ServerError) {
+            this.#respondJson(res, 400, { error_code: error.code, message: error.message });
+        } else {
+            this.#respondError(res, 500, "Failed to store OTA image");
+        }
+    }
+
+    #respondError(res: ServerResponse, status: number, message: string) {
+        this.#respondJson(res, status, { error: message });
+    }
+
+    #respondJson(res: ServerResponse, status: number, body: Record<string, unknown>) {
+        if (res.headersSent) {
+            return;
+        }
+        res.writeHead(status, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(body));
     }
 
     async unregister(): Promise<void> {

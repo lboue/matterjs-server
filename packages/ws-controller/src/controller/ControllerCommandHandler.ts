@@ -68,6 +68,8 @@ import { CameraControllerDevice } from "@matter/node/devices/camera-controller";
 import { CommissioningController, NodeCommissioningOptions } from "@project-chip/matter.js";
 import type { DecodedAttributeReportValue, DecodedEventReportValue } from "@project-chip/matter.js/cluster";
 import { NodeStates, PairedNode } from "@project-chip/matter.js/device";
+import { createReadStream } from "node:fs";
+import { Readable } from "node:stream";
 import { ClusterMap, ClusterMapEntry, GlobalAttributes } from "../model/ModelMapper.js";
 import {
     buildAttributePath,
@@ -99,6 +101,7 @@ import {
     IcdStateData,
     MatterSoftwareVersion,
     NodePingResult,
+    OtaUploadTicket,
     ServerError,
     UpdateSource,
 } from "../types/WebSocketMessageTypes.js";
@@ -107,6 +110,7 @@ import { pingIp } from "../util/network.js";
 import { CustomClusterPoller } from "./CustomClusterPoller.js";
 import { NodeAttributeReader } from "./NodeProcessor.js";
 import { Nodes } from "./Nodes.js";
+import { OtaUploadOptions, OtaUploadRegistry } from "./OtaUploadRegistry.js";
 import { ThreadDetailsPoller } from "./ThreadDetailsPoller.js";
 import { pushNodeTime, TimeSyncInvokers } from "./timeSyncCommands.js";
 import { SyncTrigger, TIME_FAILURE_EVENT_ID, TIME_SYNC_CLUSTER_ID, TimeSyncManager } from "./TimeSyncManager.js";
@@ -161,6 +165,7 @@ export class ControllerCommandHandler {
     readonly #bleEnabled: boolean;
     readonly #bleProxyEnabled: boolean;
     readonly #otaEnabled: boolean;
+    readonly #otaUploads: OtaUploadRegistry;
     /** Node management and attribute cache */
     #nodes = new Nodes();
     /** Cache of available updates keyed by nodeId */
@@ -208,6 +213,7 @@ export class ControllerCommandHandler {
         otaEnabled: boolean,
         timeSyncEnabled = false,
         threadDiagnosticsEnabled = false,
+        otaUploadOptions: OtaUploadOptions = {},
     ) {
         this.#controller = controllerInstance;
 
@@ -215,6 +221,7 @@ export class ControllerCommandHandler {
         this.#bleProxyEnabled = bleProxyEnabled;
         logger.info(`BLE is ${bleEnabled ? "enabled" : "disabled"}${bleProxyEnabled ? " (proxy mode)" : ""}`);
         this.#otaEnabled = otaEnabled;
+        this.#otaUploads = new OtaUploadRegistry(otaUploadOptions);
 
         const attributeReader: NodeAttributeReader = {
             nodeConnected: peer => !!(this.#nodes.has(peer.nodeId) && this.#nodes.get(peer.nodeId).isConnected),
@@ -1791,26 +1798,40 @@ export class ControllerCommandHandler {
         return this.#convertToMatterSoftwareVersion(updateInfo);
     }
 
-    /**
-     * Store an uploaded OTA firmware image into the local OTA image store.
-     * @param data Raw bytes of the .ota file
-     * @param fileName Original file name, used to namespace the local otaUrl
-     */
-    async uploadOtaFile(data: Uint8Array, fileName?: string): Promise<MatterSoftwareVersion> {
+    /** Reservations backing the two-step OTA upload (`initiate_ota_upload`, then HTTP POST). */
+    get otaUploads() {
+        return this.#otaUploads;
+    }
+
+    /** Authorize one OTA firmware upload and reserve an in-flight slot for it. */
+    async initiateOtaUpload(): Promise<OtaUploadTicket> {
         if (!this.#otaEnabled) {
             throw ServerError.otaUploadError("OTA is disabled");
+        }
+        return await this.#otaUploads.reserve();
+    }
+
+    /**
+     * Import a fully staged upload into the local OTA image store. The caller owns the staged file
+     * and must release it afterwards; `store` copies the image into its own managed store.
+     */
+    async completeOtaUpload(uploadId: string): Promise<MatterSoftwareVersion> {
+        if (!this.#otaEnabled) {
+            throw ServerError.otaUploadError("OTA is disabled");
+        }
+        const filePath = this.#otaUploads.filePathOf(uploadId);
+        if (filePath === undefined) {
+            throw ServerError.otaUploadError("Unknown OTA upload id");
         }
         try {
             const otaService = await this.#controller.node.act(agent => agent.get(DclBehavior).otaUpdateService);
             await otaService.construction;
 
-            const otaUrl = `local://${encodeURIComponent(fileName ?? "upload")}`;
-            // Re-view (not copy) as Uint8Array<ArrayBuffer>: BlobPart requires that exact generic,
-            // but callers (e.g. a Buffer from an HTTP body) may hand in a looser ArrayBufferLike-backed view.
-            const bytes = new Uint8Array(data.buffer as ArrayBuffer, data.byteOffset, data.byteLength);
-            const blob = new Blob([bytes]);
-            const updateInfo = await otaService.updateInfoFromStream(blob.stream(), otaUrl);
-            await otaService.store(blob.stream(), updateInfo, "local");
+            const otaUrl = `file://${uploadId}`;
+            // Each of these consumes its stream, so header parsing and storing need separate reads.
+            const readStaged = () => Readable.toWeb(createReadStream(filePath)) as ReadableStream<Uint8Array>;
+            const updateInfo = await otaService.updateInfoFromStream(readStaged(), otaUrl);
+            await otaService.store(readStaged(), updateInfo, "local");
 
             return {
                 vid: updateInfo.vid,

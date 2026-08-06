@@ -660,6 +660,29 @@ Entry fields:
 }
 ```
 
+**initiate_ota_upload** - Reserve an id for uploading a local `.ota` firmware file
+
+Returns an `upload_id` that must be POSTed to `/ota-upload/<upload_id>` (see HTTP Endpoints
+below) within `expires_in` seconds. Reserving an id also claims one of the server's limited
+in-flight upload slots, so a client must follow through or let the reservation expire before
+retrying.
+
+```json
+{
+  "message_id": "1",
+  "command": "initiate_ota_upload",
+  "args": {}
+}
+```
+
+```json
+{
+  "upload_id": "3f9a1c2e8b7d4a10f6c9e0b2d4a17853",
+  "expires_in": 60,
+  "max_size": 67108864
+}
+```
+
 ### ICD Management
 
 Manage this controller's Intermittently Connected Device (ICD) Check-In registration with a peer node.
@@ -779,15 +802,18 @@ Import nodes from Home Assistant diagnostic dumps for testing purposes. Test nod
 Some functionality is exposed over plain HTTP instead of the WebSocket command channel,
 served by the same listener/port as `/ws`.
 
-**POST /ota-upload** - Store a local `.ota` firmware file in the OTA image store
+**POST /ota-upload/&lt;upload_id&gt;** - Store a local `.ota` firmware file in the OTA image store
 
-The request body is the raw `.ota` file bytes (no base64/JSON envelope), with an optional
-`file_name` query parameter used to namespace the local image. The image is stored by vendor
+Uploading is a two-step process. First call the `initiate_ota_upload` WebSocket command (see
+Firmware Updates above) to reserve an `upload_id`; this also claims one of the server's limited
+in-flight upload slots, so the POST must follow within `expires_in` seconds. Then POST the raw
+`.ota` file bytes (no base64/JSON envelope) to that id. The id is single-use and is discarded
+once the POST is received, whether the upload succeeds or fails. The image is stored by vendor
 ID / product ID / software version parsed from its header, not tied to any particular node —
 `check_node_update` will surface it for any node whose vendor/product matches.
 
 ```
-POST /ota-upload?file_name=my-device-v2.ota
+POST /ota-upload/3f9a1c2e8b7d4a10f6c9e0b2d4a17853
 Content-Type: application/octet-stream
 
 <raw .ota file bytes>
@@ -797,9 +823,12 @@ Responses:
 
 - `200` with a JSON body matching the `MatterSoftwareVersion` shape (see `update_node`/
   `check_node_update` above) on success.
-- `400` with `{ "error_code": number, "message": string }` on a corrupt image or disabled OTA
-  support (`error_code` 101, `OtaUploadError` — see Error Codes below).
-- `413` with `{ "error": string }` if the upload exceeds the server's size limit.
+- `400` with `{ "error_code": number, "message": string }` on a corrupt image, an unknown/
+  expired/already-used upload id, or disabled OTA support (`error_code` 101, `OtaUploadError` —
+  see Error Codes below).
+- `404` with `{ "error": string }` if the path doesn't carry a well-formed upload id.
+- `413` with `{ "error": string }` if the upload exceeds the server's size limit
+  (`--ota-upload-max-size-mb`, default 64 MB).
 
 ## Events
 
@@ -1018,7 +1047,7 @@ Error codes match the [Python Matter Server](https://github.com/home-assistant-l
 | 10 | UpdateCheckError | OTA update check failed |
 | 11 | UpdateError | OTA update failed |
 | 100 | IcdMultiAdmin | OHF extension (not in Python Matter Server). ICD registration rejected because other-vendor administrator fabrics may not support LIT. `details` is a JSON string: `{"message": string, "admin_vendor_ids": number[]}` |
-| 101 | OtaUploadError | OHF extension (not in Python Matter Server). `POST /ota-upload` failed: corrupt image, disabled OTA support, or store failure |
+| 101 | OtaUploadError | OHF extension (not in Python Matter Server). `initiate_ota_upload` or `POST /ota-upload/<upload_id>` failed: corrupt image, unknown/expired/already-used upload id, disabled OTA support, or store failure |
 
 ## Python Matter Server Compatibility
 
@@ -1042,6 +1071,7 @@ These commands are available only in the Matter.js server and not in the Python 
 | `register_icd` | Register this controller as an ICD Check-In client |
 | `unregister_icd` | Drop this controller's ICD Check-In registration |
 | `resync_icd` | Drop the local ICD registration and reconnect |
+| `initiate_ota_upload` | Reserve an id for the `POST /ota-upload/<upload_id>` HTTP endpoint |
 
 ### Data Differences
 

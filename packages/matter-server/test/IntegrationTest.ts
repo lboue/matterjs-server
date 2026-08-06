@@ -286,7 +286,9 @@ describe("Integration Test", function () {
             });
 
             it("should return OtaUploadError for corrupt OTA upload data via HTTP", async function () {
-                const response = await fetch(`http://localhost:${SERVER_PORT}/ota-upload`, {
+                const ticket = await client.sendCommand("initiate_ota_upload", 0, {});
+
+                const response = await fetch(`http://localhost:${SERVER_PORT}/ota-upload/${ticket.upload_id}`, {
                     method: "POST",
                     body: Buffer.from("not a real ota file"),
                 });
@@ -294,6 +296,38 @@ describe("Integration Test", function () {
                 expect(response.status).to.equal(400);
                 const body = await response.json();
                 expect(body.error_code).to.equal(ServerErrorCode.OtaUploadError);
+            });
+
+            it("should reject an OTA upload id that was already used", async function () {
+                const ticket = await client.sendCommand("initiate_ota_upload", 0, {});
+                const url = `http://localhost:${SERVER_PORT}/ota-upload/${ticket.upload_id}`;
+
+                await fetch(url, { method: "POST", body: Buffer.from("not a real ota file") });
+                const replay = await fetch(url, { method: "POST", body: Buffer.from("not a real ota file") });
+
+                expect(replay.status).to.equal(400);
+                const body = await replay.json();
+                expect(body.error_code).to.equal(ServerErrorCode.OtaUploadError);
+            });
+
+            it("should reject an OTA upload larger than the configured limit", async function () {
+                const ticket = await client.sendCommand("initiate_ota_upload", 0, {});
+
+                const response = await fetch(`http://localhost:${SERVER_PORT}/ota-upload/${ticket.upload_id}`, {
+                    method: "POST",
+                    body: Buffer.alloc(ticket.max_size + 1),
+                });
+
+                expect(response.status).to.equal(413);
+            });
+
+            it("should reject an OTA upload POST without a valid id", async function () {
+                const response = await fetch(`http://localhost:${SERVER_PORT}/ota-upload`, {
+                    method: "POST",
+                    body: Buffer.from("not a real ota file"),
+                });
+
+                expect(response.status).to.equal(404);
             });
         });
     });

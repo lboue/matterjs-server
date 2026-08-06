@@ -373,7 +373,7 @@ export class NodeDetails extends LitElement {
             void (async () => {
                 try {
                     this._otaUploadInProgress = true;
-                    const info = await this.client.uploadOtaFile(selectedFile, selectedFile.name);
+                    const info = await this.client.uploadOtaFile(selectedFile);
                     const nodeVendorId = this.node?.attributes["0/40/2"];
                     const nodeProductId = this.node?.attributes["0/40/4"];
                     if (nodeVendorId === info.vid && nodeProductId === info.pid) {

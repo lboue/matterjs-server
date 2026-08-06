@@ -36,6 +36,7 @@ export {
     type MatterNodeEvent,
     type NodePingResult,
     type NotificationType,
+    type OtaUploadTicket,
     type ResponseOf,
     type ResultMessageBase,
     type ServerInfoMessage,
