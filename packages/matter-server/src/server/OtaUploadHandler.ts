@@ -82,6 +82,9 @@ export class OtaUploadHandler implements WebServerHandler {
             res.end(JSON.stringify(info));
         } catch (error) {
             if (error instanceof UploadTooLargeError) {
+                // The Content-Length pre-check rejects before the body starts flowing, so it must
+                // still be drained here; a mid-stream cutoff has already destroyed req via pipeline.
+                req.resume();
                 this.#respondError(
                     res,
                     413,

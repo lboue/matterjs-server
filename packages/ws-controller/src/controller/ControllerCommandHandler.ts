@@ -70,6 +70,7 @@ import type { DecodedAttributeReportValue, DecodedEventReportValue } from "@proj
 import { NodeStates, PairedNode } from "@project-chip/matter.js/device";
 import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";
+import { pathToFileURL } from "node:url";
 import { ClusterMap, ClusterMapEntry, GlobalAttributes } from "../model/ModelMapper.js";
 import {
     buildAttributePath,
@@ -1827,7 +1828,7 @@ export class ControllerCommandHandler {
             const otaService = await this.#controller.node.act(agent => agent.get(DclBehavior).otaUpdateService);
             await otaService.construction;
 
-            const otaUrl = `file://${uploadId}`;
+            const otaUrl = pathToFileURL(filePath).href;
             // Each of these consumes its stream, so header parsing and storing need separate reads.
             const readStaged = () => Readable.toWeb(createReadStream(filePath)) as ReadableStream<Uint8Array>;
             const updateInfo = await otaService.updateInfoFromStream(readStaged(), otaUrl);
