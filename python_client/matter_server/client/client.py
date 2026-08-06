@@ -16,6 +16,7 @@ from matter_server.common.helpers.util import (
     create_attribute_path_from_attribute,
     dataclass_from_dict,
     dataclass_to_dict,
+    dataclass_to_tag_dict,
 )
 from matter_server.common.models import (
     APICommand,
@@ -623,7 +624,7 @@ class MatterClient:
             require_schema=4,
             node_id=node_id,
             attribute_path=attribute_path,
-            value=value,
+            value=dataclass_to_tag_dict(value),
         )
 
     async def remove_node(self, node_id: int) -> None:

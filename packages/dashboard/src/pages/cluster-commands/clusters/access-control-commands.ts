@@ -422,7 +422,7 @@ class AccessControlClusterCommands extends BaseClusterCommands {
     ];
 }
 
-registerClusterCommands(CLUSTER_ID, "access-control-cluster-commands");
+registerClusterCommands(CLUSTER_ID, "access-control-cluster-commands", { renderWhenOffline: true });
 
 declare global {
     interface HTMLElementTagNameMap {

@@ -566,6 +566,31 @@ describe("Integration Test", function () {
             expect(attrs["0/40/5"]).to.equal("Integration Test Node");
         });
 
+        it("should write struct-list attribute using tag-keyed struct members", async function () {
+            // UserLabel.LabelList (1/65/0) is a list of LabelStruct; tag 0 = label, tag 1 = value
+            const result = await client.writeAttribute(commissionedNodeId, "1/65/0", [{ "0": "room", "1": "kitchen" }]);
+
+            expect(result).to.be.an("array");
+            const writeResult = result as Array<{ Path: object; Status: number }>;
+            expect(writeResult[0].Status).to.equal(0); // Success
+
+            const attrs = await client.readAttribute(commissionedNodeId, "1/65/0");
+            expect(attrs["1/65/0"]).to.deep.equal([{ "0": "room", "1": "kitchen" }]);
+        });
+
+        it("should write struct-list attribute using name-keyed struct members", async function () {
+            const result = await client.writeAttribute(commissionedNodeId, "1/65/0", [
+                { label: "room", value: "office" },
+            ]);
+
+            expect(result).to.be.an("array");
+            const writeResult = result as Array<{ Path: object; Status: number }>;
+            expect(writeResult[0].Status).to.equal(0); // Success
+
+            const attrs = await client.readAttribute(commissionedNodeId, "1/65/0");
+            expect(attrs["1/65/0"]).to.deep.equal([{ "0": "room", "1": "office" }]);
+        });
+
         it("should reject when writing a read-only attribute", async function () {
             // ClusterRevision (0xFFFD) is read-only; either rejection shape is a valid failure signal.
             try {
