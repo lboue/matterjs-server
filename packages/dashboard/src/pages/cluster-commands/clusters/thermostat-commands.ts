@@ -15,7 +15,7 @@ import {
 import { css, type CSSResultGroup, html, nothing, type TemplateResult } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import "../../../components/ha-svg-icon.js";
-import { formatEpochTime } from "../../../util/commodity-tariff.js";
+import { formatEpochTime } from "../../../util/time.js";
 import {
     buildDaySegments,
     compareTransitionsForDisplay,
