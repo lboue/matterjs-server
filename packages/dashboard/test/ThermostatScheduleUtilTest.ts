@@ -18,6 +18,7 @@ import {
     formatSetpoint,
     isFeatureActive,
     pickSetpointForMode,
+    readActivePresetHandle,
     readActiveScheduleHandle,
     readPresets,
     readSchedules,
@@ -119,6 +120,16 @@ describe("thermostat-schedule util", () => {
         it("returns null when null/absent", () => {
             expect(readActiveScheduleHandle(node({ "6/513/79": null }), 6)).to.equal(null);
             expect(readActiveScheduleHandle(node({}), 6)).to.equal(null);
+        });
+    });
+
+    describe("readActivePresetHandle", () => {
+        it("reads the handle string", () => {
+            expect(readActivePresetHandle(node({ "6/513/78": HANDLE_1 }), 6)).to.equal(HANDLE_1);
+        });
+        it("returns null when null/absent", () => {
+            expect(readActivePresetHandle(node({ "6/513/78": null }), 6)).to.equal(null);
+            expect(readActivePresetHandle(node({}), 6)).to.equal(null);
         });
     });
 
