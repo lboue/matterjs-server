@@ -4,18 +4,22 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import "@material/web/iconbutton/outlined-icon-button";
 import {
     mdiCheck,
     mdiClockOutline,
     mdiFire,
     mdiLightbulbOnOutline,
     mdiPaletteSwatchOutline,
+    mdiPlus,
     mdiSnowflake,
+    mdiTrashCanOutline,
 } from "@mdi/js";
 import { css, type CSSResultGroup, html, nothing, type TemplateResult } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import "../../../components/ha-svg-icon.js";
-import { formatEpochTime } from "../../../util/time.js";
+import { showAlertDialog } from "../../../components/dialog-box/show-dialog-box.js";
+import { handleAsync } from "../../../util/async-handler.js";
 import {
     buildDaySegments,
     compareTransitionsForDisplay,
@@ -50,16 +54,26 @@ import {
     resolveSuggestionLabel,
     type ThermostatSuggestion,
 } from "../../../util/thermostat-suggestions.js";
+import { formatEpochTime } from "../../../util/time.js";
 import { BaseClusterCommands } from "../base-cluster-commands.js";
 import { registerClusterCommands } from "../registry.js";
 
 const HOUR_TICKS = [0, 4, 8, 12, 16, 20, 24];
+
+// AddThermostatSuggestion's ExpirationInMinutes constraint (Matter spec §4.3.7.9).
+const MIN_EXPIRATION_MINUTES = 30;
+const MAX_EXPIRATION_MINUTES = 1440;
 
 @customElement("thermostat-cluster-commands")
 class ThermostatClusterCommands extends BaseClusterCommands {
     @state() private _selectedHandle: string | null = null;
     @state() private _colorMode: ScheduleColorMode = "heat";
     private _scheduleContext?: string;
+
+    @state() private _addPresetHandle: string | null = null;
+    @state() private _addExpirationMinutes = 60;
+    @state() private _addBusy = false;
+    @state() private _removeBusy: Record<number, boolean> = {};
 
     override willUpdate(changedProperties: Map<string, unknown>) {
         super.willUpdate(changedProperties);
@@ -68,6 +82,9 @@ class ThermostatClusterCommands extends BaseClusterCommands {
         if (this._scheduleContext !== undefined && this._scheduleContext !== context) {
             this._selectedHandle = null;
             this._colorMode = "heat";
+            this._addPresetHandle = null;
+            this._addExpirationMinutes = 60;
+            this._removeBusy = {};
         }
         this._scheduleContext = context;
     }
@@ -394,6 +411,7 @@ class ThermostatClusterCommands extends BaseClusterCommands {
                                   }
                               `
                     }
+                    ${this._renderAddSuggestionForm(presets)}
                 </div>
             </details>
         `;
@@ -404,6 +422,8 @@ class ThermostatClusterCommands extends BaseClusterCommands {
         isCurrent: boolean,
         presets: ThermostatPreset[],
     ): TemplateResult {
+        const online = this.node?.available === true;
+        const busy = this._removeBusy[suggestion.uniqueId] === true;
         return html`
             <li class="preset-row">
                 <span class="preset-label">${resolveSuggestionLabel(suggestion, presets)}</span>
@@ -418,8 +438,118 @@ class ThermostatClusterCommands extends BaseClusterCommands {
                           </span>`
                         : nothing
                 }
+                <md-outlined-icon-button
+                    title="Remove suggestion"
+                    aria-label="Remove suggestion"
+                    ?disabled=${!online || busy}
+                    @click=${handleAsync(() => this._handleRemoveSuggestion(suggestion.uniqueId))}
+                >
+                    <ha-svg-icon .path=${mdiTrashCanOutline}></ha-svg-icon>
+                </md-outlined-icon-button>
             </li>
         `;
+    }
+
+    private _renderAddSuggestionForm(presets: ThermostatPreset[]): TemplateResult {
+        const online = this.node?.available === true;
+        const selectedHandle = this._addPresetHandle ?? presets[0]?.handle ?? null;
+        return html`
+            <div class="transitions-header">ADD SUGGESTION</div>
+            ${
+                presets.length === 0
+                    ? html`<p class="empty">No presets available to suggest.</p>`
+                    : html`
+                          <div class="command-row">
+                              <label for="addSuggestionPreset">Preset:</label>
+                              <select
+                                  id="addSuggestionPreset"
+                                  @change=${(e: Event) => {
+                                      this._addPresetHandle = (e.target as HTMLSelectElement).value;
+                                  }}
+                              >
+                                  ${presets.map(
+                                      p => html`
+                                          <option value=${p.handle} ?selected=${p.handle === selectedHandle}>
+                                              ${formatPresetLabel(p)}
+                                          </option>
+                                      `,
+                                  )}
+                              </select>
+                              <label for="addSuggestionExpiration">Expires in (min):</label>
+                              <input
+                                  id="addSuggestionExpiration"
+                                  type="number"
+                                  min=${MIN_EXPIRATION_MINUTES}
+                                  max=${MAX_EXPIRATION_MINUTES}
+                                  .value=${String(this._addExpirationMinutes)}
+                                  @input=${(e: Event) => {
+                                      const value = parseInt((e.target as HTMLInputElement).value, 10);
+                                      if (!Number.isNaN(value)) this._addExpirationMinutes = value;
+                                  }}
+                              />
+                              <md-outlined-button
+                                  ?disabled=${!online || this._addBusy || selectedHandle === null}
+                                  @click=${handleAsync(() => this._handleAddSuggestion(selectedHandle))}
+                              >
+                                  <ha-svg-icon slot="icon" .path=${mdiPlus}></ha-svg-icon>
+                                  Add
+                              </md-outlined-button>
+                          </div>
+                      `
+            }
+        `;
+    }
+
+    private async _handleAddSuggestion(presetHandle: string) {
+        const node = this.node;
+        const endpoint = this.endpoint;
+        if (!node) return;
+        const expirationInMinutes = Math.min(
+            MAX_EXPIRATION_MINUTES,
+            Math.max(MIN_EXPIRATION_MINUTES, this._addExpirationMinutes),
+        );
+        this._addBusy = true;
+        try {
+            await this.client.deviceCommand(node.node_id, endpoint, THERMOSTAT_CLUSTER_ID, "AddThermostatSuggestion", {
+                presetHandle,
+                effectiveTime: null,
+                expirationInMinutes,
+            });
+        } catch (err) {
+            showAlertDialog({
+                title: "Add suggestion failed",
+                text: err instanceof Error ? err.message : String(err),
+            }).catch(alertErr => console.error("Failed to show the add-suggestion error", alertErr));
+        } finally {
+            if (this.isSameContext(node, endpoint)) this._addBusy = false;
+        }
+    }
+
+    private async _handleRemoveSuggestion(uniqueId: number) {
+        const node = this.node;
+        const endpoint = this.endpoint;
+        if (!node) return;
+        this._removeBusy = { ...this._removeBusy, [uniqueId]: true };
+        try {
+            await this.client.deviceCommand(
+                node.node_id,
+                endpoint,
+                THERMOSTAT_CLUSTER_ID,
+                "RemoveThermostatSuggestion",
+                {
+                    uniqueId,
+                },
+            );
+        } catch (err) {
+            showAlertDialog({
+                title: "Remove suggestion failed",
+                text: err instanceof Error ? err.message : String(err),
+            }).catch(alertErr => console.error("Failed to show the remove-suggestion error", alertErr));
+        } finally {
+            if (this.isSameContext(node, endpoint)) {
+                this._removeBusy = { ...this._removeBusy, [uniqueId]: false };
+            }
+        }
     }
 
     /** A value the device did not report for this transition comes from its preset, so it is marked as derived. */
@@ -710,6 +840,21 @@ class ThermostatClusterCommands extends BaseClusterCommands {
                 display: inline-flex;
                 align-items: center;
                 gap: 4px;
+            }
+
+            .preset-row md-outlined-icon-button {
+                --md-outlined-icon-button-container-size: 32px;
+                --md-outlined-icon-button-icon-size: 16px;
+                flex-shrink: 0;
+            }
+
+            .command-row select {
+                padding: 8px;
+                border: 1px solid var(--md-sys-color-outline);
+                border-radius: 4px;
+                background: var(--md-sys-color-surface);
+                color: var(--md-sys-color-on-surface);
+                font: inherit;
             }
 
             .current-suggestion {
