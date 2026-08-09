@@ -16,7 +16,7 @@ import {
     formatMinutes,
     formatSegmentTooltip,
     formatSetpoint,
-    isMSCHActive,
+    isFeatureActive,
     pickSetpointForMode,
     readActiveScheduleHandle,
     readPresets,
@@ -88,19 +88,27 @@ function schedule(
 }
 
 function preset(handle: string, overrides: Partial<ThermostatPreset> = {}): ThermostatPreset {
-    return { handle, name: null, coolingSetpoint: null, heatingSetpoint: null, ...overrides };
+    return {
+        handle,
+        scenario: null,
+        name: null,
+        coolingSetpoint: null,
+        heatingSetpoint: null,
+        builtIn: null,
+        ...overrides,
+    };
 }
 
 describe("thermostat-schedule util", () => {
-    describe("isMSCHActive", () => {
-        it("is true when the MSCH bit is set on the real Thermostat FeatureMap", () => {
-            expect(isMSCHActive(node({ "6/513/65532": 1 << 7 }), 6)).to.equal(true);
+    describe("isFeatureActive", () => {
+        it("is true when the given bit is set on the real Thermostat FeatureMap", () => {
+            expect(isFeatureActive(node({ "6/513/65532": 1 << 7 }), 6, "MSCH")).to.equal(true);
         });
-        it("is false when MSCH is not set", () => {
-            expect(isMSCHActive(node({ "6/513/65532": 0b1 }), 6)).to.equal(false);
+        it("is false when the given feature is not set", () => {
+            expect(isFeatureActive(node({ "6/513/65532": 0b1 }), 6, "MSCH")).to.equal(false);
         });
         it("is false when FeatureMap is absent", () => {
-            expect(isMSCHActive(node({}), 6)).to.equal(false);
+            expect(isFeatureActive(node({}), 6, "MSCH")).to.equal(false);
         });
     });
 
@@ -206,8 +214,22 @@ describe("thermostat-schedule util", () => {
                 6,
             );
             expect(presets).to.deep.equal([
-                { handle: HANDLE_1, name: "Night", coolingSetpoint: null, heatingSetpoint: 1700 },
-                { handle: HANDLE_2, name: "Morning", coolingSetpoint: 2600, heatingSetpoint: 2100 },
+                {
+                    handle: HANDLE_1,
+                    scenario: 4,
+                    name: "Night",
+                    coolingSetpoint: null,
+                    heatingSetpoint: 1700,
+                    builtIn: null,
+                },
+                {
+                    handle: HANDLE_2,
+                    scenario: 1,
+                    name: "Morning",
+                    coolingSetpoint: 2600,
+                    heatingSetpoint: 2100,
+                    builtIn: null,
+                },
             ]);
         });
         it("returns empty when absent", () => {
