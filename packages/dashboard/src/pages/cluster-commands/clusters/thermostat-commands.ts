@@ -437,7 +437,6 @@ class ThermostatClusterCommands extends BaseClusterCommands {
         isCurrent: boolean,
         presets: ThermostatPreset[],
     ): TemplateResult {
-        const online = this.node?.available === true;
         const busy = this._removeOperations[suggestion.uniqueId] !== undefined;
         return html`
             <li class="preset-row">
@@ -457,7 +456,7 @@ class ThermostatClusterCommands extends BaseClusterCommands {
                 <md-outlined-icon-button
                     title="Remove suggestion"
                     aria-label="Remove suggestion"
-                    ?disabled=${!online || busy}
+                    ?disabled=${busy}
                     @click=${handleAsync(() => this._handleRemoveSuggestion(suggestion.uniqueId))}
                 >
                     <ha-svg-icon .path=${mdiTrashCanOutline}></ha-svg-icon>
@@ -467,7 +466,6 @@ class ThermostatClusterCommands extends BaseClusterCommands {
     }
 
     private _renderAddSuggestionForm(presets: ThermostatPreset[], atCapacity: boolean): TemplateResult {
-        const online = this.node?.available === true;
         // The device rewrites Presets at will, so a handle picked earlier may no longer exist.
         const selectedHandle =
             (presets.some(p => p.handle === this._addPresetHandle) ? this._addPresetHandle : presets[0]?.handle) ??
@@ -514,9 +512,7 @@ class ThermostatClusterCommands extends BaseClusterCommands {
                                   }}
                               />
                               <md-outlined-button
-                                  ?disabled=${
-                                      !online || this._addOperation !== null || atCapacity || selectedHandle === null
-                                  }
+                                  ?disabled=${this._addOperation !== null || atCapacity || selectedHandle === null}
                                   @click=${handleAsync(() => this._handleAddSuggestion(selectedHandle))}
                               >
                                   <ha-svg-icon slot="icon" .path=${mdiPlus}></ha-svg-icon>
@@ -942,8 +938,9 @@ class ThermostatClusterCommands extends BaseClusterCommands {
     ];
 }
 
-// The panels visualise cached attributes, so they stay useful offline; the invoke controls guard on `available`.
-registerClusterCommands(THERMOSTAT_CLUSTER_ID, "thermostat-cluster-commands", { renderWhenOffline: true });
+// Without renderWhenOffline the parent unmounts this panel when the node drops, which is what lets the
+// suggestion invoke controls omit an `available` check. Adding it means adding those checks back.
+registerClusterCommands(THERMOSTAT_CLUSTER_ID, "thermostat-cluster-commands");
 
 declare global {
     interface HTMLElementTagNameMap {
