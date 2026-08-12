@@ -12,9 +12,11 @@ import { computeActiveClusterFeatures } from "./cluster-features.js";
 /** Thermostat cluster (Matter spec §4.3). */
 export const THERMOSTAT_CLUSTER_ID = 513; // 0x0201
 
+const ATTR_PRESET_TYPES = 0x48;
+const ATTR_NUMBER_OF_PRESETS = 0x4a;
 const ATTR_ACTIVE_PRESET_HANDLE = 0x4e;
 const ATTR_ACTIVE_SCHEDULE_HANDLE = 0x4f;
-const ATTR_PRESETS = 0x50;
+export const ATTR_PRESETS = 0x50;
 const ATTR_SCHEDULES = 0x51;
 const ATTR_FEATURE_MAP = 0xfffc;
 
@@ -59,6 +61,13 @@ export interface ThermostatPreset {
     coolingSetpoint: number | null;
     heatingSetpoint: number | null;
     builtIn: boolean | null;
+}
+
+/** A supported PresetScenarioEnum value and the device's limits for it (PresetTypeStruct, spec §4.3.10.24). */
+export interface ThermostatPresetType {
+    scenario: number;
+    numberOfPresets: number;
+    supportsNames: boolean;
 }
 
 export interface DaySegment {
@@ -148,11 +157,32 @@ const PRESET_SCENARIO_LABELS: Record<number, string> = {
     254: "User Defined",
 };
 
+/** PresetScenarioEnum value for a free-form, user-named preset; its Name field must be set (spec §4.3.10.17.8). */
+export const PRESET_SCENARIO_USER_DEFINED = 254;
+
+/** Display label for a PresetScenarioEnum value, standalone (e.g. for the "Add preset" scenario picker). */
+export function formatPresetScenario(scenario: number): string {
+    return PRESET_SCENARIO_LABELS[scenario] ?? `Scenario ${scenario}`;
+}
+
 /** A preset's display name: its own Name when set, else its PresetScenario label. */
 export function formatPresetLabel(preset: ThermostatPreset): string {
     if (preset.name) return preset.name;
-    if (preset.scenario !== null) return PRESET_SCENARIO_LABELS[preset.scenario] ?? `Scenario ${preset.scenario}`;
+    if (preset.scenario !== null) return formatPresetScenario(preset.scenario);
     return formatHandleShort(preset.handle);
+}
+
+function decodePresetType(raw: unknown): ThermostatPresetType | null {
+    const obj = asObject(raw);
+    if (!obj) return null;
+    const scenario = pickNumber(obj, "0");
+    if (scenario === null) return null;
+    const presetTypeFeatures = pickNumber(obj, "2") ?? 0;
+    return {
+        scenario,
+        numberOfPresets: pickNumber(obj, "1") ?? 0,
+        supportsNames: (presetTypeFeatures & (1 << 1)) !== 0,
+    };
 }
 
 /** Whether the Thermostat cluster's FeatureMap includes the feature with the given code (e.g. "MSCH", "PRES"). */
@@ -185,6 +215,53 @@ export function readPresets(node: MatterNode, endpoint: number): ThermostatPrese
     const raw = readThermostatAttribute(node, endpoint, ATTR_PRESETS);
     if (!Array.isArray(raw)) return undefined;
     return raw.map(decodePreset).filter((p): p is ThermostatPreset => p !== null);
+}
+
+/** Decoded PresetTypes: the PresetScenario values the device accepts, or undefined when not cached. */
+export function readPresetTypes(node: MatterNode, endpoint: number): ThermostatPresetType[] | undefined {
+    const raw = readThermostatAttribute(node, endpoint, ATTR_PRESET_TYPES);
+    if (!Array.isArray(raw)) return undefined;
+    return raw.map(decodePresetType).filter((t): t is ThermostatPresetType => t !== null);
+}
+
+/** Maximum total entries the Presets attribute accepts, or null when not cached. */
+export function readNumberOfPresets(node: MatterNode, endpoint: number): number | null {
+    const v = readThermostatAttribute(node, endpoint, ATTR_NUMBER_OF_PRESETS);
+    return typeof v === "number" ? v : null;
+}
+
+interface PresetWriteInput {
+    handle: string | null;
+    scenario: number | null;
+    name: string | null;
+    coolingSetpoint: number | null;
+    heatingSetpoint: number | null;
+}
+
+/**
+ * Encodes a preset to the field-tag keyed shape the Presets attribute write expects. A null handle marks
+ * the entry as a new addition (spec §4.3.11.50); otherwise it re-encodes an existing preset unchanged, to
+ * be resent alongside a modification elsewhere in the list. BuiltIn is left null so the device preserves
+ * the existing preset's own value (or defaults a new one to false) rather than this code asserting it.
+ */
+export function encodePresetForWrite(preset: PresetWriteInput): Record<string, unknown> {
+    return {
+        "0": preset.handle,
+        "1": preset.scenario,
+        "2": preset.name,
+        ...(preset.coolingSetpoint !== null ? { "3": preset.coolingSetpoint } : {}),
+        ...(preset.heatingSetpoint !== null ? { "4": preset.heatingSetpoint } : {}),
+        "5": null,
+    };
+}
+
+/** Parses a user-entered °C string (e.g. "21.5") to the centidegrees a setpoint field expects, or null. */
+export function parseSetpointCelsius(input: string): number | null {
+    const trimmed = input.trim();
+    if (trimmed === "") return null;
+    const value = Number(trimmed);
+    if (!Number.isFinite(value)) return null;
+    return Math.round(value * 100);
 }
 
 interface ModeLabelSource {

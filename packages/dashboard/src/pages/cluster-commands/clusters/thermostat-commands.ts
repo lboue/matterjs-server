@@ -23,22 +23,30 @@ import { live } from "lit/directives/live.js";
 import "../../../components/ha-svg-icon.js";
 import { showAlertDialog } from "../../../components/dialog-box/show-dialog-box.js";
 import { handleAsync } from "../../../util/async-handler.js";
+import { getMatterStatusName, requireAttributeWriteSuccess } from "../../../util/matter-status.js";
 import {
+    ATTR_PRESETS,
     buildDaySegments,
     compareTransitionsForDisplay,
     computeSetpointRange,
     DAY_LABELS,
     type DaySegment,
+    encodePresetForWrite,
     formatDayOfWeek,
     formatHandleShort,
     formatMinutes,
     formatPresetLabel,
+    formatPresetScenario,
     formatSegmentTooltip,
     formatSetpoint,
     isFeatureActive,
+    parseSetpointCelsius,
+    PRESET_SCENARIO_USER_DEFINED,
     readActivePresetHandle,
     readActiveScheduleHandle,
+    readNumberOfPresets,
     readPresets,
+    readPresetTypes,
     pickSetpointForMode,
     readSchedules,
     resolveScheduleDefaults,
@@ -47,6 +55,7 @@ import {
     setpointColorMixPercent,
     THERMOSTAT_CLUSTER_ID,
     type ThermostatPreset,
+    type ThermostatPresetType,
 } from "../../../util/thermostat-schedule.js";
 import {
     clampExpirationMinutes,
@@ -67,6 +76,13 @@ const HOUR_TICKS = [0, 4, 8, 12, 16, 20, 24];
 
 const DEFAULT_EXPIRATION_MINUTES = 60;
 
+/** AtomicRequestTypeEnum (Matter spec Core §7.15.4), not yet part of the generated cluster descriptions. */
+const AtomicRequestType = {
+    BeginWrite: 0,
+    CommitWrite: 1,
+    RollbackWrite: 2,
+} as const;
+
 @customElement("thermostat-cluster-commands")
 class ThermostatClusterCommands extends BaseClusterCommands {
     @state() private _selectedHandle: string | null = null;
@@ -77,12 +93,19 @@ class ThermostatClusterCommands extends BaseClusterCommands {
     @state() private _addExpirationMinutes = DEFAULT_EXPIRATION_MINUTES;
     @state() private _addExpirationInput = String(DEFAULT_EXPIRATION_MINUTES);
 
+    @state() private _newPresetScenario: number | null = null;
+    @state() private _newPresetName = "";
+    @state() private _newPresetHeatingInput = "";
+    @state() private _newPresetCoolingInput = "";
+
     /**
      * In-flight invokes, identified by operation id rather than a boolean: the panel is reused across
      * navigations, so a settling promise must only clear the flag it set itself.
      */
     @state() private _addOperation: number | null = null;
     @state() private _removeOperations: Record<number, number> = {};
+    @state() private _addPresetOperation: number | null = null;
+    @state() private _removePresetOperations: Record<string, number> = {};
     private _operationCounter = 0;
 
     override willUpdate(changedProperties: Map<string, unknown>) {
@@ -95,8 +118,14 @@ class ThermostatClusterCommands extends BaseClusterCommands {
             this._addPresetHandle = null;
             this._addExpirationMinutes = DEFAULT_EXPIRATION_MINUTES;
             this._addExpirationInput = String(DEFAULT_EXPIRATION_MINUTES);
+            this._newPresetScenario = null;
+            this._newPresetName = "";
+            this._newPresetHeatingInput = "";
+            this._newPresetCoolingInput = "";
             this._addOperation = null;
             this._removeOperations = {};
+            this._addPresetOperation = null;
+            this._removePresetOperations = {};
         }
         this._scheduleContext = context;
     }
@@ -318,6 +347,9 @@ class ThermostatClusterCommands extends BaseClusterCommands {
     private _renderPresetsPanel(): TemplateResult {
         const presets = readPresets(this.node, this.endpoint);
         const activeHandle = readActivePresetHandle(this.node, this.endpoint);
+        const presetTypes = readPresetTypes(this.node, this.endpoint) ?? [];
+        const numberOfPresets = readNumberOfPresets(this.node, this.endpoint);
+        const atCapacity = numberOfPresets !== null && presets !== undefined && presets.length >= numberOfPresets;
 
         return html`
             <details class="command-panel" open>
@@ -338,12 +370,14 @@ class ThermostatClusterCommands extends BaseClusterCommands {
                                     </ul>
                                 `
                     }
+                    ${presets !== undefined ? this._renderAddPresetForm(presetTypes, atCapacity) : nothing}
                 </div>
             </details>
         `;
     }
 
     private _renderPresetRow(preset: ThermostatPreset, isActive: boolean): TemplateResult {
+        const busy = this._removePresetOperations[preset.handle] !== undefined;
         return html`
             <li class="preset-row">
                 <span class="preset-label">${formatPresetLabel(preset)}</span>
@@ -351,7 +385,6 @@ class ThermostatClusterCommands extends BaseClusterCommands {
                     ${this._setpointCell(mdiFire, preset.heatingSetpoint, preset.heatingSetpoint)}
                     ${this._setpointCell(mdiSnowflake, preset.coolingSetpoint, preset.coolingSetpoint)}
                 </span>
-                ${preset.builtIn ? html`<span class="chip-handle">Built-in</span>` : nothing}
                 ${
                     isActive
                         ? html`<span class="active-badge">
@@ -360,7 +393,121 @@ class ThermostatClusterCommands extends BaseClusterCommands {
                           </span>`
                         : nothing
                 }
+                ${
+                    preset.builtIn
+                        ? html`<span class="chip-handle">Built-in</span>`
+                        : html`
+                              <md-outlined-icon-button
+                                  title="Remove preset"
+                                  aria-label="Remove preset"
+                                  ?disabled=${busy}
+                                  @click=${handleAsync(() => this._handleRemovePreset(preset.handle))}
+                              >
+                                  <ha-svg-icon .path=${mdiTrashCanOutline}></ha-svg-icon>
+                              </md-outlined-icon-button>
+                          `
+                }
             </li>
+        `;
+    }
+
+    private _renderAddPresetForm(presetTypes: ThermostatPresetType[], atCapacity: boolean): TemplateResult {
+        const selectedScenario =
+            (presetTypes.some(t => t.scenario === this._newPresetScenario)
+                ? this._newPresetScenario
+                : presetTypes[0]?.scenario) ?? null;
+        const selectedType = presetTypes.find(t => t.scenario === selectedScenario);
+        const nameRequired = selectedScenario === PRESET_SCENARIO_USER_DEFINED;
+        const showName = nameRequired || (selectedType?.supportsNames ?? false);
+        const heatActive = isFeatureActive(this.node, this.endpoint, "HEAT");
+        const coolActive = isFeatureActive(this.node, this.endpoint, "COOL");
+        const nameMissing = nameRequired && this._newPresetName.trim() === "";
+
+        return html`
+            <div class="transitions-header">ADD PRESET</div>
+            ${
+                presetTypes.length === 0
+                    ? html`<p class="empty">No preset types available to add.</p>`
+                    : html`
+                          <div class="command-row">
+                              <label for="newPresetScenario">Scenario:</label>
+                              <select
+                                  id="newPresetScenario"
+                                  @change=${(e: Event) => {
+                                      this._newPresetScenario = Number((e.target as HTMLSelectElement).value);
+                                  }}
+                              >
+                                  ${presetTypes.map(
+                                      t => html`
+                                          <option value=${t.scenario} .selected=${t.scenario === selectedScenario}>
+                                              ${formatPresetScenario(t.scenario)}
+                                          </option>
+                                      `,
+                                  )}
+                              </select>
+                              ${
+                                  showName
+                                      ? html`
+                                            <label for="newPresetName">Name:</label>
+                                            <input
+                                                id="newPresetName"
+                                                type="text"
+                                                placeholder=${nameRequired ? "Required" : "Optional"}
+                                                .value=${live(this._newPresetName)}
+                                                @input=${(e: Event) => {
+                                                    this._newPresetName = (e.target as HTMLInputElement).value;
+                                                }}
+                                            />
+                                        `
+                                      : nothing
+                              }
+                              ${
+                                  heatActive
+                                      ? html`
+                                            <label for="newPresetHeating">Heat (°C):</label>
+                                            <input
+                                                id="newPresetHeating"
+                                                type="number"
+                                                step="0.1"
+                                                .value=${live(this._newPresetHeatingInput)}
+                                                @input=${(e: Event) => {
+                                                    this._newPresetHeatingInput = (e.target as HTMLInputElement).value;
+                                                }}
+                                            />
+                                        `
+                                      : nothing
+                              }
+                              ${
+                                  coolActive
+                                      ? html`
+                                            <label for="newPresetCooling">Cool (°C):</label>
+                                            <input
+                                                id="newPresetCooling"
+                                                type="number"
+                                                step="0.1"
+                                                .value=${live(this._newPresetCoolingInput)}
+                                                @input=${(e: Event) => {
+                                                    this._newPresetCoolingInput = (e.target as HTMLInputElement).value;
+                                                }}
+                                            />
+                                        `
+                                      : nothing
+                              }
+                              <md-outlined-button
+                                  ?disabled=${
+                                      this._addPresetOperation !== null ||
+                                      atCapacity ||
+                                      selectedScenario === null ||
+                                      nameMissing
+                                  }
+                                  @click=${handleAsync(() => this._handleAddPreset(selectedScenario))}
+                              >
+                                  <ha-svg-icon slot="icon" .path=${mdiPlus}></ha-svg-icon>
+                                  Add
+                              </md-outlined-button>
+                          </div>
+                      `
+            }
         `;
     }
 
@@ -568,6 +715,115 @@ class ThermostatClusterCommands extends BaseClusterCommands {
                 delete pending[uniqueId];
                 this._removeOperations = pending;
             }
+        }
+    }
+
+    private async _handleAddPreset(scenario: number | null) {
+        const node = this.node;
+        const endpoint = this.endpoint;
+        if (!node || scenario === null || this._addPresetOperation !== null) return;
+        const presets = readPresets(node, endpoint);
+        if (presets === undefined) return;
+        const heatingSetpoint = isFeatureActive(node, endpoint, "HEAT")
+            ? parseSetpointCelsius(this._newPresetHeatingInput)
+            : null;
+        const coolingSetpoint = isFeatureActive(node, endpoint, "COOL")
+            ? parseSetpointCelsius(this._newPresetCoolingInput)
+            : null;
+        const name = this._newPresetName.trim() || null;
+
+        const operation = ++this._operationCounter;
+        this._addPresetOperation = operation;
+        try {
+            await this._writePresets(node, endpoint, [
+                ...presets.map(encodePresetForWrite),
+                encodePresetForWrite({ handle: null, scenario, name, coolingSetpoint, heatingSetpoint }),
+            ]);
+            this._newPresetName = "";
+            this._newPresetHeatingInput = "";
+            this._newPresetCoolingInput = "";
+        } catch (err) {
+            this._reportInvokeFailure("Add preset failed", err, node, endpoint);
+        } finally {
+            if (this._addPresetOperation === operation) this._addPresetOperation = null;
+        }
+    }
+
+    private async _handleRemovePreset(handle: string) {
+        const node = this.node;
+        const endpoint = this.endpoint;
+        if (!node || this._removePresetOperations[handle] !== undefined) return;
+        const presets = readPresets(node, endpoint);
+        if (presets === undefined) return;
+        const operation = ++this._operationCounter;
+        this._removePresetOperations = { ...this._removePresetOperations, [handle]: operation };
+        try {
+            await this._writePresets(
+                node,
+                endpoint,
+                presets.filter(p => p.handle !== handle).map(encodePresetForWrite),
+            );
+        } catch (err) {
+            this._reportInvokeFailure("Remove preset failed", err, node, endpoint);
+        } finally {
+            if (this._removePresetOperations[handle] === operation) {
+                const pending = { ...this._removePresetOperations };
+                delete pending[handle];
+                this._removePresetOperations = pending;
+            }
+        }
+    }
+
+    /**
+     * Presets can only be added to or removed from within an atomic write transaction (spec §4.3.11.50,
+     * Core §7.15.4): Begin claims the attribute, the write itself is only pended until Commit applies it.
+     * A failure past Begin rolls back so the device doesn't sit holding a claimed-but-abandoned edit.
+     */
+    private async _writePresets(node: MatterNode, endpoint: number, presets: unknown[]): Promise<void> {
+        await this._atomicPresetsRequest(node, endpoint, AtomicRequestType.BeginWrite);
+        try {
+            requireAttributeWriteSuccess(
+                await this.client.writeAttribute(
+                    node.node_id,
+                    `${endpoint}/${THERMOSTAT_CLUSTER_ID}/${ATTR_PRESETS}`,
+                    presets,
+                ),
+                "Writing Presets failed",
+            );
+        } catch (err) {
+            await this._rollbackPresets(node, endpoint);
+            throw err;
+        }
+        await this._atomicPresetsRequest(node, endpoint, AtomicRequestType.CommitWrite);
+    }
+
+    private async _rollbackPresets(node: MatterNode, endpoint: number): Promise<void> {
+        try {
+            await this._atomicPresetsRequest(node, endpoint, AtomicRequestType.RollbackWrite);
+        } catch (err) {
+            console.error("Failed to roll back a pending Presets write", err);
+        }
+    }
+
+    private async _atomicPresetsRequest(
+        node: MatterNode,
+        endpoint: number,
+        requestType: (typeof AtomicRequestType)[keyof typeof AtomicRequestType],
+    ) {
+        const response = (await this.client.deviceCommand(
+            node.node_id,
+            endpoint,
+            THERMOSTAT_CLUSTER_ID,
+            "AtomicRequest",
+            {
+                requestType,
+                attributeRequests: [ATTR_PRESETS],
+            },
+        )) as { statusCode?: number } | null | undefined;
+        if (response?.statusCode !== undefined && response.statusCode !== 0) {
+            throw new Error(
+                `AtomicRequest failed: ${getMatterStatusName(response.statusCode)} (${response.statusCode})`,
+            );
         }
     }
 
@@ -891,6 +1147,16 @@ class ThermostatClusterCommands extends BaseClusterCommands {
             }
 
             .command-row select {
+                padding: 8px;
+                border: 1px solid var(--md-sys-color-outline);
+                border-radius: 4px;
+                background: var(--md-sys-color-surface);
+                color: var(--md-sys-color-on-surface);
+                font: inherit;
+            }
+
+            .command-row input[type="text"] {
+                width: 160px;
                 padding: 8px;
                 border: 1px solid var(--md-sys-color-outline);
                 border-radius: 4px;
