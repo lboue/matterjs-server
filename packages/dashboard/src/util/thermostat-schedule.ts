@@ -70,7 +70,7 @@ export interface DaySegment {
     systemMode: number | null;
 }
 
-function readAttr(node: MatterNode, endpoint: number, attrId: number): unknown {
+export function readThermostatAttribute(node: MatterNode, endpoint: number, attrId: number): unknown {
     return node.attributes[`${endpoint}/${THERMOSTAT_CLUSTER_ID}/${attrId}`];
 }
 
@@ -137,7 +137,7 @@ function decodePreset(raw: unknown): ThermostatPreset | null {
     };
 }
 
-/** PresetScenarioEnum labels (Matter spec §4.3.9.3). */
+/** PresetScenarioEnum labels (Matter spec §4.3.10.17). */
 const PRESET_SCENARIO_LABELS: Record<number, string> = {
     1: "Occupied",
     2: "Unoccupied",
@@ -164,26 +164,26 @@ export function isFeatureActive(node: MatterNode, endpoint: number, code: string
 }
 
 export function readActiveScheduleHandle(node: MatterNode, endpoint: number): string | null {
-    const v = readAttr(node, endpoint, ATTR_ACTIVE_SCHEDULE_HANDLE);
+    const v = readThermostatAttribute(node, endpoint, ATTR_ACTIVE_SCHEDULE_HANDLE);
     return typeof v === "string" ? v : null;
 }
 
 export function readActivePresetHandle(node: MatterNode, endpoint: number): string | null {
-    const v = readAttr(node, endpoint, ATTR_ACTIVE_PRESET_HANDLE);
+    const v = readThermostatAttribute(node, endpoint, ATTR_ACTIVE_PRESET_HANDLE);
     return typeof v === "string" ? v : null;
 }
 
 /** Decoded Schedules, or undefined when the attribute is not in the node's attribute cache. */
 export function readSchedules(node: MatterNode, endpoint: number): ThermostatSchedule[] | undefined {
-    const raw = readAttr(node, endpoint, ATTR_SCHEDULES);
+    const raw = readThermostatAttribute(node, endpoint, ATTR_SCHEDULES);
     if (!Array.isArray(raw)) return undefined;
     return raw.map(decodeSchedule).filter((s): s is ThermostatSchedule => s !== null);
 }
 
-/** Best-effort: only meaningful when the Presets (PRES) feature is supported, but harmless to read regardless. */
-export function readPresets(node: MatterNode, endpoint: number): ThermostatPreset[] {
-    const raw = readAttr(node, endpoint, ATTR_PRESETS);
-    if (!Array.isArray(raw)) return [];
+/** Decoded Presets, or undefined when the attribute is not in the node's attribute cache. */
+export function readPresets(node: MatterNode, endpoint: number): ThermostatPreset[] | undefined {
+    const raw = readThermostatAttribute(node, endpoint, ATTR_PRESETS);
+    if (!Array.isArray(raw)) return undefined;
     return raw.map(decodePreset).filter((p): p is ThermostatPreset => p !== null);
 }
 

@@ -4,7 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import "@material/web/button/outlined-button";
 import "@material/web/iconbutton/outlined-icon-button";
+import type { MatterNode } from "@matter-server/ws-client";
 import {
     mdiCheck,
     mdiClockOutline,
@@ -17,6 +19,7 @@ import {
 } from "@mdi/js";
 import { css, type CSSResultGroup, html, nothing, type TemplateResult } from "lit";
 import { customElement, state } from "lit/decorators.js";
+import { live } from "lit/directives/live.js";
 import "../../../components/ha-svg-icon.js";
 import { showAlertDialog } from "../../../components/dialog-box/show-dialog-box.js";
 import { handleAsync } from "../../../util/async-handler.js";
@@ -46,7 +49,9 @@ import {
     type ThermostatPreset,
 } from "../../../util/thermostat-schedule.js";
 import {
-    isTSUGGESTActive,
+    clampExpirationMinutes,
+    MAX_EXPIRATION_MINUTES,
+    MIN_EXPIRATION_MINUTES,
     readCurrentThermostatSuggestion,
     readMaxThermostatSuggestions,
     readThermostatSuggestionNotFollowingReasons,
@@ -60,9 +65,7 @@ import { registerClusterCommands } from "../registry.js";
 
 const HOUR_TICKS = [0, 4, 8, 12, 16, 20, 24];
 
-// AddThermostatSuggestion's ExpirationInMinutes constraint (Matter spec §4.3.7.9).
-const MIN_EXPIRATION_MINUTES = 30;
-const MAX_EXPIRATION_MINUTES = 1440;
+const DEFAULT_EXPIRATION_MINUTES = 60;
 
 @customElement("thermostat-cluster-commands")
 class ThermostatClusterCommands extends BaseClusterCommands {
@@ -71,9 +74,16 @@ class ThermostatClusterCommands extends BaseClusterCommands {
     private _scheduleContext?: string;
 
     @state() private _addPresetHandle: string | null = null;
-    @state() private _addExpirationMinutes = 60;
-    @state() private _addBusy = false;
-    @state() private _removeBusy: Record<number, boolean> = {};
+    @state() private _addExpirationMinutes = DEFAULT_EXPIRATION_MINUTES;
+    @state() private _addExpirationInput = String(DEFAULT_EXPIRATION_MINUTES);
+
+    /**
+     * In-flight invokes, identified by operation id rather than a boolean: the panel is reused across
+     * navigations, so a settling promise must only clear the flag it set itself.
+     */
+    @state() private _addOperation: number | null = null;
+    @state() private _removeOperations: Record<number, number> = {};
+    private _operationCounter = 0;
 
     override willUpdate(changedProperties: Map<string, unknown>) {
         super.willUpdate(changedProperties);
@@ -83,8 +93,10 @@ class ThermostatClusterCommands extends BaseClusterCommands {
             this._selectedHandle = null;
             this._colorMode = "heat";
             this._addPresetHandle = null;
-            this._addExpirationMinutes = 60;
-            this._removeBusy = {};
+            this._addExpirationMinutes = DEFAULT_EXPIRATION_MINUTES;
+            this._addExpirationInput = String(DEFAULT_EXPIRATION_MINUTES);
+            this._addOperation = null;
+            this._removeOperations = {};
         }
         this._scheduleContext = context;
     }
@@ -95,14 +107,14 @@ class ThermostatClusterCommands extends BaseClusterCommands {
         return html`
             ${isFeatureActive(this.node, this.endpoint, "MSCH") ? this._renderSchedulePanel() : nothing}
             ${isFeatureActive(this.node, this.endpoint, "PRES") ? this._renderPresetsPanel() : nothing}
-            ${isTSUGGESTActive(this.node, this.endpoint) ? this._renderSuggestionsPanel() : nothing}
+            ${isFeatureActive(this.node, this.endpoint, "TSUGGEST") ? this._renderSuggestionsPanel() : nothing}
         `;
     }
 
     private _renderSchedulePanel(): TemplateResult {
         const schedules = readSchedules(this.node, this.endpoint);
         const activeHandle = readActiveScheduleHandle(this.node, this.endpoint);
-        const presets = readPresets(this.node, this.endpoint);
+        const presets = readPresets(this.node, this.endpoint) ?? [];
 
         const pickedSchedule =
             (this._selectedHandle !== null ? schedules?.find(s => s.handle === this._selectedHandle) : undefined) ??
@@ -316,13 +328,15 @@ class ThermostatClusterCommands extends BaseClusterCommands {
                 </summary>
                 <div class="command-content">
                     ${
-                        presets.length === 0
-                            ? html`<p class="empty">No presets configured.</p>`
-                            : html`
-                                  <ul class="preset-list">
-                                      ${presets.map(p => this._renderPresetRow(p, p.handle === activeHandle))}
-                                  </ul>
-                              `
+                        presets === undefined
+                            ? html`<p class="empty">Presets attribute not available.</p>`
+                            : presets.length === 0
+                              ? html`<p class="empty">No presets configured.</p>`
+                              : html`
+                                    <ul class="preset-list">
+                                        ${presets.map(p => this._renderPresetRow(p, p.handle === activeHandle))}
+                                    </ul>
+                                `
                     }
                 </div>
             </details>
@@ -355,7 +369,8 @@ class ThermostatClusterCommands extends BaseClusterCommands {
         const suggestions = readThermostatSuggestions(this.node, this.endpoint);
         const current = readCurrentThermostatSuggestion(this.node, this.endpoint);
         const notFollowingReasons = readThermostatSuggestionNotFollowingReasons(this.node, this.endpoint);
-        const presets = readPresets(this.node, this.endpoint);
+        const presets = readPresets(this.node, this.endpoint) ?? [];
+        const atCapacity = maxSuggestions !== null && suggestions !== undefined && suggestions.length >= maxSuggestions;
 
         return html`
             <details class="command-panel" open>
@@ -388,7 +403,7 @@ class ThermostatClusterCommands extends BaseClusterCommands {
                     }
                     ${
                         suggestions === undefined
-                            ? nothing
+                            ? html`<p class="empty">ThermostatSuggestions attribute not available.</p>`
                             : html`
                                   <div class="transitions-header">
                                       QUEUE
@@ -411,7 +426,7 @@ class ThermostatClusterCommands extends BaseClusterCommands {
                                   }
                               `
                     }
-                    ${this._renderAddSuggestionForm(presets)}
+                    ${this._renderAddSuggestionForm(presets, atCapacity)}
                 </div>
             </details>
         `;
@@ -423,9 +438,10 @@ class ThermostatClusterCommands extends BaseClusterCommands {
         presets: ThermostatPreset[],
     ): TemplateResult {
         const online = this.node?.available === true;
-        const busy = this._removeBusy[suggestion.uniqueId] === true;
+        const busy = this._removeOperations[suggestion.uniqueId] !== undefined;
         return html`
             <li class="preset-row">
+                <span class="chip-handle">#${suggestion.uniqueId}</span>
                 <span class="preset-label">${resolveSuggestionLabel(suggestion, presets)}</span>
                 <span class="suggestion-window">
                     ${formatEpochTime(suggestion.effectiveTime)} – ${formatEpochTime(suggestion.expirationTime)}
@@ -450,9 +466,12 @@ class ThermostatClusterCommands extends BaseClusterCommands {
         `;
     }
 
-    private _renderAddSuggestionForm(presets: ThermostatPreset[]): TemplateResult {
+    private _renderAddSuggestionForm(presets: ThermostatPreset[], atCapacity: boolean): TemplateResult {
         const online = this.node?.available === true;
-        const selectedHandle = this._addPresetHandle ?? presets[0]?.handle ?? null;
+        // The device rewrites Presets at will, so a handle picked earlier may no longer exist.
+        const selectedHandle =
+            (presets.some(p => p.handle === this._addPresetHandle) ? this._addPresetHandle : presets[0]?.handle) ??
+            null;
         return html`
             <div class="transitions-header">ADD SUGGESTION</div>
             ${
@@ -469,7 +488,7 @@ class ThermostatClusterCommands extends BaseClusterCommands {
                               >
                                   ${presets.map(
                                       p => html`
-                                          <option value=${p.handle} ?selected=${p.handle === selectedHandle}>
+                                          <option value=${p.handle} .selected=${p.handle === selectedHandle}>
                                               ${formatPresetLabel(p)}
                                           </option>
                                       `,
@@ -481,14 +500,23 @@ class ThermostatClusterCommands extends BaseClusterCommands {
                                   type="number"
                                   min=${MIN_EXPIRATION_MINUTES}
                                   max=${MAX_EXPIRATION_MINUTES}
-                                  .value=${String(this._addExpirationMinutes)}
+                                  .value=${live(this._addExpirationInput)}
                                   @input=${(e: Event) => {
-                                      const value = parseInt((e.target as HTMLInputElement).value, 10);
-                                      if (!Number.isNaN(value)) this._addExpirationMinutes = value;
+                                      this._addExpirationInput = (e.target as HTMLInputElement).value;
+                                  }}
+                                  @change=${(e: Event) => {
+                                      const raw = (e.target as HTMLInputElement).value.trim();
+                                      this._addExpirationMinutes = clampExpirationMinutes(
+                                          raw === "" ? NaN : Number(raw),
+                                          this._addExpirationMinutes,
+                                      );
+                                      this._addExpirationInput = String(this._addExpirationMinutes);
                                   }}
                               />
                               <md-outlined-button
-                                  ?disabled=${!online || this._addBusy || selectedHandle === null}
+                                  ?disabled=${
+                                      !online || this._addOperation !== null || atCapacity || selectedHandle === null
+                                  }
                                   @click=${handleAsync(() => this._handleAddSuggestion(selectedHandle))}
                               >
                                   <ha-svg-icon slot="icon" .path=${mdiPlus}></ha-svg-icon>
@@ -500,15 +528,13 @@ class ThermostatClusterCommands extends BaseClusterCommands {
         `;
     }
 
-    private async _handleAddSuggestion(presetHandle: string) {
+    private async _handleAddSuggestion(presetHandle: string | null) {
         const node = this.node;
         const endpoint = this.endpoint;
-        if (!node) return;
-        const expirationInMinutes = Math.min(
-            MAX_EXPIRATION_MINUTES,
-            Math.max(MIN_EXPIRATION_MINUTES, this._addExpirationMinutes),
-        );
-        this._addBusy = true;
+        if (!node || presetHandle === null || this._addOperation !== null) return;
+        const expirationInMinutes = clampExpirationMinutes(this._addExpirationMinutes, DEFAULT_EXPIRATION_MINUTES);
+        const operation = ++this._operationCounter;
+        this._addOperation = operation;
         try {
             await this.client.deviceCommand(node.node_id, endpoint, THERMOSTAT_CLUSTER_ID, "AddThermostatSuggestion", {
                 presetHandle,
@@ -516,20 +542,18 @@ class ThermostatClusterCommands extends BaseClusterCommands {
                 expirationInMinutes,
             });
         } catch (err) {
-            showAlertDialog({
-                title: "Add suggestion failed",
-                text: err instanceof Error ? err.message : String(err),
-            }).catch(alertErr => console.error("Failed to show the add-suggestion error", alertErr));
+            this._reportInvokeFailure("Add suggestion failed", err, node, endpoint);
         } finally {
-            if (this.isSameContext(node, endpoint)) this._addBusy = false;
+            if (this._addOperation === operation) this._addOperation = null;
         }
     }
 
     private async _handleRemoveSuggestion(uniqueId: number) {
         const node = this.node;
         const endpoint = this.endpoint;
-        if (!node) return;
-        this._removeBusy = { ...this._removeBusy, [uniqueId]: true };
+        if (!node || this._removeOperations[uniqueId] !== undefined) return;
+        const operation = ++this._operationCounter;
+        this._removeOperations = { ...this._removeOperations, [uniqueId]: operation };
         try {
             await this.client.deviceCommand(
                 node.node_id,
@@ -541,15 +565,26 @@ class ThermostatClusterCommands extends BaseClusterCommands {
                 },
             );
         } catch (err) {
-            showAlertDialog({
-                title: "Remove suggestion failed",
-                text: err instanceof Error ? err.message : String(err),
-            }).catch(alertErr => console.error("Failed to show the remove-suggestion error", alertErr));
+            this._reportInvokeFailure("Remove suggestion failed", err, node, endpoint);
         } finally {
-            if (this.isSameContext(node, endpoint)) {
-                this._removeBusy = { ...this._removeBusy, [uniqueId]: false };
+            if (this._removeOperations[uniqueId] === operation) {
+                const pending = { ...this._removeOperations };
+                delete pending[uniqueId];
+                this._removeOperations = pending;
             }
         }
+    }
+
+    /** Only alerts while the panel still shows the node the invoke was sent to; the dialog names no device. */
+    private _reportInvokeFailure(title: string, err: unknown, node: MatterNode, endpoint: number) {
+        if (!this.isSameContext(node, endpoint)) {
+            console.error(`${title} (panel moved on)`, err);
+            return;
+        }
+        showAlertDialog({
+            title,
+            text: err instanceof Error ? err.message : String(err),
+        }).catch(alertErr => console.error(`Failed to show the "${title}" dialog`, alertErr));
     }
 
     /** A value the device did not report for this transition comes from its preset, so it is marked as derived. */
@@ -581,6 +616,12 @@ class ThermostatClusterCommands extends BaseClusterCommands {
     static override styles: CSSResultGroup = [
         BaseClusterCommands.styles,
         css`
+            :host {
+                display: flex;
+                flex-direction: column;
+                gap: 12px;
+            }
+
             .feature-map-badge {
                 margin-left: auto;
                 font-size: 0.75rem;
@@ -842,8 +883,13 @@ class ThermostatClusterCommands extends BaseClusterCommands {
                 gap: 4px;
             }
 
+            .preset-setpoints ha-svg-icon {
+                --mdc-icon-size: 16px;
+            }
+
             .preset-row md-outlined-icon-button {
-                --md-outlined-icon-button-container-size: 32px;
+                --md-outlined-icon-button-container-height: 32px;
+                --md-outlined-icon-button-container-width: 32px;
                 --md-outlined-icon-button-icon-size: 16px;
                 flex-shrink: 0;
             }
@@ -896,7 +942,8 @@ class ThermostatClusterCommands extends BaseClusterCommands {
     ];
 }
 
-registerClusterCommands(THERMOSTAT_CLUSTER_ID, "thermostat-cluster-commands");
+// The panels visualise cached attributes, so they stay useful offline; the invoke controls guard on `available`.
+registerClusterCommands(THERMOSTAT_CLUSTER_ID, "thermostat-cluster-commands", { renderWhenOffline: true });
 
 declare global {
     interface HTMLElementTagNameMap {

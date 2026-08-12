@@ -13,6 +13,7 @@ import {
     firstClaimedDay,
     formatDayOfWeek,
     formatHandleShort,
+    formatPresetLabel,
     formatMinutes,
     formatSegmentTooltip,
     formatSetpoint,
@@ -110,6 +111,28 @@ describe("thermostat-schedule util", () => {
         });
         it("is false when FeatureMap is absent", () => {
             expect(isFeatureActive(node({}), 6, "MSCH")).to.equal(false);
+        });
+        it("resolves PRES and TSUGGEST against the real FeatureMap", () => {
+            const presOnly = node({ "6/513/65532": 1 << 8 });
+            expect(isFeatureActive(presOnly, 6, "PRES")).to.equal(true);
+            expect(isFeatureActive(presOnly, 6, "TSUGGEST")).to.equal(false);
+            expect(isFeatureActive(node({ "6/513/65532": 1 << 10 }), 6, "TSUGGEST")).to.equal(true);
+        });
+    });
+
+    describe("formatPresetLabel", () => {
+        it("prefers the preset's own name", () => {
+            expect(formatPresetLabel(preset(HANDLE_1, { name: "Night", scenario: 3 }))).to.equal("Night");
+        });
+        it("falls back to the PresetScenario label", () => {
+            expect(formatPresetLabel(preset(HANDLE_1, { scenario: 3 }))).to.equal("Sleep");
+            expect(formatPresetLabel(preset(HANDLE_1, { scenario: 254 }))).to.equal("User Defined");
+        });
+        it("names an unknown scenario by its numeric value", () => {
+            expect(formatPresetLabel(preset(HANDLE_1, { scenario: 42 }))).to.equal("Scenario 42");
+        });
+        it("falls back to the short handle when neither name nor scenario is reported", () => {
+            expect(formatPresetLabel(preset(HANDLE_1))).to.equal("0x01");
         });
     });
 
@@ -243,8 +266,9 @@ describe("thermostat-schedule util", () => {
                 },
             ]);
         });
-        it("returns empty when absent", () => {
-            expect(readPresets(node({}), 6)).to.deep.equal([]);
+        it("distinguishes an absent attribute from an empty list", () => {
+            expect(readPresets(node({}), 6)).to.equal(undefined);
+            expect(readPresets(node({ "6/513/80": [] }), 6)).to.deep.equal([]);
         });
     });
 

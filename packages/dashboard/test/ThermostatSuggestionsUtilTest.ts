@@ -7,7 +7,9 @@
 import { MatterNode, type MatterNodeData } from "@matter-server/ws-client";
 import type { ThermostatPreset } from "../src/util/thermostat-schedule.js";
 import {
-    isTSUGGESTActive,
+    clampExpirationMinutes,
+    MAX_EXPIRATION_MINUTES,
+    MIN_EXPIRATION_MINUTES,
     readCurrentThermostatSuggestion,
     readMaxThermostatSuggestions,
     readThermostatSuggestionNotFollowingReasons,
@@ -45,15 +47,20 @@ function preset(handle: string, overrides: Partial<ThermostatPreset> = {}): Ther
 }
 
 describe("thermostat-suggestions util", () => {
-    describe("isTSUGGESTActive", () => {
-        it("is true when the TSUGGEST bit is set on the real Thermostat FeatureMap", () => {
-            expect(isTSUGGESTActive(node({ "6/513/65532": 1 << 10 }), 6)).to.equal(true);
+    describe("clampExpirationMinutes", () => {
+        it("keeps an in-range value", () => {
+            expect(clampExpirationMinutes(60, 90)).to.equal(60);
         });
-        it("is false when TSUGGEST is not set", () => {
-            expect(isTSUGGESTActive(node({ "6/513/65532": 1 << 8 }), 6)).to.equal(false);
+        it("clamps to the ExpirationInMinutes constraint", () => {
+            expect(clampExpirationMinutes(5, 90)).to.equal(MIN_EXPIRATION_MINUTES);
+            expect(clampExpirationMinutes(10_000, 90)).to.equal(MAX_EXPIRATION_MINUTES);
         });
-        it("is false when FeatureMap is absent", () => {
-            expect(isTSUGGESTActive(node({}), 6)).to.equal(false);
+        it("rounds fractional input", () => {
+            expect(clampExpirationMinutes(60.6, 90)).to.equal(61);
+        });
+        it("falls back to the previous value for a cleared or non-numeric input", () => {
+            expect(clampExpirationMinutes(NaN, 90)).to.equal(90);
+            expect(clampExpirationMinutes(Infinity, 90)).to.equal(90);
         });
     });
 
