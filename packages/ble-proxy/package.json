@@ -31,10 +31,10 @@
     "dependencies": {
         "@matter-server/ws-controller": "*",
         "@matter/main": "0.17.9",
-        "ws": "^8.21.2"
+        "ws": "^8.21.3"
     },
     "devDependencies": {
-        "@types/node": "^26.1.2",
+        "@types/node": "^26.2.0",
         "@types/ws": "^8.18.1"
     },
     "optionalDependencies": {
