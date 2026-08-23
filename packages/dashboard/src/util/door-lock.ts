@@ -19,6 +19,7 @@ const ATTR_DOOR_STATE = 0x03;
 const ATTR_NUMBER_OF_TOTAL_USERS_SUPPORTED = 0x11;
 const ATTR_NUMBER_OF_WEEK_DAY_SCHEDULES_SUPPORTED_PER_USER = 0x14;
 const ATTR_NUMBER_OF_YEAR_DAY_SCHEDULES_SUPPORTED_PER_USER = 0x15;
+const ATTR_NUMBER_OF_HOLIDAY_SCHEDULES_SUPPORTED = 0x16;
 const ATTR_REQUIRE_PIN_FOR_REMOTE_OPERATION = 0x33;
 const ATTR_ACCEPTED_COMMAND_LIST = 0xfff9;
 const ATTR_FEATURE_MAP = 0xfffc;
@@ -31,6 +32,9 @@ export const SCHEDULE_INDEX_ALL = 0xfe;
 
 /** UserStatusEnum.Available — a slot the lock reports as free (spec §5.2.6.14). */
 const USER_STATUS_AVAILABLE = 0;
+
+/** DataOperationTypeEnum.Add — the SetUser operation that creates a new user (spec §5.2.6.4). */
+const OPERATION_TYPE_ADD = 0;
 
 /** Days in display order (Mon..Sun) mapped to their DaysMaskBitmap bit (Sunday=0 .. Saturday=6). */
 export const DAY_BITS = [1, 2, 3, 4, 5, 6, 0];
@@ -77,6 +81,18 @@ const USER_STATUS_LABELS: Record<number, string> = {
     3: "Disabled",
 };
 
+/** OperatingModeEnum values a Holiday schedule may switch the lock to (spec §5.2.6.15). */
+const OPERATING_MODE_LABELS: Record<number, string> = {
+    0: "Normal",
+    1: "Vacation",
+    2: "Privacy",
+    3: "No Remote Lock/Unlock",
+    4: "Passage",
+};
+
+/** All OperatingModeEnum values, in display order, for a Holiday schedule's mode picker. */
+export const OPERATING_MODES = [0, 1, 2, 3, 4];
+
 const USER_TYPE_LABELS: Record<number, string> = {
     0: "Unrestricted",
     1: "Year Day Schedule",
@@ -121,6 +137,23 @@ export interface YearDayScheduleSlot {
     yearDayIndex: number;
     status: number;
     schedule: YearDaySchedule | null;
+}
+
+/**
+ * A Holiday schedule slot: unlike WDSCH/YDSCH, holidays are not scoped to a user — they apply to the whole
+ * lock — and switch it to `operatingMode` for the duration of the date range.
+ */
+export interface HolidaySchedule {
+    holidayIndex: number;
+    localStartTime: number;
+    localEndTime: number;
+    operatingMode: number;
+}
+
+export interface HolidayScheduleSlot {
+    holidayIndex: number;
+    status: number;
+    schedule: HolidaySchedule | null;
 }
 
 export interface DoorLockUser {
@@ -190,6 +223,11 @@ export function readYearDaySchedulesPerUser(node: MatterNode, endpoint: number):
     return readNumberAttr(node, endpoint, ATTR_NUMBER_OF_YEAR_DAY_SCHEDULES_SUPPORTED_PER_USER);
 }
 
+/** Unlike WDSCH/YDSCH, HolidaySchedules is a lock-wide table: it is not scoped to a user. */
+export function readHolidaySchedulesSupported(node: MatterNode, endpoint: number): number | null {
+    return readNumberAttr(node, endpoint, ATTR_NUMBER_OF_HOLIDAY_SCHEDULES_SUPPORTED);
+}
+
 export function requiresPinForRemoteOperation(node: MatterNode, endpoint: number): boolean {
     return readAttr(node, endpoint, ATTR_REQUIRE_PIN_FOR_REMOTE_OPERATION) === true;
 }
@@ -207,6 +245,11 @@ export function formatLockType(type: number | null): string | null {
 export function formatDoorState(state: number | null): string | null {
     if (state === null) return null;
     return DOOR_STATE_LABELS[state] ?? `State ${state}`;
+}
+
+export function formatOperatingMode(mode: number | null): string | null {
+    if (mode === null) return null;
+    return OPERATING_MODE_LABELS[mode] ?? `Mode ${mode}`;
 }
 
 export function formatUserStatus(status: number | null): string | null {
@@ -268,6 +311,15 @@ export function weekDayScheduleRangeError(schedule: Omit<WeekDaySchedule, "weekD
 
 /** Why the date range cannot be set as entered, or null when it is valid. */
 export function yearDayScheduleRangeError(schedule: Omit<YearDaySchedule, "yearDayIndex">): string | null {
+    if (!Number.isFinite(schedule.localStartTime) || !Number.isFinite(schedule.localEndTime)) {
+        return "Enter both a start and an end date.";
+    }
+    if (schedule.localEndTime <= schedule.localStartTime) return "The end date must be later than the start date.";
+    return null;
+}
+
+/** Why the holiday schedule cannot be set as entered, or null when it is valid. */
+export function holidayScheduleRangeError(schedule: Omit<HolidaySchedule, "holidayIndex">): string | null {
     if (!Number.isFinite(schedule.localStartTime) || !Number.isFinite(schedule.localEndTime)) {
         return "Enter both a start and an end date.";
     }
@@ -354,6 +406,27 @@ export function decodeYearDayScheduleResponse(response: unknown, yearDayIndex: n
             yearDayIndex: (obj !== null ? pickNumber(obj, "yearDayIndex") : null) ?? yearDayIndex,
             localStartTime,
             localEndTime,
+        },
+    };
+}
+
+export function decodeHolidayScheduleResponse(response: unknown, holidayIndex: number): HolidayScheduleSlot {
+    const obj = asObject(response);
+    const status = (obj !== null ? pickNumber(obj, "status") : null) ?? 0;
+    const localStartTime = obj !== null ? pickNumber(obj, "localStartTime") : null;
+    const localEndTime = obj !== null ? pickNumber(obj, "localEndTime") : null;
+    const operatingMode = obj !== null ? pickNumber(obj, "operatingMode") : null;
+    if (status !== 0 || localStartTime === null || localEndTime === null || operatingMode === null) {
+        return { holidayIndex, status, schedule: null };
+    }
+    return {
+        holidayIndex,
+        status,
+        schedule: {
+            holidayIndex: (obj !== null ? pickNumber(obj, "holidayIndex") : null) ?? holidayIndex,
+            localStartTime,
+            localEndTime,
+            operatingMode,
         },
     };
 }
@@ -467,6 +540,41 @@ export async function clearYearDaySchedule(
     });
 }
 
+export async function readHolidaySchedule(
+    client: MatterClient,
+    nodeId: number | bigint,
+    endpoint: number,
+    holidayIndex: number,
+): Promise<HolidayScheduleSlot> {
+    const response = await client.deviceCommand(nodeId, endpoint, DOOR_LOCK_CLUSTER_ID, "GetHolidaySchedule", {
+        holidayIndex,
+    });
+    return decodeHolidayScheduleResponse(response, holidayIndex);
+}
+
+export async function writeHolidaySchedule(
+    client: MatterClient,
+    nodeId: number | bigint,
+    endpoint: number,
+    schedule: HolidaySchedule,
+): Promise<void> {
+    await client.deviceCommand(nodeId, endpoint, DOOR_LOCK_CLUSTER_ID, "SetHolidaySchedule", {
+        holidayIndex: schedule.holidayIndex,
+        localStartTime: schedule.localStartTime,
+        localEndTime: schedule.localEndTime,
+        operatingMode: schedule.operatingMode,
+    });
+}
+
+export async function clearHolidaySchedule(
+    client: MatterClient,
+    nodeId: number | bigint,
+    endpoint: number,
+    holidayIndex: number,
+): Promise<void> {
+    await client.deviceCommand(nodeId, endpoint, DOOR_LOCK_CLUSTER_ID, "ClearHolidaySchedule", { holidayIndex });
+}
+
 export async function readUser(
     client: MatterClient,
     nodeId: number | bigint,
@@ -500,6 +608,42 @@ export async function readUsers(
         index = user.nextUserIndex;
     }
     return users;
+}
+
+/** The lowest user index in `[1, maxUsers]` not already occupied, or null when the user database is full. */
+export function nextFreeUserIndex(users: DoorLockUser[], maxUsers: number): number | null {
+    const occupied = new Set(users.map(user => user.userIndex));
+    for (let index = 1; index <= maxUsers; index++) {
+        if (!occupied.has(index)) return index;
+    }
+    return null;
+}
+
+export async function addUser(
+    client: MatterClient,
+    nodeId: number | bigint,
+    endpoint: number,
+    userIndex: number,
+    userName: string,
+): Promise<void> {
+    await client.deviceCommand(nodeId, endpoint, DOOR_LOCK_CLUSTER_ID, "SetUser", {
+        operationType: OPERATION_TYPE_ADD,
+        userIndex,
+        userName,
+        userUniqueId: null,
+        userStatus: null,
+        userType: null,
+        credentialRule: null,
+    });
+}
+
+export async function removeUser(
+    client: MatterClient,
+    nodeId: number | bigint,
+    endpoint: number,
+    userIndex: number,
+): Promise<void> {
+    await client.deviceCommand(nodeId, endpoint, DOOR_LOCK_CLUSTER_ID, "ClearUser", { userIndex });
 }
 
 export async function lockDoor(

@@ -10,6 +10,8 @@ import "@material/web/iconbutton/outlined-icon-button";
 import "@material/web/progress/circular-progress";
 import type { MatterNode } from "@matter-server/ws-client";
 import {
+    mdiAccountPlusOutline,
+    mdiAccountRemoveOutline,
     mdiCalendarRange,
     mdiCalendarWeek,
     mdiClose,
@@ -28,7 +30,9 @@ import { showAlertDialog, showPromptDialog } from "../../../components/dialog-bo
 import "../../../components/ha-svg-icon.js";
 import { handleAsync } from "../../../util/async-handler.js";
 import {
+    addUser,
     buildDaySegments,
+    clearHolidaySchedule,
     clearWeekDaySchedule,
     clearYearDaySchedule,
     DAY_BITS,
@@ -39,22 +43,29 @@ import {
     formatLocalDateTime,
     formatLockState,
     formatLockType,
+    formatOperatingMode,
     formatTimeOfDay,
     formatUserLabel,
     formatUserStatus,
     formatUserType,
     fromDateTimeInputValue,
+    holidayScheduleRangeError,
     isFeatureActive,
     lockDoor,
     maskHasDay,
+    nextFreeUserIndex,
+    OPERATING_MODES,
     parseTimeOfDay,
     readActuatorEnabled,
     readDoorState,
+    readHolidaySchedule,
+    readHolidaySchedulesSupported,
     readLockState,
     readLockType,
     readTotalUsersSupported,
     readUser,
     readUsers,
+    removeUser,
     readWeekDaySchedule,
     readWeekDaySchedulesPerUser,
     readYearDaySchedule,
@@ -68,10 +79,12 @@ import {
     unlockDoor,
     unlockWithTimeout,
     weekDayScheduleRangeError,
+    writeHolidaySchedule,
     writeWeekDaySchedule,
     writeYearDaySchedule,
     yearDayScheduleRangeError,
     type DoorLockUser,
+    type HolidayScheduleSlot,
     type WeekDayScheduleSlot,
     type YearDayScheduleSlot,
 } from "../../../util/door-lock.js";
@@ -106,12 +119,20 @@ interface YearDayEditor {
     end: string;
 }
 
-type ScheduleEditor = WeekDayEditor | YearDayEditor;
+interface HolidayEditor {
+    kind: "holiday";
+    index: number;
+    start: string;
+    end: string;
+    operatingMode: number;
+}
+
+type ScheduleEditor = WeekDayEditor | YearDayEditor | HolidayEditor;
 
 /**
  * Command panel for the DoorLock cluster (ID: 0x0101 / 257).
- * Operates the bolt and manages the WDSCH and YDSCH access schedules of a user picked from the lock's
- * user database, which the schedule commands address by index.
+ * Operates the bolt, manages the WDSCH and YDSCH access schedules of a user picked from the lock's user
+ * database, and the lock-wide HDSCH holiday schedule table (not scoped to a user).
  */
 @customElement("door-lock-cluster-commands")
 class DoorLockClusterCommands extends BaseClusterCommands {
@@ -119,19 +140,33 @@ class DoorLockClusterCommands extends BaseClusterCommands {
     @state() private _selectedUserIndex: number | null = null;
     @state() private _weekDaySlots?: WeekDayScheduleSlot[];
     @state() private _yearDaySlots?: YearDayScheduleSlot[];
+    @state() private _holidaySlots?: HolidayScheduleSlot[];
     @state() private _loadingUsers = false;
     @state() private _loadingSchedules = false;
+    @state() private _loadingHoliday = false;
     @state() private _loadError?: string;
     @state() private _editor: ScheduleEditor | null = null;
     @state() private _editorError?: string;
+    @state() private _addingUser = false;
+    @state() private _newUserName = "";
+    @state() private _userEditorError?: string;
+    @state() private _showEmptyWeekDay = false;
+    @state() private _showEmptyYearDay = false;
+    @state() private _showEmptyHoliday = false;
     @state() private _busy = false;
     @state() private _pinCode = "";
     @state() private _unlockTimeout = String(DEFAULT_UNLOCK_TIMEOUT_SECONDS);
 
     #context?: string;
     #usersRequested = false;
+    #holidayRequested = false;
     /** Bumped whenever the panel's node, endpoint or selected user changes, so stale loads drop their results. */
     #generation = 0;
+    /**
+     * Bumped only on a node/endpoint context change (unlike #generation, not on a mere user re-selection): a
+     * lock/unlock or schedule command run against the old context must not clear `_busy` for a new one.
+     */
+    #busyGeneration = 0;
 
     override updated(changedProperties: Map<string, unknown>) {
         super.updated(changedProperties);
@@ -141,30 +176,87 @@ class DoorLockClusterCommands extends BaseClusterCommands {
         if (this.#context !== context) {
             this.#context = context;
             this.#generation++;
+            this.#busyGeneration++;
             this.#usersRequested = false;
+            this.#holidayRequested = false;
             this._users = undefined;
             this._selectedUserIndex = null;
             this._weekDaySlots = undefined;
             this._yearDaySlots = undefined;
+            this._holidaySlots = undefined;
             this._loadingUsers = false;
             this._loadingSchedules = false;
+            this._loadingHoliday = false;
             this._loadError = undefined;
             this._editor = null;
             this._editorError = undefined;
+            this._addingUser = false;
+            this._newUserName = "";
+            this._userEditorError = undefined;
+            this._showEmptyWeekDay = false;
+            this._showEmptyYearDay = false;
+            this._showEmptyHoliday = false;
             this._busy = false;
             this._pinCode = "";
             this._unlockTimeout = String(DEFAULT_UNLOCK_TIMEOUT_SECONDS);
         }
 
-        // The attribute cache fills in progressively, so the feature check may only pass on a later update.
-        if (!this.#usersRequested && this.#schedulesSupported() && isFeatureActive(this.node, this.endpoint, "USR")) {
+        // The attribute cache fills in progressively: the feature bits can resolve before the numeric
+        // capacity attributes the load depends on. Wait for those too, or the load runs once with fallback
+        // values (32 scanned users, 0 schedule slots) and #usersRequested latches true forever, so it never
+        // gets a chance to retry with the real numbers.
+        if (
+            !this.#usersRequested &&
+            this.#perUserSchedulesSupported() &&
+            isFeatureActive(this.node, this.endpoint, "USR") &&
+            this.#userCapacityReady()
+        ) {
             this.#usersRequested = true;
             handleAsync(() => this.#loadUsers())();
         }
+        // HolidaySchedules is lock-wide, not scoped to a user, so it loads independently of #loadUsers.
+        if (
+            !this.#holidayRequested &&
+            this.#holidaySupported() &&
+            readHolidaySchedulesSupported(this.node, this.endpoint) !== null
+        ) {
+            this.#holidayRequested = true;
+            handleAsync(() => this.#loadHolidaySchedules())();
+        }
+    }
+
+    /** Whether the capacity attributes #loadUsers/#loadSchedules depend on are cached yet. */
+    #userCapacityReady(): boolean {
+        if (readTotalUsersSupported(this.node, this.endpoint) === null) return false;
+        if (
+            isFeatureActive(this.node, this.endpoint, "WDSCH") &&
+            readWeekDaySchedulesPerUser(this.node, this.endpoint) === null
+        ) {
+            return false;
+        }
+        if (
+            isFeatureActive(this.node, this.endpoint, "YDSCH") &&
+            readYearDaySchedulesPerUser(this.node, this.endpoint) === null
+        ) {
+            return false;
+        }
+        return true;
     }
 
     #schedulesSupported(): boolean {
+        return (
+            isFeatureActive(this.node, this.endpoint, "WDSCH") ||
+            isFeatureActive(this.node, this.endpoint, "YDSCH") ||
+            this.#holidaySupported()
+        );
+    }
+
+    #perUserSchedulesSupported(): boolean {
         return isFeatureActive(this.node, this.endpoint, "WDSCH") || isFeatureActive(this.node, this.endpoint, "YDSCH");
+    }
+
+    #holidaySupported(): boolean {
+        return isFeatureActive(this.node, this.endpoint, "HDSCH");
     }
 
     #isCurrent(node: MatterNode, endpoint: number, generation: number): boolean {
@@ -238,6 +330,30 @@ class DoorLockClusterCommands extends BaseClusterCommands {
         }
     }
 
+    /** HolidaySchedules is a single lock-wide table, so unlike #loadSchedules this needs no userIndex. */
+    async #loadHolidaySchedules() {
+        const node = this.node;
+        const endpoint = this.endpoint;
+        const generation = this.#generation;
+        this._loadingHoliday = true;
+        this._loadError = undefined;
+        try {
+            const capacity = readHolidaySchedulesSupported(node, endpoint) ?? 0;
+            const slots = new Array<HolidayScheduleSlot>();
+            for (let index = 1; index <= capacity; index++) {
+                const slot = await readHolidaySchedule(this.client, node.node_id, endpoint, index);
+                if (!this.#isCurrent(node, endpoint, generation)) return;
+                slots.push(slot);
+            }
+            this._holidaySlots = slots;
+        } catch (error) {
+            if (!this.#isCurrent(node, endpoint, generation)) return;
+            this._loadError = errorText(error);
+        } finally {
+            if (this.#generation === generation) this._loadingHoliday = false;
+        }
+    }
+
     #selectUser(userIndex: number) {
         if (userIndex === this._selectedUserIndex) return;
         this.#generation++;
@@ -262,6 +378,7 @@ class DoorLockClusterCommands extends BaseClusterCommands {
         const endpoint = this.endpoint;
         const generation = this.#generation;
         if (this._busy) return;
+        const busyGeneration = this.#busyGeneration;
         this._busy = true;
         try {
             await run(node, endpoint);
@@ -272,7 +389,30 @@ class DoorLockClusterCommands extends BaseClusterCommands {
         } catch (error) {
             this.#reportFailure(title, error, node, endpoint);
         } finally {
-            this._busy = false;
+            // busyGeneration-scoped, not generation-scoped: a lock/endpoint switch must clear this for the
+            // new context, but merely picking a different user on the same lock must not let a second command
+            // start while this one is still in flight.
+            if (this.#busyGeneration === busyGeneration) this._busy = false;
+        }
+    }
+
+    /** Counterpart to #runScheduleCommand for the lock-wide holiday table: no user, so no generation bump needed. */
+    async #runHolidayCommand(title: string, run: (node: MatterNode, endpoint: number) => Promise<void>) {
+        const node = this.node;
+        const endpoint = this.endpoint;
+        if (this._busy) return;
+        const busyGeneration = this.#busyGeneration;
+        this._busy = true;
+        try {
+            await run(node, endpoint);
+            if (!this.isSameContext(node, endpoint)) return;
+            this._editor = null;
+            this._editorError = undefined;
+            await this.#loadHolidaySchedules();
+        } catch (error) {
+            this.#reportFailure(title, error, node, endpoint);
+        } finally {
+            if (this.#busyGeneration === busyGeneration) this._busy = false;
         }
     }
 
@@ -292,10 +432,23 @@ class DoorLockClusterCommands extends BaseClusterCommands {
         return pin === "" ? undefined : pin;
     }
 
+    /**
+     * Blocks a command locally when the lock reports RequirePinForRemoteOperation and the PIN field is
+     * empty, instead of round-tripping a request the lock will reject anyway.
+     */
+    async #missingRequiredPin(): Promise<boolean> {
+        if (this.#pinForCommand() !== undefined) return false;
+        if (!requiresPinForRemoteOperation(this.node, this.endpoint)) return false;
+        await showAlertDialog({ title: "PIN required", text: "This lock requires a PIN for remote operations." });
+        return true;
+    }
+
     async #operateLock(action: "lock" | "unlock") {
         const node = this.node;
         const endpoint = this.endpoint;
         if (this._busy) return;
+        if (await this.#missingRequiredPin()) return;
+        const busyGeneration = this.#busyGeneration;
         this._busy = true;
         try {
             const operate = action === "lock" ? lockDoor : unlockDoor;
@@ -303,7 +456,7 @@ class DoorLockClusterCommands extends BaseClusterCommands {
         } catch (error) {
             this.#reportFailure(action === "lock" ? "Lock failed" : "Unlock failed", error, node, endpoint);
         } finally {
-            this._busy = false;
+            if (this.#busyGeneration === busyGeneration) this._busy = false;
         }
     }
 
@@ -316,20 +469,50 @@ class DoorLockClusterCommands extends BaseClusterCommands {
             await showAlertDialog({ title: "Unlock failed", text: "The timeout must be 1 to 65535 seconds." });
             return;
         }
+        if (await this.#missingRequiredPin()) return;
+        const busyGeneration = this.#busyGeneration;
         this._busy = true;
         try {
             await unlockWithTimeout(this.client, node.node_id, endpoint, timeout, this.#pinForCommand());
         } catch (error) {
             this.#reportFailure("Unlock failed", error, node, endpoint);
         } finally {
-            this._busy = false;
+            if (this.#busyGeneration === busyGeneration) this._busy = false;
         }
     }
 
     #saveEditor() {
         const editor = this._editor;
+        if (editor === null) return;
+
+        if (editor.kind === "holiday") {
+            const localStartTime = fromDateTimeInputValue(editor.start);
+            const localEndTime = fromDateTimeInputValue(editor.end);
+            if (localStartTime === null || localEndTime === null) {
+                this._editorError = "Enter both a start and an end date.";
+                return;
+            }
+            const schedule = {
+                holidayIndex: editor.index,
+                localStartTime,
+                localEndTime,
+                operatingMode: editor.operatingMode,
+            };
+            const rangeError = holidayScheduleRangeError(schedule);
+            if (rangeError !== null) {
+                this._editorError = rangeError;
+                return;
+            }
+            handleAsync(() =>
+                this.#runHolidayCommand("Set holiday schedule failed", (node, endpoint) =>
+                    writeHolidaySchedule(this.client, node.node_id, endpoint, schedule),
+                ),
+            )();
+            return;
+        }
+
         const userIndex = this._selectedUserIndex;
-        if (editor === null || userIndex === null) return;
+        if (userIndex === null) return;
 
         if (editor.kind === "weekDay") {
             const start = parseTimeOfDay(editor.start);
@@ -381,7 +564,16 @@ class DoorLockClusterCommands extends BaseClusterCommands {
     async #clearWeekDay(weekDayIndex: number) {
         const userIndex = this._selectedUserIndex;
         if (userIndex === null) return;
-        if (weekDayIndex === SCHEDULE_INDEX_ALL && !(await this.#confirmClearAll("week day"))) return;
+        if (weekDayIndex === SCHEDULE_INDEX_ALL) {
+            // Captured before the confirmation dialog's await: userIndex must not survive a context or
+            // selection change made while the dialog was open — confirming would then clear the wrong
+            // user's (or the wrong lock's) schedules.
+            const node = this.node;
+            const endpoint = this.endpoint;
+            const generation = this.#generation;
+            if (!(await this.#confirmClearAll("week day"))) return;
+            if (!this.#isCurrent(node, endpoint, generation)) return;
+        }
         await this.#runScheduleCommand("Clear week day schedule failed", (node, endpoint) =>
             clearWeekDaySchedule(this.client, node.node_id, endpoint, userIndex, weekDayIndex),
         );
@@ -390,7 +582,13 @@ class DoorLockClusterCommands extends BaseClusterCommands {
     async #clearYearDay(yearDayIndex: number) {
         const userIndex = this._selectedUserIndex;
         if (userIndex === null) return;
-        if (yearDayIndex === SCHEDULE_INDEX_ALL && !(await this.#confirmClearAll("year day"))) return;
+        if (yearDayIndex === SCHEDULE_INDEX_ALL) {
+            const node = this.node;
+            const endpoint = this.endpoint;
+            const generation = this.#generation;
+            if (!(await this.#confirmClearAll("year day"))) return;
+            if (!this.#isCurrent(node, endpoint, generation)) return;
+        }
         await this.#runScheduleCommand("Clear year day schedule failed", (node, endpoint) =>
             clearYearDaySchedule(this.client, node.node_id, endpoint, userIndex, yearDayIndex),
         );
@@ -403,6 +601,100 @@ class DoorLockClusterCommands extends BaseClusterCommands {
             text: `Every ${kind} schedule of ${user ? formatUserLabel(user) : "this user"} will be removed from the lock.`,
             confirmText: "Clear all",
         });
+    }
+
+    async #clearHoliday(holidayIndex: number) {
+        if (holidayIndex === SCHEDULE_INDEX_ALL) {
+            const node = this.node;
+            const endpoint = this.endpoint;
+            if (!(await this.#confirmClearAllHoliday())) return;
+            if (!this.isSameContext(node, endpoint)) return;
+        }
+        await this.#runHolidayCommand("Clear holiday schedule failed", (node, endpoint) =>
+            clearHolidaySchedule(this.client, node.node_id, endpoint, holidayIndex),
+        );
+    }
+
+    #confirmClearAllHoliday(): Promise<boolean> {
+        return showPromptDialog({
+            title: "Clear all holiday schedules",
+            text: "Every holiday schedule will be removed from the lock. This applies lock-wide, not to a single user.",
+            confirmText: "Clear all",
+        });
+    }
+
+    #startAddUser() {
+        this._userEditorError = undefined;
+        this._newUserName = "";
+        this._addingUser = true;
+    }
+
+    #cancelAddUser() {
+        this._addingUser = false;
+        this._userEditorError = undefined;
+    }
+
+    async #saveNewUser() {
+        const node = this.node;
+        const endpoint = this.endpoint;
+        const generation = this.#generation;
+        const userName = this._newUserName.trim();
+        if (userName === "") {
+            this._userEditorError = "Enter a name for the user.";
+            return;
+        }
+        const maxUsers = readTotalUsersSupported(node, endpoint) ?? USER_SCAN_FALLBACK;
+        const userIndex = nextFreeUserIndex(this._users ?? [], maxUsers);
+        if (userIndex === null) {
+            this._userEditorError = "The lock's user database is full.";
+            return;
+        }
+        if (this._busy) return;
+        const busyGeneration = this.#busyGeneration;
+        this._busy = true;
+        try {
+            await addUser(this.client, node.node_id, endpoint, userIndex, userName);
+            if (!this.#isCurrent(node, endpoint, generation)) return;
+            this._addingUser = false;
+            this._newUserName = "";
+            this._userEditorError = undefined;
+            this.#usersRequested = true;
+            await this.#loadUsers();
+        } catch (error) {
+            if (!this.#isCurrent(node, endpoint, generation)) return;
+            this._userEditorError = errorText(error);
+        } finally {
+            if (this.#busyGeneration === busyGeneration) this._busy = false;
+        }
+    }
+
+    async #removeSelectedUser() {
+        const userIndex = this._selectedUserIndex;
+        if (userIndex === null) return;
+        // Captured before the confirmation dialog's await: if the panel moves to a different lock while it
+        // is open, confirming must not delete a same-numbered user on the newly displayed lock.
+        const node = this.node;
+        const endpoint = this.endpoint;
+        const user = this._users?.find(candidate => candidate.userIndex === userIndex);
+        const confirmed = await showPromptDialog({
+            title: "Remove user",
+            text: `${user ? formatUserLabel(user) : "This user"} and all of its schedules will be removed from the lock.`,
+            confirmText: "Remove",
+        });
+        if (!confirmed || !this.isSameContext(node, endpoint)) return;
+        if (this._busy) return;
+        const busyGeneration = this.#busyGeneration;
+        this._busy = true;
+        try {
+            await removeUser(this.client, node.node_id, endpoint, userIndex);
+            if (!this.isSameContext(node, endpoint)) return;
+            this.#usersRequested = true;
+            await this.#loadUsers();
+        } catch (error) {
+            this.#reportFailure("Remove user failed", error, node, endpoint);
+        } finally {
+            if (this.#busyGeneration === busyGeneration) this._busy = false;
+        }
     }
 
     override render() {
@@ -498,42 +790,43 @@ class DoorLockClusterCommands extends BaseClusterCommands {
     #renderSchedulePanel(): TemplateResult {
         const weekDayActive = isFeatureActive(this.node, this.endpoint, "WDSCH");
         const yearDayActive = isFeatureActive(this.node, this.endpoint, "YDSCH");
+        const holidayActive = this.#holidaySupported();
         const userActive = isFeatureActive(this.node, this.endpoint, "USR");
-        const features = [weekDayActive ? "WDSCH" : undefined, yearDayActive ? "YDSCH" : undefined]
-            .filter(code => code !== undefined)
-            .join(" · ");
+        const perUserActive = weekDayActive || yearDayActive;
+        const features = [weekDayActive && "WDSCH", yearDayActive && "YDSCH", holidayActive && "HDSCH"].filter(
+            (code): code is string => code !== false,
+        );
 
         return html`
             <details class="command-panel" open>
                 <summary>
                     <ha-svg-icon .path=${mdiCalendarWeek}></ha-svg-icon>
                     Access Schedules
-                    <span class="feature-map-badge">FeatureMap: ${features}</span>
+                    <span class="feature-map-badge">FeatureMap: ${features.join(" · ")}</span>
                 </summary>
                 <div class="command-content">
+                    ${this._loadError !== undefined ? html`<p class="error">${this._loadError}</p>` : nothing}
                     ${
-                        userActive
-                            ? html`
-                                  ${this.#renderUserSelector()}
-                                  ${
-                                      this._loadError !== undefined
-                                          ? html`<p class="error">${this._loadError}</p>`
-                                          : nothing
-                                  }
-                                  ${
-                                      this._selectedUserIndex === null
-                                          ? nothing
-                                          : html`
-                                                ${weekDayActive ? this.#renderWeekDaySection() : nothing}
-                                                ${yearDayActive ? this.#renderYearDaySection() : nothing}
-                                            `
-                                  }
-                              `
-                            : html`<p class="empty">
-                                  Schedules are assigned per user, which this lock does not expose: it reports no User
-                                  (USR) feature, so its user database cannot be read.
-                              </p>`
+                        !perUserActive
+                            ? nothing
+                            : userActive
+                              ? html`
+                                    ${this.#renderUserSelector()}
+                                    ${
+                                        this._selectedUserIndex === null
+                                            ? nothing
+                                            : html`
+                                                  ${weekDayActive ? this.#renderWeekDaySection() : nothing}
+                                                  ${yearDayActive ? this.#renderYearDaySection() : nothing}
+                                              `
+                                    }
+                                `
+                              : html`<p class="empty">
+                                    Schedules are assigned per user, which this lock does not expose: it reports no
+                                    User (USR) feature, so its user database cannot be read.
+                                </p>`
                     }
+                    ${holidayActive ? this.#renderHolidaySection() : nothing}
                 </div>
             </details>
         `;
@@ -547,28 +840,47 @@ class DoorLockClusterCommands extends BaseClusterCommands {
                 Reading the user database…
             </div>`;
         }
-        if (users !== undefined && users.length === 0) {
-            return html`<p class="empty">No users are programmed on this lock.</p>`;
-        }
+
+        const busy = this._busy || this._loadingUsers || this._loadingSchedules;
+        const maxUsers = readTotalUsersSupported(this.node, this.endpoint) ?? USER_SCAN_FALLBACK;
+        const canAddUser = users !== undefined && nextFreeUserIndex(users, maxUsers) !== null;
+
         return html`
             <div class="command-row">
-                <label for="doorLockUser">User:</label>
-                <select
-                    id="doorLockUser"
-                    ?disabled=${this._busy || this._loadingUsers || this._loadingSchedules}
-                    @change=${(event: Event) => this.#selectUser(Number((event.target as HTMLSelectElement).value))}
-                >
-                    ${(users ?? []).map(
-                        user => html`
-                            <option value=${user.userIndex} .selected=${user.userIndex === this._selectedUserIndex}>
-                                #${user.userIndex} · ${formatUserLabel(user)}
-                            </option>
-                        `,
-                    )}
-                </select>
-                ${this.#renderUserBadges()}
+                ${
+                    users === undefined || users.length === 0
+                        ? html`<span class="empty">No users are programmed on this lock.</span>`
+                        : html`
+                              <label for="doorLockUser">User:</label>
+                              <select
+                                  id="doorLockUser"
+                                  ?disabled=${busy}
+                                  @change=${(event: Event) =>
+                                      this.#selectUser(Number((event.target as HTMLSelectElement).value))}
+                              >
+                                  ${users.map(
+                                      user => html`
+                                          <option
+                                              value=${user.userIndex}
+                                              .selected=${user.userIndex === this._selectedUserIndex}
+                                          >
+                                              #${user.userIndex} · ${formatUserLabel(user)}
+                                          </option>
+                                      `,
+                                  )}
+                              </select>
+                              ${this.#renderUserBadges()}
+                              <md-outlined-icon-button
+                                  title="Remove user"
+                                  ?disabled=${busy || this._selectedUserIndex === null}
+                                  @click=${handleAsync(() => this.#removeSelectedUser())}
+                              >
+                                  <ha-svg-icon .path=${mdiAccountRemoveOutline}></ha-svg-icon>
+                              </md-outlined-icon-button>
+                          `
+                }
                 <md-outlined-button
-                    ?disabled=${this._busy || this._loadingUsers || this._loadingSchedules}
+                    ?disabled=${busy}
                     @click=${() => {
                         this.#usersRequested = true;
                         handleAsync(() => this.#loadUsers())();
@@ -577,6 +889,45 @@ class DoorLockClusterCommands extends BaseClusterCommands {
                     <ha-svg-icon slot="icon" .path=${mdiRefresh}></ha-svg-icon>
                     Reload
                 </md-outlined-button>
+                ${
+                    canAddUser
+                        ? html`<md-outlined-button
+                              ?disabled=${busy || this._addingUser}
+                              @click=${() => this.#startAddUser()}
+                          >
+                              <ha-svg-icon slot="icon" .path=${mdiAccountPlusOutline}></ha-svg-icon>
+                              Add user
+                          </md-outlined-button>`
+                        : nothing
+                }
+            </div>
+            ${this._addingUser ? this.#renderAddUserEditor() : nothing}
+        `;
+    }
+
+    #renderAddUserEditor(): TemplateResult {
+        return html`
+            <div class="editor">
+                <div class="editor-row">
+                    <label for="newUserName">Name:</label>
+                    <input
+                        id="newUserName"
+                        type="text"
+                        maxlength="32"
+                        .value=${live(this._newUserName)}
+                        @input=${(event: Event) => {
+                            this._newUserName = (event.target as HTMLInputElement).value;
+                        }}
+                    />
+                    <md-outlined-button ?disabled=${this._busy} @click=${handleAsync(() => this.#saveNewUser())}>
+                        <ha-svg-icon slot="icon" .path=${mdiContentSaveOutline}></ha-svg-icon>
+                        Save
+                    </md-outlined-button>
+                    <md-outlined-icon-button title="Cancel" @click=${() => this.#cancelAddUser()}>
+                        <ha-svg-icon .path=${mdiClose}></ha-svg-icon>
+                    </md-outlined-icon-button>
+                </div>
+                ${this._userEditorError !== undefined ? html`<p class="error">${this._userEditorError}</p>` : nothing}
             </div>
         `;
     }
@@ -592,10 +943,35 @@ class DoorLockClusterCommands extends BaseClusterCommands {
         `;
     }
 
+    /**
+     * Every occupied slot, plus (unless expanded) just the next empty one — so there is always a visible
+     * "+" to add a schedule without listing every empty slot up front.
+     */
+    #visibleSlots<T extends { schedule: unknown }>(slots: T[], expanded: boolean): T[] {
+        if (expanded) return slots;
+        let shownEmpty = false;
+        return slots.filter(slot => {
+            if (slot.schedule !== null) return true;
+            if (shownEmpty) return false;
+            shownEmpty = true;
+            return true;
+        });
+    }
+
+    /** Toggle for the slot list's collapsed empty slots; hidden when there's nothing meaningful to collapse. */
+    #renderEmptySlotsToggle(emptyTotal: number, expanded: boolean, toggle: () => void): TemplateResult | typeof nothing {
+        if (emptyTotal <= 1) return nothing;
+        const hiddenCount = expanded ? 0 : emptyTotal - 1;
+        return html`<button class="slot-list-toggle" @click=${toggle}>
+            ${expanded ? "Hide empty slots" : `Show ${hiddenCount} more empty slot${hiddenCount === 1 ? "" : "s"}`}
+        </button>`;
+    }
+
     #renderWeekDaySection(): TemplateResult {
         const slots = this._weekDaySlots;
         const capacity = readWeekDaySchedulesPerUser(this.node, this.endpoint) ?? 0;
         const used = slots?.filter(slot => slot.schedule !== null).length ?? 0;
+        const expanded = this._showEmptyWeekDay;
 
         return html`
             <div class="section">
@@ -619,8 +995,11 @@ class DoorLockClusterCommands extends BaseClusterCommands {
                         : html`
                               ${used > 0 ? this.#renderWeekTimeline(slots) : nothing}
                               <ul class="slot-list">
-                                  ${slots.map(slot => this.#renderWeekDaySlot(slot))}
+                                  ${this.#visibleSlots(slots, expanded).map(slot => this.#renderWeekDaySlot(slot))}
                               </ul>
+                              ${this.#renderEmptySlotsToggle(slots.length - used, expanded, () => {
+                                  this._showEmptyWeekDay = !expanded;
+                              })}
                           `
                 }
             </div>
@@ -733,8 +1112,10 @@ class DoorLockClusterCommands extends BaseClusterCommands {
                     <div class="day-toggles">
                         ${DAY_LABELS.map((label, day) => {
                             const bit = DAY_BITS[day];
+                            const active = maskHasDay(editor.daysMask, bit);
                             return html`<button
-                                class="day-toggle ${maskHasDay(editor.daysMask, bit) ? "active" : ""}"
+                                class="day-toggle ${active ? "active" : ""}"
+                                aria-pressed=${active ? "true" : "false"}
                                 @click=${() => {
                                     this._editor = { ...editor, daysMask: toggleMaskDay(editor.daysMask, bit) };
                                 }}
@@ -774,6 +1155,7 @@ class DoorLockClusterCommands extends BaseClusterCommands {
         const slots = this._yearDaySlots;
         const capacity = readYearDaySchedulesPerUser(this.node, this.endpoint) ?? 0;
         const used = slots?.filter(slot => slot.schedule !== null).length ?? 0;
+        const expanded = this._showEmptyYearDay;
 
         return html`
             <div class="section">
@@ -796,8 +1178,11 @@ class DoorLockClusterCommands extends BaseClusterCommands {
                         ? this.#renderSlotsPlaceholder(capacity)
                         : html`
                               <ul class="slot-list">
-                                  ${slots.map(slot => this.#renderYearDaySlot(slot))}
+                                  ${this.#visibleSlots(slots, expanded).map(slot => this.#renderYearDaySlot(slot))}
                               </ul>
+                              ${this.#renderEmptySlotsToggle(slots.length - used, expanded, () => {
+                                  this._showEmptyYearDay = !expanded;
+                              })}
                               <p class="hint">
                                   <ha-svg-icon .path=${mdiCalendarRange}></ha-svg-icon>
                                   Date ranges are local time at the lock, shown here in this browser's time zone.
@@ -881,6 +1266,147 @@ class DoorLockClusterCommands extends BaseClusterCommands {
                             this._editor = { ...editor, end: (event.target as HTMLInputElement).value };
                         }}
                     />
+                    ${this.#renderEditorActions()}
+                </div>
+                ${this._editorError !== undefined ? html`<p class="error">${this._editorError}</p>` : nothing}
+            </div>
+        `;
+    }
+
+    #renderHolidaySection(): TemplateResult {
+        const slots = this._holidaySlots;
+        const capacity = readHolidaySchedulesSupported(this.node, this.endpoint) ?? 0;
+        const used = slots?.filter(slot => slot.schedule !== null).length ?? 0;
+        const busy = this._busy || this._loadingHoliday;
+        const expanded = this._showEmptyHoliday;
+
+        return html`
+            <div class="section">
+                <div class="section-header">
+                    <span>HOLIDAY SCHEDULES · ${used}/${capacity} slots</span>
+                    ${
+                        used > 0
+                            ? html`<button
+                                  class="link-action"
+                                  ?disabled=${busy}
+                                  @click=${handleAsync(() => this.#clearHoliday(SCHEDULE_INDEX_ALL))}
+                              >
+                                  Clear all
+                              </button>`
+                            : nothing
+                    }
+                </div>
+                ${
+                    slots === undefined
+                        ? this.#renderSlotsPlaceholder(capacity)
+                        : html`
+                              <ul class="slot-list">
+                                  ${this.#visibleSlots(slots, expanded).map(slot => this.#renderHolidaySlot(slot, busy))}
+                              </ul>
+                              ${this.#renderEmptySlotsToggle(slots.length - used, expanded, () => {
+                                  this._showEmptyHoliday = !expanded;
+                              })}
+                              <p class="hint">
+                                  <ha-svg-icon .path=${mdiCalendarRange}></ha-svg-icon>
+                                  Applies to the whole lock, not a single user. Date ranges are local time at the
+                                  lock, shown here in this browser's time zone.
+                              </p>
+                          `
+                }
+            </div>
+        `;
+    }
+
+    #renderHolidaySlot(slot: HolidayScheduleSlot, busy: boolean): TemplateResult {
+        const editor = this._editor;
+        if (editor?.kind === "holiday" && editor.index === slot.holidayIndex) {
+            return html`<li class="slot-row editing">${this.#renderHolidayEditor(editor)}</li>`;
+        }
+        const schedule = slot.schedule;
+        return html`
+            <li class="slot-row">
+                <span class="slot-index">#${slot.holidayIndex}</span>
+                ${
+                    schedule === null
+                        ? html`<span class="slot-empty">${slotStatusLabel(slot.status)}</span>`
+                        : html`<span class="slot-window wide">
+                              ${formatLocalDateTime(schedule.localStartTime)} →
+                              ${formatLocalDateTime(schedule.localEndTime)} ·
+                              ${formatOperatingMode(schedule.operatingMode)}
+                          </span>`
+                }
+                <span class="slot-actions">
+                    <md-outlined-icon-button
+                        title=${schedule === null ? "Set schedule" : "Edit schedule"}
+                        ?disabled=${busy}
+                        @click=${() => {
+                            this._editorError = undefined;
+                            const now = Math.floor(Date.now() / 1000);
+                            this._editor = {
+                                kind: "holiday",
+                                index: slot.holidayIndex,
+                                start: toDateTimeInputValue(schedule?.localStartTime ?? now),
+                                end: toDateTimeInputValue(schedule?.localEndTime ?? now + 86400),
+                                operatingMode: schedule?.operatingMode ?? OPERATING_MODES[1],
+                            };
+                        }}
+                    >
+                        <ha-svg-icon .path=${schedule === null ? mdiPlus : mdiPencilOutline}></ha-svg-icon>
+                    </md-outlined-icon-button>
+                    ${
+                        schedule === null
+                            ? nothing
+                            : html`<md-outlined-icon-button
+                                  title="Clear schedule"
+                                  ?disabled=${busy}
+                                  @click=${handleAsync(() => this.#clearHoliday(slot.holidayIndex))}
+                              >
+                                  <ha-svg-icon .path=${mdiTrashCanOutline}></ha-svg-icon>
+                              </md-outlined-icon-button>`
+                    }
+                </span>
+            </li>
+        `;
+    }
+
+    #renderHolidayEditor(editor: HolidayEditor): TemplateResult {
+        return html`
+            <div class="editor">
+                <div class="editor-row">
+                    <span class="slot-index">#${editor.index}</span>
+                    <label for="holidayStart">From:</label>
+                    <input
+                        id="holidayStart"
+                        type="datetime-local"
+                        .value=${live(editor.start)}
+                        @input=${(event: Event) => {
+                            this._editor = { ...editor, start: (event.target as HTMLInputElement).value };
+                        }}
+                    />
+                    <label for="holidayEnd">To:</label>
+                    <input
+                        id="holidayEnd"
+                        type="datetime-local"
+                        .value=${live(editor.end)}
+                        @input=${(event: Event) => {
+                            this._editor = { ...editor, end: (event.target as HTMLInputElement).value };
+                        }}
+                    />
+                    <label for="holidayMode">Mode:</label>
+                    <select
+                        id="holidayMode"
+                        .value=${live(String(editor.operatingMode))}
+                        @change=${(event: Event) => {
+                            this._editor = {
+                                ...editor,
+                                operatingMode: Number((event.target as HTMLSelectElement).value),
+                            };
+                        }}
+                    >
+                        ${OPERATING_MODES.map(
+                            mode => html`<option value=${mode}>${formatOperatingMode(mode)}</option>`,
+                        )}
+                    </select>
                     ${this.#renderEditorActions()}
                 </div>
                 ${this._editorError !== undefined ? html`<p class="error">${this._editorError}</p>` : nothing}
@@ -1015,6 +1541,19 @@ class DoorLockClusterCommands extends BaseClusterCommands {
             .link-action[disabled] {
                 opacity: 0.5;
                 cursor: default;
+            }
+
+            .slot-list-toggle {
+                display: block;
+                margin: 4px 0 0 0;
+                border: none;
+                background: none;
+                padding: 0;
+                font: inherit;
+                font-size: 0.75rem;
+                letter-spacing: 0.04em;
+                color: var(--md-sys-color-primary);
+                cursor: pointer;
             }
 
             .schedule-grid {
@@ -1152,7 +1691,8 @@ class DoorLockClusterCommands extends BaseClusterCommands {
                 color: var(--md-sys-color-on-surface-variant);
             }
 
-            .editor-row input {
+            .editor-row input,
+            .editor-row select {
                 padding: 6px 8px;
                 border: 1px solid var(--md-sys-color-outline);
                 border-radius: 4px;

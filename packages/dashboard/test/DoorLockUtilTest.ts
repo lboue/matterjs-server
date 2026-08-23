@@ -4,23 +4,29 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { MatterNode, type MatterNodeData } from "@matter-server/ws-client";
+import { MatterNode, type MatterClient, type MatterNodeData } from "@matter-server/ws-client";
 import {
     buildDaySegments,
+    decodeHolidayScheduleResponse,
     decodeUserResponse,
     decodeWeekDayScheduleResponse,
     decodeYearDayScheduleResponse,
     encodePinCode,
     formatDaysMask,
+    formatOperatingMode,
     formatTimeOfDay,
     formatUserLabel,
     formatUserStatus,
     formatUserType,
     fromDateTimeInputValue,
+    holidayScheduleRangeError,
     isFeatureActive,
     maskHasDay,
+    nextFreeUserIndex,
     parseTimeOfDay,
+    readHolidaySchedulesSupported,
     readTotalUsersSupported,
+    readUsers,
     readWeekDaySchedulesPerUser,
     readYearDaySchedulesPerUser,
     requiresPinForRemoteOperation,
@@ -87,10 +93,11 @@ describe("door-lock util", () => {
 
     describe("attribute readers", () => {
         it("reads the per-user schedule capacities and the user total", () => {
-            const lock = node({ "1/257/17": 10, "1/257/20": 4, "1/257/21": 3 });
+            const lock = node({ "1/257/17": 10, "1/257/20": 4, "1/257/21": 3, "1/257/22": 2 });
             expect(readTotalUsersSupported(lock, 1)).to.equal(10);
             expect(readWeekDaySchedulesPerUser(lock, 1)).to.equal(4);
             expect(readYearDaySchedulesPerUser(lock, 1)).to.equal(3);
+            expect(readHolidaySchedulesSupported(lock, 1)).to.equal(2);
         });
         it("reports absent attributes as null", () => {
             expect(readWeekDaySchedulesPerUser(node({}), 1)).to.equal(null);
@@ -177,6 +184,24 @@ describe("door-lock util", () => {
         });
     });
 
+    describe("holidayScheduleRangeError", () => {
+        it("accepts an increasing range", () => {
+            expect(
+                holidayScheduleRangeError({ localStartTime: 1000, localEndTime: 2000, operatingMode: 1 }),
+            ).to.equal(null);
+        });
+        it("rejects an end at or before the start", () => {
+            expect(
+                holidayScheduleRangeError({ localStartTime: 2000, localEndTime: 2000, operatingMode: 1 }),
+            ).to.not.equal(null);
+        });
+        it("rejects a range that is not fully entered", () => {
+            expect(
+                holidayScheduleRangeError({ localStartTime: NaN, localEndTime: 2000, operatingMode: 1 }),
+            ).to.not.equal(null);
+        });
+    });
+
     describe("buildDaySegments", () => {
         const slots = [
             weekDaySlot(1, MON | TUE | WED | THU | FRI, [8, 0], [18, 0]),
@@ -257,6 +282,31 @@ describe("door-lock util", () => {
         });
     });
 
+    describe("decodeHolidayScheduleResponse", () => {
+        it("decodes a populated slot", () => {
+            const slot = decodeHolidayScheduleResponse(
+                {
+                    holidayIndex: 1,
+                    status: 0,
+                    localStartTime: 1_700_000_000,
+                    localEndTime: 1_700_086_400,
+                    operatingMode: 1,
+                },
+                1,
+            );
+            expect(slot.schedule).to.deep.equal({
+                holidayIndex: 1,
+                localStartTime: 1_700_000_000,
+                localEndTime: 1_700_086_400,
+                operatingMode: 1,
+            });
+        });
+        it("reports a slot whose optional fields are absent as empty", () => {
+            expect(decodeHolidayScheduleResponse({ holidayIndex: 2, status: 0 }, 2).schedule).to.equal(null);
+            expect(decodeHolidayScheduleResponse({ holidayIndex: 2, status: 139 }, 2).schedule).to.equal(null);
+        });
+    });
+
     describe("decodeUserResponse", () => {
         it("decodes an occupied user", () => {
             const user = decodeUserResponse({
@@ -285,6 +335,27 @@ describe("door-lock util", () => {
         });
     });
 
+    describe("nextFreeUserIndex", () => {
+        it("picks index 1 on an empty database", () => {
+            expect(nextFreeUserIndex([], 10)).to.equal(1);
+        });
+        it("skips occupied indices, including out of order", () => {
+            const users = [
+                decodeUserResponse({ userIndex: 2, userStatus: 1 })!,
+                decodeUserResponse({ userIndex: 1, userStatus: 1 })!,
+            ];
+            expect(nextFreeUserIndex(users, 10)).to.equal(3);
+        });
+        it("fills a gap left by a removed user before extending the range", () => {
+            const users = [1, 3, 4].map(userIndex => decodeUserResponse({ userIndex, userStatus: 1 })!);
+            expect(nextFreeUserIndex(users, 10)).to.equal(2);
+        });
+        it("returns null once every slot up to maxUsers is occupied", () => {
+            const users = [1, 2, 3].map(userIndex => decodeUserResponse({ userIndex, userStatus: 1 })!);
+            expect(nextFreeUserIndex(users, 3)).to.equal(null);
+        });
+    });
+
     describe("user labels", () => {
         it("prefers the user's own name", () => {
             const user = decodeUserResponse({ userIndex: 3, userName: "Bob", userStatus: 1 })!;
@@ -302,6 +373,18 @@ describe("door-lock util", () => {
         });
     });
 
+    describe("formatOperatingMode", () => {
+        it("names the known operating modes", () => {
+            expect(formatOperatingMode(0)).to.equal("Normal");
+            expect(formatOperatingMode(1)).to.equal("Vacation");
+            expect(formatOperatingMode(4)).to.equal("Passage");
+        });
+        it("passes null through and falls back for an unknown mode", () => {
+            expect(formatOperatingMode(null)).to.equal(null);
+            expect(formatOperatingMode(99)).to.equal("Mode 99");
+        });
+    });
+
     describe("datetime-local values", () => {
         it("round-trips a whole-minute instant through the input format", () => {
             const seconds = Math.floor(Date.UTC(2026, 7, 22, 9, 30) / 1000);
@@ -316,6 +399,56 @@ describe("door-lock util", () => {
     describe("encodePinCode", () => {
         it("encodes the PIN as base64 for the octstr field", () => {
             expect(encodePinCode("1234")).to.equal("MTIzNA==");
+        });
+    });
+
+    describe("readUsers", () => {
+        function fakeUserClient(responses: Record<number, unknown>) {
+            const calls: number[] = [];
+            const client = {
+                deviceCommand: (
+                    _nodeId: number | bigint,
+                    _endpointId: number,
+                    _clusterId: number,
+                    _commandName: string,
+                    payload: Record<string, unknown> = {},
+                ) => {
+                    const userIndex = payload["userIndex"] as number;
+                    calls.push(userIndex);
+                    return Promise.resolve(responses[userIndex]);
+                },
+            } as unknown as MatterClient;
+            return { client, calls };
+        }
+
+        it("skips a free slot and follows NextUserIndex to the occupied users", async () => {
+            const { client, calls } = fakeUserClient({
+                1: { userIndex: 1, userStatus: null, nextUserIndex: 2 },
+                2: { userIndex: 2, userName: "Bob", userStatus: 1, nextUserIndex: null },
+            });
+            const users = await readUsers(client, 1, 6, 10);
+            expect(users.map(user => user.userIndex)).to.deep.equal([2]);
+            expect(calls).to.deep.equal([1, 2]);
+        });
+
+        it("stops on a repeated index instead of looping forever", async () => {
+            const { client, calls } = fakeUserClient({
+                1: { userIndex: 1, userName: "A", userStatus: 1, nextUserIndex: 1 },
+            });
+            const users = await readUsers(client, 1, 6, 10);
+            expect(users.map(user => user.userIndex)).to.deep.equal([1]);
+            expect(calls).to.deep.equal([1]);
+        });
+
+        it("bounds the walk at maxUsers on a lock that never terminates the chain", async () => {
+            const responses: Record<number, unknown> = {};
+            for (let index = 1; index <= 5; index++) {
+                responses[index] = { userIndex: index, userName: `U${index}`, userStatus: 1, nextUserIndex: index + 1 };
+            }
+            const { client, calls } = fakeUserClient(responses);
+            const users = await readUsers(client, 1, 6, 2);
+            expect(users.map(user => user.userIndex)).to.deep.equal([1, 2]);
+            expect(calls).to.deep.equal([1, 2]);
         });
     });
 });
