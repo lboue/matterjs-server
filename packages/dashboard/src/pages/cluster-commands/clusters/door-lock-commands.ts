@@ -822,8 +822,8 @@ class DoorLockClusterCommands extends BaseClusterCommands {
                                     }
                                 `
                               : html`<p class="empty">
-                                    Schedules are assigned per user, which this lock does not expose: it reports no
-                                    User (USR) feature, so its user database cannot be read.
+                                    Schedules are assigned per user, which this lock does not expose: it reports no User
+                                    (USR) feature, so its user database cannot be read.
                                 </p>`
                     }
                     ${holidayActive ? this.#renderHolidaySection() : nothing}
@@ -959,7 +959,11 @@ class DoorLockClusterCommands extends BaseClusterCommands {
     }
 
     /** Toggle for the slot list's collapsed empty slots; hidden when there's nothing meaningful to collapse. */
-    #renderEmptySlotsToggle(emptyTotal: number, expanded: boolean, toggle: () => void): TemplateResult | typeof nothing {
+    #renderEmptySlotsToggle(
+        emptyTotal: number,
+        expanded: boolean,
+        toggle: () => void,
+    ): TemplateResult | typeof nothing {
         if (emptyTotal <= 1) return nothing;
         const hiddenCount = expanded ? 0 : emptyTotal - 1;
         return html`<button class="slot-list-toggle" @click=${toggle}>
@@ -1308,8 +1312,8 @@ class DoorLockClusterCommands extends BaseClusterCommands {
                               })}
                               <p class="hint">
                                   <ha-svg-icon .path=${mdiCalendarRange}></ha-svg-icon>
-                                  Applies to the whole lock, not a single user. Date ranges are local time at the
-                                  lock, shown here in this browser's time zone.
+                                  Applies to the whole lock, not a single user. Date ranges are local time at the lock,
+                                  shown here in this browser's time zone.
                               </p>
                           `
                 }

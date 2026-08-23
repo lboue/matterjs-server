@@ -186,9 +186,9 @@ describe("door-lock util", () => {
 
     describe("holidayScheduleRangeError", () => {
         it("accepts an increasing range", () => {
-            expect(
-                holidayScheduleRangeError({ localStartTime: 1000, localEndTime: 2000, operatingMode: 1 }),
-            ).to.equal(null);
+            expect(holidayScheduleRangeError({ localStartTime: 1000, localEndTime: 2000, operatingMode: 1 })).to.equal(
+                null,
+            );
         });
         it("rejects an end at or before the start", () => {
             expect(

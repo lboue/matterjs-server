@@ -12,8 +12,8 @@
  */
 
 import { Environment, ServerNode } from "@matter/main";
-import { DoorLockDevice } from "@matter/main/devices/door-lock";
 import { DoorLock } from "@matter/main/clusters/door-lock";
+import { DoorLockDevice } from "@matter/main/devices/door-lock";
 import { VendorId } from "@matter/main/types";
 
 const args = process.argv.slice(2);
