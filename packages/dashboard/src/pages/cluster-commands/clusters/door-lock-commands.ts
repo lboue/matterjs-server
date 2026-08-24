@@ -209,7 +209,7 @@ class DoorLockClusterCommands extends BaseClusterCommands {
             !this.#usersRequested &&
             this.#perUserSchedulesSupported() &&
             isFeatureActive(this.node, this.endpoint, "USR") &&
-            this.#userCapacityReady()
+            this.#scheduleCapacityReady()
         ) {
             this.#usersRequested = true;
             handleAsync(() => this.#loadUsers())();
@@ -225,9 +225,16 @@ class DoorLockClusterCommands extends BaseClusterCommands {
         }
     }
 
-    /** Whether the capacity attributes #loadUsers/#loadSchedules depend on are cached yet. */
-    #userCapacityReady(): boolean {
-        if (readTotalUsersSupported(this.node, this.endpoint) === null) return false;
+    /**
+     * Whether the schedule-capacity attributes #loadSchedules depends on are cached yet.
+     *
+     * NumberOfTotalUsersSupported is deliberately not checked here: #loadUsers already has a graceful
+     * fallback for it (USER_SCAN_FALLBACK), for a lock that never reports it at all — readUsers's walk
+     * terminates on NextUserIndex regardless, so an oversized scan bound just costs a few harmless extra
+     * round trips. WDSCH/YDSCH capacity has no such fallback: reading it as absent silently substitutes 0
+     * slots, hiding a section's content entirely, so those are worth waiting for.
+     */
+    #scheduleCapacityReady(): boolean {
         if (
             isFeatureActive(this.node, this.endpoint, "WDSCH") &&
             readWeekDaySchedulesPerUser(this.node, this.endpoint) === null
@@ -1454,8 +1461,9 @@ class DoorLockClusterCommands extends BaseClusterCommands {
         `;
     }
 
+    /** Shared by the WeekDay/YearDay (per-user) and Holiday (lock-wide) sections, so this stays generic. */
     #renderSlotsPlaceholder(capacity: number): TemplateResult {
-        if (capacity === 0) return html`<p class="empty">The lock reports no schedule slot per user.</p>`;
+        if (capacity === 0) return html`<p class="empty">The lock reports no schedule slots.</p>`;
         return html`<div class="loading">
             <md-circular-progress indeterminate></md-circular-progress>
             Reading ${capacity} slots…
