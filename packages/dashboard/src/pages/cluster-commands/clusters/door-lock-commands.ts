@@ -433,10 +433,21 @@ class DoorLockClusterCommands extends BaseClusterCommands {
     }
 
     /**
+     * Whether the lock supports a PIN sent in a remote Lock/Unlock/UnlockWithTimeout command at all: COTA
+     * gates that (spec §5.2.4), independently of whether PinCredential is otherwise supported.
+     */
+    #pinFieldSupported(): boolean {
+        return isFeatureActive(this.node, this.endpoint, "COTA") && isFeatureActive(this.node, this.endpoint, "PIN");
+    }
+
+    /**
      * Blocks a command locally when the lock reports RequirePinForRemoteOperation and the PIN field is
-     * empty, instead of round-tripping a request the lock will reject anyway.
+     * empty, instead of round-tripping a request the lock will reject anyway. Only when a PIN can actually
+     * be entered — #pinFieldSupported() gates the field itself, so this must agree or a lock requiring a PIN
+     * without COTA would show "PIN required" with nowhere to enter one.
      */
     async #missingRequiredPin(): Promise<boolean> {
+        if (!this.#pinFieldSupported()) return false;
         if (this.#pinForCommand() !== undefined) return false;
         if (!requiresPinForRemoteOperation(this.node, this.endpoint)) return false;
         await showAlertDialog({ title: "PIN required", text: "This lock requires a PIN for remote operations." });
@@ -708,8 +719,7 @@ class DoorLockClusterCommands extends BaseClusterCommands {
         const lockType = formatLockType(readLockType(this.node, this.endpoint));
         const actuatorEnabled = readActuatorEnabled(this.node, this.endpoint);
         const pinRequired = requiresPinForRemoteOperation(this.node, this.endpoint);
-        const showPin =
-            isFeatureActive(this.node, this.endpoint, "COTA") && isFeatureActive(this.node, this.endpoint, "PIN");
+        const showPin = this.#pinFieldSupported();
         const showTimeout = supportsCommand(this.node, this.endpoint, UNLOCK_WITH_TIMEOUT_COMMAND_ID);
 
         return html`
@@ -872,6 +882,7 @@ class DoorLockClusterCommands extends BaseClusterCommands {
                               ${this.#renderUserBadges()}
                               <md-outlined-icon-button
                                   title="Remove user"
+                                  aria-label="Remove user"
                                   ?disabled=${busy || this._selectedUserIndex === null}
                                   @click=${handleAsync(() => this.#removeSelectedUser())}
                               >
@@ -923,7 +934,7 @@ class DoorLockClusterCommands extends BaseClusterCommands {
                         <ha-svg-icon slot="icon" .path=${mdiContentSaveOutline}></ha-svg-icon>
                         Save
                     </md-outlined-button>
-                    <md-outlined-icon-button title="Cancel" @click=${() => this.#cancelAddUser()}>
+                    <md-outlined-icon-button title="Cancel" aria-label="Cancel" @click=${() => this.#cancelAddUser()}>
                         <ha-svg-icon .path=${mdiClose}></ha-svg-icon>
                     </md-outlined-icon-button>
                 </div>
@@ -1072,6 +1083,7 @@ class DoorLockClusterCommands extends BaseClusterCommands {
                 <span class="slot-actions">
                     <md-outlined-icon-button
                         title=${schedule === null ? "Set schedule" : "Edit schedule"}
+                        aria-label=${schedule === null ? "Set schedule" : "Edit schedule"}
                         ?disabled=${this._busy}
                         @click=${() => {
                             this._editorError = undefined;
@@ -1097,6 +1109,7 @@ class DoorLockClusterCommands extends BaseClusterCommands {
                             ? nothing
                             : html`<md-outlined-icon-button
                                   title="Clear schedule"
+                                  aria-label="Clear schedule"
                                   ?disabled=${this._busy}
                                   @click=${handleAsync(() => this.#clearWeekDay(slot.weekDayIndex))}
                               >
@@ -1217,6 +1230,7 @@ class DoorLockClusterCommands extends BaseClusterCommands {
                 <span class="slot-actions">
                     <md-outlined-icon-button
                         title=${schedule === null ? "Set schedule" : "Edit schedule"}
+                        aria-label=${schedule === null ? "Set schedule" : "Edit schedule"}
                         ?disabled=${this._busy}
                         @click=${() => {
                             this._editorError = undefined;
@@ -1236,6 +1250,7 @@ class DoorLockClusterCommands extends BaseClusterCommands {
                             ? nothing
                             : html`<md-outlined-icon-button
                                   title="Clear schedule"
+                                  aria-label="Clear schedule"
                                   ?disabled=${this._busy}
                                   @click=${handleAsync(() => this.#clearYearDay(slot.yearDayIndex))}
                               >
@@ -1342,6 +1357,7 @@ class DoorLockClusterCommands extends BaseClusterCommands {
                 <span class="slot-actions">
                     <md-outlined-icon-button
                         title=${schedule === null ? "Set schedule" : "Edit schedule"}
+                        aria-label=${schedule === null ? "Set schedule" : "Edit schedule"}
                         ?disabled=${busy}
                         @click=${() => {
                             this._editorError = undefined;
@@ -1362,6 +1378,7 @@ class DoorLockClusterCommands extends BaseClusterCommands {
                             ? nothing
                             : html`<md-outlined-icon-button
                                   title="Clear schedule"
+                                  aria-label="Clear schedule"
                                   ?disabled=${busy}
                                   @click=${handleAsync(() => this.#clearHoliday(slot.holidayIndex))}
                               >
@@ -1426,6 +1443,7 @@ class DoorLockClusterCommands extends BaseClusterCommands {
             </md-outlined-button>
             <md-outlined-icon-button
                 title="Cancel"
+                aria-label="Cancel"
                 @click=${() => {
                     this._editor = null;
                     this._editorError = undefined;
