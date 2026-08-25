@@ -9,8 +9,8 @@ This page shows a detailed overview of the changes between versions without the 
 
 ## **WORK IN PROGRESS**
 
-- Feature: (lboue) Added a command panel for the DoorLock cluster to Dashboard: lock/unlock (with optional PIN and timeout), user management (add/remove), and per-user Week Day / Year Day plus lock-wide Holiday access schedules (WDSCH/YDSCH/HDSCH features), with a user picker backed by the lock's user database
-- Enhancement: (lboue) Added Presets and Thermostat Suggestions (Thermostat cluster PRES/TSUGGEST features) panels to Dashboard, including adding and removing suggestions
+- Enhancement: (lboue) Added a command panel for the DoorLock cluster to Dashboard
+- Enhancement: (lboue) Added Presets and Thermostat Suggestions (Thermostat cluster PRES/TSUGGEST features) panels to Dashboard
 
 ## 1.4.0 (2026-08-07)
 
