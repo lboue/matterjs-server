@@ -8,6 +8,8 @@ import type { MatterClient, MatterNode } from "@matter-server/ws-client";
 import { clusters } from "../client/models/descriptions.js";
 import { asObject, pickNumber, pickString } from "./attribute-shapes.js";
 import { computeActiveClusterFeatures } from "./cluster-features.js";
+import { getMatterStatusName } from "./matter-status.js";
+import { MATTER_EPOCH_MAX_SECONDS, MATTER_EPOCH_OFFSET_SECONDS } from "./time.js";
 
 /** Door Lock cluster (Matter spec §5.2). */
 export const DOOR_LOCK_CLUSTER_ID = 257; // 0x0101
@@ -20,21 +22,40 @@ const ATTR_NUMBER_OF_TOTAL_USERS_SUPPORTED = 0x11;
 const ATTR_NUMBER_OF_WEEK_DAY_SCHEDULES_SUPPORTED_PER_USER = 0x14;
 const ATTR_NUMBER_OF_YEAR_DAY_SCHEDULES_SUPPORTED_PER_USER = 0x15;
 const ATTR_NUMBER_OF_HOLIDAY_SCHEDULES_SUPPORTED = 0x16;
+const ATTR_SUPPORTED_OPERATING_MODES = 0x26;
 const ATTR_REQUIRE_PIN_FOR_REMOTE_OPERATION = 0x33;
 const ATTR_ACCEPTED_COMMAND_LIST = 0xfff9;
 const ATTR_FEATURE_MAP = 0xfffc;
 
-/** UnlockWithTimeout is optional even on locks that support unlocking (spec §5.2.10.4). */
+/** UnlockWithTimeout is optional even on locks that support unlocking (spec §5.2.10.3). */
 export const UNLOCK_WITH_TIMEOUT_COMMAND_ID = 0x03;
 
-/** ClearWeekDaySchedule and ClearYearDaySchedule wipe every slot of a user when addressed with this index. */
+/**
+ * Wipes every slot of the addressed table: a user's week day or year day schedules, or — since the
+ * holiday table is lock-wide — every holiday schedule on the lock.
+ */
 export const SCHEDULE_INDEX_ALL = 0xfe;
 
-/** UserStatusEnum.Available — a slot the lock reports as free (spec §5.2.6.14). */
+/** UserStatusEnum.Available — a slot the lock reports as free (spec §5.2.6.17). */
 const USER_STATUS_AVAILABLE = 0;
 
-/** DataOperationTypeEnum.Add — the SetUser operation that creates a new user (spec §5.2.6.4). */
+/** DataOperationTypeEnum.Add — the SetUser operation that creates a new user (spec §5.2.6.10). */
 const OPERATION_TYPE_ADD = 0;
+
+/** SetUser's UserName constraint (spec §5.2.10.34.3), enforced here instead of round-tripping it. */
+export const USER_NAME_MAX_LENGTH = 10;
+
+/**
+ * Why the lock will reject this user name, or null when it will accept it. The constraint counts UTF-8
+ * bytes, so a name well inside the character limit can still be too long.
+ */
+export function userNameLengthError(userName: string): string | null {
+    if (userName === "") return "Enter a name for the user.";
+    if (new TextEncoder().encode(userName).length > USER_NAME_MAX_LENGTH) {
+        return `The name may be at most ${USER_NAME_MAX_LENGTH} bytes; accented and non-Latin characters take more than one.`;
+    }
+    return null;
+}
 
 /** Days in display order (Mon..Sun) mapped to their DaysMaskBitmap bit (Sunday=0 .. Saturday=6). */
 export const DAY_BITS = [1, 2, 3, 4, 5, 6, 0];
@@ -90,8 +111,13 @@ const OPERATING_MODE_LABELS: Record<number, string> = {
     4: "Passage",
 };
 
-/** All OperatingModeEnum values, in display order, for a Holiday schedule's mode picker. */
-export const OPERATING_MODES = [0, 1, 2, 3, 4];
+const OPERATING_MODES = [0, 1, 2, 3, 4];
+
+/** OperatingModeEnum.Normal, the only mode every lock must implement. */
+const OPERATING_MODE_NORMAL = 0;
+
+/** OperatingModeEnum.Vacation, what a holiday schedule is normally for. */
+const OPERATING_MODE_VACATION = 1;
 
 const USER_TYPE_LABELS: Record<number, string> = {
     0: "Unrestricted",
@@ -106,6 +132,9 @@ const USER_TYPE_LABELS: Record<number, string> = {
     9: "Remote Only",
 };
 
+/** The interaction-model status of a slot the lock holds nothing in (spec §5.2.10.6.3). */
+export const SCHEDULE_STATUS_NOT_FOUND = 0x8b;
+
 /** A Week Day schedule slot holding a window, as reported by GetWeekDayScheduleResponse. */
 export interface WeekDaySchedule {
     weekDayIndex: number;
@@ -116,16 +145,25 @@ export interface WeekDaySchedule {
     endMinute: number;
 }
 
-/** One of a user's schedule slots: `schedule` is null when the lock reported a non-success status. */
+/**
+ * One of a user's schedule slots. `schedule` is null when the lock reported a non-success status or
+ * omitted the window.
+ *
+ * `status` is null when the lock did not say what the slot holds: either no status came back, or it
+ * answered SUCCESS without the fields that must accompany it ("If this field is SUCCESS, the optional
+ * fields for this command shall be present", spec §5.2.10.6.3). Such a slot reads as unread, and is
+ * never collapsed away among the empty ones.
+ */
 export interface WeekDayScheduleSlot {
     weekDayIndex: number;
-    status: number;
+    status: number | null;
     schedule: WeekDaySchedule | null;
 }
 
 /**
- * A Year Day schedule slot holding a fixed date range. Both bounds are Unix seconds: the cluster carries
- * them as epoch-s, which the server converts in both directions, and they mean local time at the lock.
+ * A Year Day schedule slot holding a fixed date range. Both bounds are Matter epoch-s (seconds since
+ * 2000-01-01) encoding the lock's *local wall clock* rather than a UTC instant, per the spec's "Epoch
+ * Time in Seconds with local time offset" — so they are neither Unix seconds nor a viewer-relative time.
  */
 export interface YearDaySchedule {
     yearDayIndex: number;
@@ -135,7 +173,7 @@ export interface YearDaySchedule {
 
 export interface YearDayScheduleSlot {
     yearDayIndex: number;
-    status: number;
+    status: number | null;
     schedule: YearDaySchedule | null;
 }
 
@@ -152,7 +190,7 @@ export interface HolidaySchedule {
 
 export interface HolidayScheduleSlot {
     holidayIndex: number;
-    status: number;
+    status: number | null;
     schedule: HolidaySchedule | null;
 }
 
@@ -232,6 +270,18 @@ export function requiresPinForRemoteOperation(node: MatterNode, endpoint: number
     return readAttr(node, endpoint, ATTR_REQUIRE_PIN_FOR_REMOTE_OPERATION) === true;
 }
 
+/**
+ * The operating modes a Holiday schedule may switch this lock to. OperatingModesBitmap is inverted —
+ * a bit set to zero means the mode IS supported, which the spec itself calls out as "the opposite of
+ * most other semantically similar bitmaps" (spec §5.2.9.25).
+ */
+export function supportedOperatingModes(node: MatterNode, endpoint: number): number[] {
+    const bitmap = readNumberAttr(node, endpoint, ATTR_SUPPORTED_OPERATING_MODES);
+    if (bitmap === null) return [...OPERATING_MODES];
+    const supported = OPERATING_MODES.filter(mode => (bitmap & (1 << mode)) === 0);
+    return supported.length > 0 ? supported : [...OPERATING_MODES];
+}
+
 export function formatLockState(state: number | null): string {
     if (state === null) return "Unknown";
     return LOCK_STATE_LABELS[state] ?? `State ${state}`;
@@ -252,6 +302,20 @@ export function formatOperatingMode(mode: number | null): string | null {
     return OPERATING_MODE_LABELS[mode] ?? `Mode ${mode}`;
 }
 
+/**
+ * The modes a holiday mode picker offers. A mode the lock already stored is always among them even when
+ * SupportedOperatingModes no longer advertises it: an option list that cannot represent the current value
+ * leaves a `<select>` showing its first entry while a save still writes the old one.
+ */
+export function holidayModeChoices(supported: number[], current: number): number[] {
+    return supported.includes(current) ? supported : [current, ...supported];
+}
+
+export function defaultHolidayMode(supported: number[]): number {
+    if (supported.includes(OPERATING_MODE_VACATION)) return OPERATING_MODE_VACATION;
+    return supported[0] ?? OPERATING_MODE_NORMAL;
+}
+
 export function formatUserStatus(status: number | null): string | null {
     if (status === null) return null;
     return USER_STATUS_LABELS[status] ?? `Status ${status}`;
@@ -260,6 +324,17 @@ export function formatUserStatus(status: number | null): string | null {
 export function formatUserType(type: number | null): string | null {
     if (type === null) return null;
     return USER_TYPE_LABELS[type] ?? `Type ${type}`;
+}
+
+/** Whether the lock answered for this slot and reported it as holding nothing. */
+export function isEmptyScheduleStatus(status: number | null): boolean {
+    return status === 0 || status === SCHEDULE_STATUS_NOT_FOUND;
+}
+
+export function formatScheduleStatus(status: number | null): string {
+    if (status === null) return "Unreadable";
+    if (isEmptyScheduleStatus(status)) return "Empty";
+    return getMatterStatusName(status);
 }
 
 /** A user's display name: its own UserName when set, else its index. */
@@ -288,8 +363,9 @@ export function formatTimeOfDay(hour: number, minute: number): string {
     return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
+/** Accepts the `HH:MM:SS` an `<input type="time">` emits at second precision; the cluster has no seconds. */
 export function parseTimeOfDay(value: string): { hour: number; minute: number } | null {
-    const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
+    const match = /^(\d{1,2}):(\d{2})(?::\d{2})?$/.exec(value.trim());
     if (!match) return null;
     const hour = Number(match[1]);
     const minute = Number(match[2]);
@@ -309,47 +385,96 @@ export function weekDayScheduleRangeError(schedule: Omit<WeekDaySchedule, "weekD
     return null;
 }
 
-/** Why the date range cannot be set as entered, or null when it is valid. */
-export function yearDayScheduleRangeError(schedule: Omit<YearDaySchedule, "yearDayIndex">): string | null {
-    if (!Number.isFinite(schedule.localStartTime) || !Number.isFinite(schedule.localEndTime)) {
+function dateRangeError(localStartTime: number, localEndTime: number): string | null {
+    if (!Number.isFinite(localStartTime) || !Number.isFinite(localEndTime)) {
         return "Enter both a start and an end date.";
     }
-    if (schedule.localEndTime <= schedule.localStartTime) return "The end date must be later than the start date.";
+    // Outside this the value no longer fits the uint32 epoch-s field the cluster carries it in.
+    for (const bound of [localStartTime, localEndTime]) {
+        if (!Number.isInteger(bound) || bound < 0 || bound > MATTER_EPOCH_MAX_SECONDS) {
+            return "Dates must fall between 2000-01-01 and 2136-02-07.";
+        }
+    }
+    if (localEndTime <= localStartTime) return "The end date must be later than the start date.";
     return null;
+}
+
+/** Why the date range cannot be set as entered, or null when it is valid. */
+export function yearDayScheduleRangeError(schedule: Omit<YearDaySchedule, "yearDayIndex">): string | null {
+    return dateRangeError(schedule.localStartTime, schedule.localEndTime);
 }
 
 /** Why the holiday schedule cannot be set as entered, or null when it is valid. */
 export function holidayScheduleRangeError(schedule: Omit<HolidaySchedule, "holidayIndex">): string | null {
-    if (!Number.isFinite(schedule.localStartTime) || !Number.isFinite(schedule.localEndTime)) {
-        return "Enter both a start and an end date.";
-    }
-    if (schedule.localEndTime <= schedule.localStartTime) return "The end date must be later than the start date.";
-    return null;
+    return dateRangeError(schedule.localStartTime, schedule.localEndTime);
 }
 
-/** Formats a Unix-seconds instant as a local date and time. */
-export function formatLocalDateTime(unixSeconds: number): string {
-    return new Date(unixSeconds * 1000).toLocaleString(undefined, {
+const pad = (value: number) => String(value).padStart(2, "0");
+
+/** The instant whose UTC components spell out the wall clock `matterEpochSeconds` encodes. */
+function wallClockOf(matterEpochSeconds: number): Date {
+    return new Date((matterEpochSeconds + MATTER_EPOCH_OFFSET_SECONDS) * 1000);
+}
+
+/** Encodes a wall clock, as the lock encodes its own: UTC components, shifted to the Matter epoch. */
+function toMatterEpoch(year: number, month: number, day: number, hour: number, minute: number, second: number) {
+    return Math.floor(Date.UTC(year, month - 1, day, hour, minute, second) / 1000) - MATTER_EPOCH_OFFSET_SECONDS;
+}
+
+/** Reads the browser's wall clock, encoded the way the lock encodes its own local time. */
+export function nowAsWallClock(): number {
+    const now = new Date();
+    return toMatterEpoch(
+        now.getFullYear(),
+        now.getMonth() + 1,
+        now.getDate(),
+        now.getHours(),
+        now.getMinutes(),
+        now.getSeconds(),
+    );
+}
+
+/** Formats the lock's wall clock for display. Deliberately not shifted into the viewer's time zone. */
+export function formatWallClock(matterEpochSeconds: number): string {
+    return wallClockOf(matterEpochSeconds).toLocaleString(undefined, {
         year: "numeric",
         month: "2-digit",
         day: "2-digit",
         hour: "2-digit",
         minute: "2-digit",
+        timeZone: "UTC",
     });
 }
 
-/** Formats a Unix-seconds instant for an `<input type="datetime-local">`, whose value is local wall time. */
-export function toDateTimeInputValue(unixSeconds: number): string {
-    const date = new Date(unixSeconds * 1000);
-    const pad = (value: number) => String(value).padStart(2, "0");
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+/** Formats the lock's wall clock for an `<input type="datetime-local">`, keeping seconds when it has any. */
+export function toDateTimeInputValue(matterEpochSeconds: number): string {
+    const date = wallClockOf(matterEpochSeconds);
+    const minutes = `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}T${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}`;
+    const seconds = date.getUTCSeconds();
+    return seconds === 0 ? minutes : `${minutes}:${pad(seconds)}`;
 }
 
-/** Reads an `<input type="datetime-local">` value back as Unix seconds, or null when it is empty or invalid. */
+/**
+ * Reads an `<input type="datetime-local">` value back as the lock's wall clock, or null when it is
+ * empty, malformed, or names a day that does not exist.
+ */
 export function fromDateTimeInputValue(value: string): number | null {
-    if (value.trim() === "") return null;
-    const parsed = new Date(value).getTime();
-    return Number.isNaN(parsed) ? null : Math.floor(parsed / 1000);
+    const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(value.trim());
+    if (match === null) return null;
+    const [year, month, day, hour, minute] = match.slice(1, 6).map(Number);
+    const second = match[6] === undefined ? 0 : Number(match[6]);
+    if (hour > 23 || minute > 59 || second > 59) return null;
+    const matterEpochSeconds = toMatterEpoch(year, month, day, hour, minute, second);
+    const roundTrip = wallClockOf(matterEpochSeconds);
+    // Date.UTC rolls 2026-02-30 forward into March rather than rejecting it.
+    if (
+        roundTrip.getUTCFullYear() !== year ||
+        roundTrip.getUTCMonth() + 1 !== month ||
+        roundTrip.getUTCDate() !== day
+    ) {
+        return null;
+    }
+    return matterEpochSeconds;
 }
 
 /** The windows covering one display day (0 = Monday .. 6 = Sunday), ordered by start time. */
@@ -373,29 +498,40 @@ export function buildDaySegments(slots: WeekDayScheduleSlot[], displayDay: numbe
 
 export function decodeWeekDayScheduleResponse(response: unknown, weekDayIndex: number): WeekDayScheduleSlot {
     const obj = asObject(response);
-    const status = (obj !== null ? pickNumber(obj, "status") : null) ?? 0;
+    const status = obj !== null ? pickNumber(obj, "status") : null;
     if (obj === null || status !== 0) {
         return { weekDayIndex, status, schedule: null };
+    }
+    const daysMask = pickNumber(obj, "daysMask");
+    const startHour = pickNumber(obj, "startHour");
+    const startMinute = pickNumber(obj, "startMinute");
+    const endHour = pickNumber(obj, "endHour");
+    const endMinute = pickNumber(obj, "endMinute");
+    if (daysMask === null || startHour === null || startMinute === null || endHour === null || endMinute === null) {
+        return { weekDayIndex, status: null, schedule: null };
     }
     return {
         weekDayIndex,
         status,
         schedule: {
             weekDayIndex: pickNumber(obj, "weekDayIndex") ?? weekDayIndex,
-            daysMask: pickNumber(obj, "daysMask") ?? 0,
-            startHour: pickNumber(obj, "startHour") ?? 0,
-            startMinute: pickNumber(obj, "startMinute") ?? 0,
-            endHour: pickNumber(obj, "endHour") ?? 0,
-            endMinute: pickNumber(obj, "endMinute") ?? 0,
+            daysMask,
+            startHour,
+            startMinute,
+            endHour,
+            endMinute,
         },
     };
 }
 
 export function decodeYearDayScheduleResponse(response: unknown, yearDayIndex: number): YearDayScheduleSlot {
     const obj = asObject(response);
-    const status = (obj !== null ? pickNumber(obj, "status") : null) ?? 0;
+    const status = obj !== null ? pickNumber(obj, "status") : null;
     const localStartTime = obj !== null ? pickNumber(obj, "localStartTime") : null;
     const localEndTime = obj !== null ? pickNumber(obj, "localEndTime") : null;
+    if (status === 0 && (localStartTime === null || localEndTime === null)) {
+        return { yearDayIndex, status: null, schedule: null };
+    }
     if (status !== 0 || localStartTime === null || localEndTime === null) {
         return { yearDayIndex, status, schedule: null };
     }
@@ -412,10 +548,13 @@ export function decodeYearDayScheduleResponse(response: unknown, yearDayIndex: n
 
 export function decodeHolidayScheduleResponse(response: unknown, holidayIndex: number): HolidayScheduleSlot {
     const obj = asObject(response);
-    const status = (obj !== null ? pickNumber(obj, "status") : null) ?? 0;
+    const status = obj !== null ? pickNumber(obj, "status") : null;
     const localStartTime = obj !== null ? pickNumber(obj, "localStartTime") : null;
     const localEndTime = obj !== null ? pickNumber(obj, "localEndTime") : null;
     const operatingMode = obj !== null ? pickNumber(obj, "operatingMode") : null;
+    if (status === 0 && (localStartTime === null || localEndTime === null || operatingMode === null)) {
+        return { holidayIndex, status: null, schedule: null };
+    }
     if (status !== 0 || localStartTime === null || localEndTime === null || operatingMode === null) {
         return { holidayIndex, status, schedule: null };
     }

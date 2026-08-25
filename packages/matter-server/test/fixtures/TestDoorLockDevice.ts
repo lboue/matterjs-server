@@ -6,25 +6,36 @@
 
 /**
  * Manual test fixture: A DoorLock device with User + PIN credentials + Week Day / Year Day
- * access schedules enabled, for exercising the dashboard's Door Lock panel (PR #1004).
+ * access schedules enabled, for exercising the dashboard's Door Lock panel.
  *
  * Usage: npx tsx packages/matter-server/test/fixtures/TestDoorLockDevice.ts --storage-path=<path> --port=<port>
  */
 
 import { Environment, ServerNode } from "@matter/main";
+import { DoorLockServer } from "@matter/main/behaviors/door-lock";
 import { DoorLock } from "@matter/main/clusters/door-lock";
 import { DoorLockDevice } from "@matter/main/devices/door-lock";
 import { VendorId } from "@matter/main/types";
 
 const args = process.argv.slice(2);
+
+function numericArg(name: string, fallback: number): number {
+    const arg = args.find(candidate => candidate.startsWith(`--${name}=`));
+    if (arg === undefined) return fallback;
+    const raw = arg.slice(name.length + 3);
+    const value = Number(raw);
+    if (!/^\d+$/.test(raw) || !Number.isSafeInteger(value)) {
+        console.error(`--${name} must be a whole number, got "${raw}"`);
+        process.exit(1);
+    }
+    return value;
+}
+
 const storagePathArg = args.find(a => a.startsWith("--storage-path="));
 const storagePath = storagePathArg?.split("=")[1] ?? ".doorlock-device-storage";
-const portArg = args.find(a => a.startsWith("--port="));
-const port = portArg !== undefined ? Number.parseInt(portArg.split("=")[1], 10) : 5541;
-const discriminatorArg = args.find(a => a.startsWith("--discriminator="));
-const discriminator = discriminatorArg !== undefined ? Number.parseInt(discriminatorArg.split("=")[1], 10) : 3841;
-const passcodeArg = args.find(a => a.startsWith("--passcode="));
-const passcode = passcodeArg !== undefined ? Number.parseInt(passcodeArg.split("=")[1], 10) : 20202022;
+const port = numericArg("port", 5541);
+const discriminator = numericArg("discriminator", 3841);
+const passcode = numericArg("passcode", 20202022);
 
 const env = Environment.default;
 env.vars.set("storage.path", storagePath);
@@ -56,10 +67,18 @@ const node = await ServerNode.create({
     },
 });
 
-// The full feature set (PinCredential, User, WDSCH/YDSCH/HDSCH, ...) is baked into DoorLockServer at
-// runtime, but the device's static Type<> only widens per feature actually threaded through the cluster
-// type parameter — cast this throwaway fixture's config rather than fight that for a manual test tool.
-await node.add(DoorLockDevice, {
+const TestDoorLock = DoorLockDevice.with(
+    DoorLockServer.with(
+        "PinCredential",
+        "CredentialOverTheAirAccess",
+        "User",
+        "WeekDayAccessSchedules",
+        "YearDayAccessSchedules",
+        "HolidaySchedules",
+    ),
+);
+
+await node.add(TestDoorLock, {
     id: "doorlock",
     doorLock: {
         lockState: DoorLock.LockState.Locked,
@@ -85,7 +104,7 @@ await node.add(DoorLockDevice, {
         numberOfWeekDaySchedulesSupportedPerUser: 10,
         numberOfYearDaySchedulesSupportedPerUser: 10,
         numberOfHolidaySchedulesSupported: 5,
-    } as Record<string, unknown>,
+    },
 });
 
 console.log("Test Door Lock Device starting...");
@@ -93,18 +112,14 @@ console.log(`Storage path: ${storagePath}`);
 console.log(`Discriminator: ${discriminator}`);
 console.log(`Passcode: ${passcode}`);
 
+// Registered before run(), which only resolves once the node has already stopped.
+for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    process.on(signal, () => {
+        console.log(`Received ${signal}, shutting down...`);
+        node.cancel()
+            .then(() => process.exit(0))
+            .catch(() => process.exit(1));
+    });
+}
+
 await node.run();
-
-process.on("SIGTERM", () => {
-    console.log("Received SIGTERM, shutting down...");
-    node.cancel()
-        .then(() => process.exit(0))
-        .catch(() => process.exit(1));
-});
-
-process.on("SIGINT", () => {
-    console.log("Received SIGINT, shutting down...");
-    node.cancel()
-        .then(() => process.exit(0))
-        .catch(() => process.exit(1));
-});

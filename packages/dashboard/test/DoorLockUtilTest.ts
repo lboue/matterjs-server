@@ -14,15 +14,20 @@ import {
     encodePinCode,
     formatDaysMask,
     formatOperatingMode,
+    formatScheduleStatus,
     formatTimeOfDay,
     formatUserLabel,
     formatUserStatus,
     formatUserType,
+    defaultHolidayMode,
+    formatWallClock,
+    holidayModeChoices,
     fromDateTimeInputValue,
     holidayScheduleRangeError,
     isFeatureActive,
     maskHasDay,
     nextFreeUserIndex,
+    nowAsWallClock,
     parseTimeOfDay,
     readHolidaySchedulesSupported,
     readTotalUsersSupported,
@@ -30,10 +35,12 @@ import {
     readWeekDaySchedulesPerUser,
     readYearDaySchedulesPerUser,
     requiresPinForRemoteOperation,
+    supportedOperatingModes,
     supportsCommand,
     toDateTimeInputValue,
     toggleMaskDay,
     UNLOCK_WITH_TIMEOUT_COMMAND_ID,
+    userNameLengthError,
     weekDayScheduleRangeError,
     yearDayScheduleRangeError,
     type WeekDayScheduleSlot,
@@ -153,6 +160,9 @@ describe("door-lock util", () => {
             expect(parseTimeOfDay("1030")).to.equal(null);
             expect(parseTimeOfDay("")).to.equal(null);
         });
+        it("accepts the seconds an input at second precision emits, and drops them", () => {
+            expect(parseTimeOfDay("18:30:45")).to.deep.equal({ hour: 18, minute: 30 });
+        });
     });
 
     describe("weekDayScheduleRangeError", () => {
@@ -181,6 +191,13 @@ describe("door-lock util", () => {
         });
         it("rejects a range that is not fully entered", () => {
             expect(yearDayScheduleRangeError({ localStartTime: NaN, localEndTime: 2000 })).to.not.equal(null);
+        });
+        it("rejects a bound the uint32 epoch-s field cannot carry", () => {
+            // Asserted on the message so the earlier "enter both dates" branch cannot satisfy this.
+            expect(yearDayScheduleRangeError({ localStartTime: -1, localEndTime: 2000 })).to.contain("2136-02-07");
+            expect(yearDayScheduleRangeError({ localStartTime: 0, localEndTime: 0x1_0000_0000 })).to.contain(
+                "2136-02-07",
+            );
         });
     });
 
@@ -253,8 +270,32 @@ describe("door-lock util", () => {
             expect(slot.schedule).to.equal(null);
         });
         it("keeps the requested index when the lock omits it", () => {
-            const slot = decodeWeekDayScheduleResponse({ status: 0, daysMask: SUN }, 3);
+            const slot = decodeWeekDayScheduleResponse(
+                { status: 0, daysMask: SUN, startHour: 0, startMinute: 0, endHour: 1, endMinute: 0 },
+                3,
+            );
             expect(slot.schedule?.weekDayIndex).to.equal(3);
+        });
+        it("reports a Success response with a partial window as unreadable, not as free", () => {
+            // Half a window is not a 00:00 schedule, and rendering it as Empty offers a "+" over a slot
+            // that may well be occupied.
+            const slot = decodeWeekDayScheduleResponse({ status: 0, daysMask: SUN, startHour: 8 }, 4);
+            expect(slot.schedule).to.equal(null);
+            expect(slot.status).to.equal(null);
+        });
+        it("distinguishes a response carrying no status from a successful empty slot", () => {
+            // An empty slot is one the lock answered for; this is one it did not.
+            expect(decodeWeekDayScheduleResponse({}, 5).status).to.equal(null);
+            expect(decodeWeekDayScheduleResponse("nonsense", 5).status).to.equal(null);
+            expect(decodeYearDayScheduleResponse({}, 5).status).to.equal(null);
+            expect(decodeHolidayScheduleResponse({}, 5).status).to.equal(null);
+        });
+        it("reports a truncated Success from the year day and holiday responses as unreadable too", () => {
+            // Same spec sentence as the week day case: SUCCESS obliges the lock to send the fields.
+            expect(decodeYearDayScheduleResponse({ status: 0, localStartTime: 100 }, 6).status).to.equal(null);
+            expect(
+                decodeHolidayScheduleResponse({ status: 0, localStartTime: 100, localEndTime: 200 }, 6).status,
+            ).to.equal(null);
         });
     });
 
@@ -386,13 +427,134 @@ describe("door-lock util", () => {
     });
 
     describe("datetime-local values", () => {
-        it("round-trips a whole-minute instant through the input format", () => {
-            const seconds = Math.floor(Date.UTC(2026, 7, 22, 9, 30) / 1000);
-            expect(fromDateTimeInputValue(toDateTimeInputValue(seconds))).to.equal(seconds);
+        // 2026-08-22T09:30 on the lock's own clock. Anchored to the literal wire number rather than to a
+        // round-trip: the conversion this pins is exactly the one a self-consistent round-trip cannot see.
+        const WALL_CLOCK_2026_08_22_0930 = 840706200;
+
+        it("encodes the lock's wall clock as Matter epoch-s, not Unix seconds", () => {
+            expect(fromDateTimeInputValue("2026-08-22T09:30")).to.equal(WALL_CLOCK_2026_08_22_0930);
+            expect(toDateTimeInputValue(WALL_CLOCK_2026_08_22_0930)).to.equal("2026-08-22T09:30");
         });
-        it("reads an empty or malformed value as absent", () => {
+        describe("in a viewer time zone that is not UTC", () => {
+            // A UTC host cannot tell a local-getter bug from a correct one, so the zone is forced here.
+            let originalTimeZone: string | undefined;
+            before(() => {
+                originalTimeZone = process.env["TZ"];
+                process.env["TZ"] = "America/New_York";
+            });
+            after(() => {
+                if (originalTimeZone === undefined) delete process.env["TZ"];
+                else process.env["TZ"] = originalTimeZone;
+            });
+
+            it("shows the lock's wall clock rather than converting it to the viewer's zone", () => {
+                const asViewerLocalTime = new Date((WALL_CLOCK_2026_08_22_0930 + 946_684_800) * 1000).toLocaleString();
+                expect(formatWallClock(WALL_CLOCK_2026_08_22_0930)).to.not.equal(asViewerLocalTime);
+                expect(formatWallClock(WALL_CLOCK_2026_08_22_0930)).to.contain("09:30");
+            });
+            it("reads a value back unshifted", () => {
+                expect(toDateTimeInputValue(WALL_CLOCK_2026_08_22_0930)).to.equal("2026-08-22T09:30");
+                expect(fromDateTimeInputValue("2026-08-22T09:30")).to.equal(WALL_CLOCK_2026_08_22_0930);
+            });
+            it("reads the browser's own wall clock, not its UTC instant", () => {
+                // getUTC* here would name the New York date/time as if it were the local one. The clock is
+                // sampled on both sides so a minute rolling over mid-test cannot fail it.
+                const stamp = (at: Date) =>
+                    `${at.toLocaleDateString("en-CA")}T${at.toLocaleTimeString("en-GB").slice(0, 5)}`;
+                const before = stamp(new Date());
+                const actual = toDateTimeInputValue(nowAsWallClock()).slice(0, 16);
+                expect(actual).to.be.oneOf([before, stamp(new Date())]);
+            });
+        });
+        it("keeps seconds a lock reported rather than truncating them on the next save", () => {
+            const withSeconds = WALL_CLOCK_2026_08_22_0930 + 45;
+            expect(toDateTimeInputValue(withSeconds)).to.equal("2026-08-22T09:30:45");
+            expect(fromDateTimeInputValue("2026-08-22T09:30:45")).to.equal(withSeconds);
+        });
+        it("reads the epoch start and the field's last representable second", () => {
+            expect(fromDateTimeInputValue("2000-01-01T00:00:00")).to.equal(0);
+            expect(fromDateTimeInputValue("2136-02-07T06:28:15")).to.equal(0xffffffff);
+        });
+        it("reads an empty, malformed or impossible value as absent", () => {
             expect(fromDateTimeInputValue("")).to.equal(null);
             expect(fromDateTimeInputValue("not a date")).to.equal(null);
+            // Date.UTC would roll this into March rather than rejecting it.
+            expect(fromDateTimeInputValue("2026-02-30T09:30")).to.equal(null);
+        });
+        it("rejects an out-of-range time component the picker cannot produce but a script can", () => {
+            expect(fromDateTimeInputValue("2026-08-22T24:00")).to.equal(null);
+            expect(fromDateTimeInputValue("2026-08-22T12:99")).to.equal(null);
+            expect(fromDateTimeInputValue("2026-08-22T12:30:99")).to.equal(null);
+        });
+    });
+
+    describe("formatScheduleStatus", () => {
+        it("reads Success and NotFound as an empty slot", () => {
+            expect(formatScheduleStatus(0)).to.equal("Empty");
+            expect(formatScheduleStatus(0x8b)).to.equal("Empty");
+        });
+        it("names the interaction-model status the Status field actually carries", () => {
+            // The field is typed `status`, and the spec names INVALID_COMMAND for an out-of-range index.
+            expect(formatScheduleStatus(0x85)).to.equal("InvalidCommand");
+            expect(formatScheduleStatus(0x7e)).to.equal("UnsupportedAccess");
+        });
+        it("distinguishes a response that carried no status from a successful empty slot", () => {
+            expect(formatScheduleStatus(null)).to.equal("Unreadable");
+        });
+        it("falls back for an unknown status", () => {
+            expect(formatScheduleStatus(0x42)).to.equal("Unknown(66)");
+        });
+    });
+
+    describe("supportedOperatingModes", () => {
+        const endpointAttr = "1/257/38";
+
+        it("treats a cleared bit as supported, per the inverted bitmap", () => {
+            // Normal (bit 0) and Privacy (bit 2) clear; everything else set, i.e. unsupported.
+            expect(supportedOperatingModes(node({ [endpointAttr]: 0b11111010 }), 1)).to.deep.equal([0, 2]);
+        });
+        it("offers every mode when the lock does not report the attribute", () => {
+            expect(supportedOperatingModes(node({}), 1)).to.deep.equal([0, 1, 2, 3, 4]);
+        });
+        it("offers every mode rather than none when the lock reports all of them unsupported", () => {
+            expect(supportedOperatingModes(node({ [endpointAttr]: 0xff }), 1)).to.deep.equal([0, 1, 2, 3, 4]);
+        });
+    });
+
+    describe("holidayModeChoices", () => {
+        it("offers the supported modes unchanged when the current one is among them", () => {
+            expect(holidayModeChoices([0, 1, 3], 1)).to.deep.equal([0, 1, 3]);
+        });
+        it("keeps a stored mode the lock no longer advertises", () => {
+            // Otherwise the picker shows its first entry while a save still writes the stored mode.
+            expect(holidayModeChoices([0, 3], 1)).to.deep.equal([1, 0, 3]);
+        });
+    });
+
+    describe("defaultHolidayMode", () => {
+        it("starts a new holiday schedule on Vacation", () => {
+            expect(defaultHolidayMode([0, 1, 2, 3, 4])).to.equal(1);
+        });
+        it("falls back to the first supported mode when Vacation is not implemented", () => {
+            expect(defaultHolidayMode([0, 3])).to.equal(0);
+        });
+        it("falls back to Normal, which every lock implements, for an empty list", () => {
+            expect(defaultHolidayMode([])).to.equal(0);
+        });
+    });
+
+    describe("userNameLengthError", () => {
+        it("accepts a name inside the constraint", () => {
+            expect(userNameLengthError("Alice")).to.equal(null);
+            expect(userNameLengthError("0123456789")).to.equal(null);
+        });
+        it("rejects an empty name", () => {
+            expect(userNameLengthError("")).to.equal("Enter a name for the user.");
+        });
+        it("counts UTF-8 bytes, not characters", () => {
+            // Ten characters, but the lock measures the encoded octets and rejects this one.
+            expect(userNameLengthError("Zoë Müller")).to.contain("bytes");
+            expect(userNameLengthError("01234567890")).to.contain("bytes");
         });
     });
 
@@ -404,7 +566,7 @@ describe("door-lock util", () => {
 
     describe("readUsers", () => {
         function fakeUserClient(responses: Record<number, unknown>) {
-            const calls: number[] = [];
+            const calls = new Array<number>();
             const client = {
                 deviceCommand: (
                     _nodeId: number | bigint,

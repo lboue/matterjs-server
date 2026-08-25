@@ -5,7 +5,10 @@
  */
 
 /** Matter epoch-s values count seconds since 2000-01-01T00:00:00Z, not the Unix epoch. */
-const MATTER_EPOCH_OFFSET_SECONDS = 946_684_800;
+export const MATTER_EPOCH_OFFSET_SECONDS = 946_684_800;
+
+/** Largest value the uint32 epoch-s wire field can carry, i.e. 2136-02-07T06:28:15. */
+export const MATTER_EPOCH_MAX_SECONDS = 0xffffffff;
 
 /** Formats a Matter epoch-s instant as a local time, prefixed with the date when it isn't today. */
 export function formatEpochTime(matterEpochSeconds: number, relativeTo: Date = new Date()): string {
