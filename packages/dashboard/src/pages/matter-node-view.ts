@@ -23,7 +23,8 @@ import { getEndpointDeviceTypes, getEndpointTree } from "../util/endpoints.js";
 import { formatNodeAddress, getEffectiveFabricIndex } from "../util/format_hex.js";
 import "./components/header";
 import "./components/node-details";
-import { notFoundStyles, reducedMotionStyles } from "../util/shared-styles.js";
+import { describeSemanticTagListEntry, getEndpointSemanticTags } from "../util/semantic-tags.js";
+import { chipListStyles, notFoundStyles, reducedMotionStyles } from "../util/shared-styles.js";
 import { getNetworkType } from "./network/network-utils.js";
 
 declare global {
@@ -113,6 +114,7 @@ class MatterNodeView extends LitElement {
                     ${guard([this.node, this.node?.attributes], () =>
                         getEndpointTree(this.node!, getUniqueEndpoints(this.node!)).map(({ endpointId, depth }) => {
                             const label = getEndpointLabel(this.node!, endpointId);
+                            const semanticTags = getEndpointSemanticTags(this.node!, endpointId);
                             return html`
                                 <md-list-item
                                     type="link"
@@ -135,6 +137,19 @@ class MatterNodeView extends LitElement {
                                                 return deviceType.label;
                                             })
                                             .join(" / ")}
+                                        ${
+                                            semanticTags.length > 0
+                                                ? html`
+                                                      <ul class="chip-list endpoint-tags" role="list">
+                                                          ${semanticTags.map(entry => {
+                                                              const { text, title } =
+                                                                  describeSemanticTagListEntry(entry);
+                                                              return html`<li class="chip" title=${title}>${text}</li>`;
+                                                          })}
+                                                      </ul>
+                                                  `
+                                                : ""
+                                        }
                                     </div>
                                     <ha-svg-icon slot="end" .path=${mdiChevronRight}></ha-svg-icon>
                                 </md-list-item>
@@ -155,6 +170,7 @@ class MatterNodeView extends LitElement {
     static override styles = [
         notFoundStyles,
         reducedMotionStyles,
+        chipListStyles,
         css`
             :host {
                 display: flex;
@@ -202,6 +218,10 @@ class MatterNodeView extends LitElement {
             .endpoint-label {
                 color: var(--md-sys-color-on-surface-variant, #666);
                 font-weight: 400;
+            }
+
+            .endpoint-tags {
+                margin-top: 4px;
             }
 
             .node-title-bar h2 {

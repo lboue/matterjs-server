@@ -24,6 +24,7 @@ import { BINDING_CLUSTER_ID, boundClientClusterIds, sourceClientClusters } from 
 import { getEndpointLabel } from "../util/endpoint-label.js";
 import { getEndpointDeviceTypes } from "../util/endpoints.js";
 import { formatHex, formatNodeAddress, getEffectiveFabricIndex } from "../util/format_hex.js";
+import { describeSemanticTagListEntry, getEndpointSemanticTags } from "../util/semantic-tags.js";
 import { infoPanelStyles, notFoundStyles } from "../util/shared-styles.js";
 import { bindingContext } from "./components/context.js";
 
@@ -84,6 +85,7 @@ class MatterEndpointView extends LitElement {
         const endpointClusters = getUniqueClusters(this.node, this.endpoint);
         const hasBindingCluster = endpointClusters.includes(BINDING_CLUSTER_ID);
         const endpointLabel = getEndpointLabel(this.node, this.endpoint);
+        const semanticTags = getEndpointSemanticTags(this.node, this.endpoint);
 
         return html`
             <dashboard-header
@@ -130,6 +132,18 @@ class MatterEndpointView extends LitElement {
                                     return deviceType.label;
                                 })
                                 .join(" / ")}
+                            ${
+                                semanticTags.length > 0
+                                    ? html`
+                                          <ul class="chip-list endpoint-tags" role="list">
+                                              ${semanticTags.map(entry => {
+                                                  const { text, title } = describeSemanticTagListEntry(entry);
+                                                  return html`<li class="chip" title=${title}>${text}</li>`;
+                                              })}
+                                          </ul>
+                                      `
+                                    : nothing
+                            }
                         </div>
                     </md-list-item>
                     ${guard(
@@ -240,6 +254,10 @@ class MatterEndpointView extends LitElement {
             .endpoint-label {
                 color: var(--md-sys-color-on-surface-variant, #666);
                 font-weight: 400;
+            }
+
+            .endpoint-tags {
+                margin-top: 4px;
             }
         `,
     ];
