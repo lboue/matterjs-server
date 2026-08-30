@@ -237,10 +237,9 @@ class MatterNodeView extends LitElement {
             }
 
             .endpoint-tags .chip {
-                font-size: 0.7rem;
-                line-height: 1;
-                padding: 0 8px;
-                height: 1.4em;
+                font-size: 0.75rem;
+                line-height: 1.3;
+                padding: 3px 9px;
                 display: inline-flex;
                 align-items: center;
                 white-space: nowrap;
