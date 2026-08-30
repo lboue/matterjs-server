@@ -8,6 +8,7 @@ import "@material/web/button/filled-button";
 import "@material/web/button/outlined-button";
 import "@material/web/select/outlined-select";
 import "@material/web/select/select-option";
+import "@material/web/textfield/outlined-text-field";
 import { css, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { handleAsync } from "../../../util/async-handler.js";
@@ -89,17 +90,21 @@ class ClosureDimensionClusterCommands extends BaseClusterCommands {
         const current = readCurrentState(this.node, this.endpoint);
         const target = readTargetState(this.node, this.endpoint);
         const latchControlModes = readLatchControlModes(this.node, this.endpoint);
+        const targetPositionValue = this._setTargetPosition !== "" ? Number(this._setTargetPosition) : null;
+        const isTargetPositionInvalid =
+            targetPositionValue !== null &&
+            (Number.isNaN(targetPositionValue) || targetPositionValue < 0 || targetPositionValue > 100);
 
         return html`
             <details class="command-panel" open>
                 <summary>Closure Dimension</summary>
                 <div class="command-content">
                     <div class="states-grid">
-                        <div class="state-block">
+                        <div class="state-block state-block--current">
                             <div class="state-block-header">Current</div>
                             ${this._renderState(current, features)}
                         </div>
-                        <div class="state-block">
+                        <div class="state-block state-block--target">
                             <div class="state-block-header">Target</div>
                             ${this._renderState(target, features)}
                         </div>
@@ -113,20 +118,18 @@ class ClosureDimensionClusterCommands extends BaseClusterCommands {
                             ${
                                 features.positioning
                                     ? html`
-                                          <label class="field">
-                                              <span class="muted">Position (%)</span>
-                                              <input
-                                                  type="number"
-                                                  min="0"
-                                                  max="100"
-                                                  step="0.01"
-                                                  placeholder="(unchanged)"
-                                                  .value=${this._setTargetPosition}
-                                                  @input=${(e: Event) => {
-                                                      this._setTargetPosition = (e.target as HTMLInputElement).value;
-                                                  }}
-                                              />
-                                          </label>
+                                          <md-outlined-text-field
+                                              type="number"
+                                              label="Position (%)"
+                                              min="0"
+                                              max="100"
+                                              step="0.01"
+                                              placeholder="(unchanged)"
+                                              .value=${this._setTargetPosition}
+                                              @input=${(e: Event) => {
+                                                  this._setTargetPosition = (e.target as HTMLInputElement).value;
+                                              }}
+                                          ></md-outlined-text-field>
                                       `
                                     : nothing
                             }
@@ -188,9 +191,10 @@ class ClosureDimensionClusterCommands extends BaseClusterCommands {
                             }
                             <md-filled-button
                                 ?disabled=${
-                                    this._setTargetPosition === "" &&
-                                    this._setTargetLatch === "" &&
-                                    this._setTargetSpeed === ""
+                                    isTargetPositionInvalid ||
+                                    (this._setTargetPosition === "" &&
+                                        this._setTargetLatch === "" &&
+                                        this._setTargetSpeed === "")
                                 }
                                 @click=${handleAsync(() => this._handleSetTarget())}
                             >
@@ -220,18 +224,16 @@ class ClosureDimensionClusterCommands extends BaseClusterCommands {
                                                   `,
                                               )}
                                           </md-outlined-select>
-                                          <label class="field">
-                                              <span class="muted">Steps</span>
-                                              <input
-                                                  type="number"
-                                                  min="1"
-                                                  .value=${String(this._stepCount)}
-                                                  @input=${(e: Event) => {
-                                                      const value = parseInt((e.target as HTMLInputElement).value, 10);
-                                                      this._stepCount = Number.isFinite(value) && value > 0 ? value : 1;
-                                                  }}
-                                              />
-                                          </label>
+                                          <md-outlined-text-field
+                                              type="number"
+                                              label="Steps"
+                                              min="1"
+                                              .value=${String(this._stepCount)}
+                                              @input=${(e: Event) => {
+                                                  const value = parseInt((e.target as HTMLInputElement).value, 10);
+                                                  this._stepCount = Number.isFinite(value) && value > 0 ? value : 1;
+                                              }}
+                                          ></md-outlined-text-field>
                                           ${
                                               features.speed
                                                   ? html`
@@ -382,9 +384,21 @@ class ClosureDimensionClusterCommands extends BaseClusterCommands {
                 gap: 16px;
                 padding-bottom: 12px;
             }
+            .state-block {
+                padding: 8px 12px;
+                border-radius: 8px;
+                background: var(--md-sys-color-surface-container-highest);
+                border-left: 3px solid var(--md-sys-color-outline-variant);
+            }
+            .state-block--target {
+                border-left-color: var(--md-sys-color-primary);
+            }
             .state-block-header {
                 font-weight: 500;
                 margin-bottom: 6px;
+            }
+            .state-block--target .state-block-header {
+                color: var(--md-sys-color-primary);
             }
             .state-fields {
                 display: flex;
@@ -396,9 +410,9 @@ class ClosureDimensionClusterCommands extends BaseClusterCommands {
                 gap: 6px;
             }
             .static-info {
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-                gap: 4px 16px;
+                display: flex;
+                flex-direction: column;
+                gap: 4px;
                 border-top: 1px solid var(--md-sys-color-outline-variant);
                 border-bottom: 1px solid var(--md-sys-color-outline-variant);
                 padding: 12px 0;
@@ -428,19 +442,16 @@ class ClosureDimensionClusterCommands extends BaseClusterCommands {
                 gap: 12px;
                 flex-wrap: wrap;
             }
-            .field {
-                display: flex;
-                flex-direction: column;
-                gap: 2px;
-                font-size: 14px;
+            .set-target-controls md-outlined-text-field,
+            .step-controls md-outlined-text-field {
+                width: 140px;
             }
-            .field input[type="number"] {
-                width: 100px;
-                padding: 8px;
-                border: 1px solid var(--md-sys-color-outline);
-                border-radius: 4px;
-                background: var(--md-sys-color-surface);
-                color: var(--md-sys-color-on-surface);
+            /* md-outlined-select's own shadow styles set :host{min-width:210px}, which wins over a plain
+               external width/min-width; !important is required to match the text fields' width. */
+            .set-target-controls md-outlined-select,
+            .step-controls md-outlined-select {
+                width: 140px !important;
+                min-width: 140px !important;
             }
         `,
     ];
