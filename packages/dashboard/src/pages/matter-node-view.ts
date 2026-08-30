@@ -18,6 +18,7 @@ import { guard } from "lit/directives/guard.js";
 import { clientContext, tickContext } from "../client/client-context.js";
 import "../components/ha-svg-icon";
 import { getDeviceIcon, getEndpointIcon } from "../util/device-icons.js";
+import { getEndpointLabel } from "../util/endpoint-label.js";
 import { getEndpointDeviceTypes, getEndpointTree } from "../util/endpoints.js";
 import { formatNodeAddress, getEffectiveFabricIndex } from "../util/format_hex.js";
 import "./components/header";
@@ -111,6 +112,7 @@ class MatterNodeView extends LitElement {
                     </md-list-item>
                     ${guard([this.node, this.node?.attributes], () =>
                         getEndpointTree(this.node!, getUniqueEndpoints(this.node!)).map(({ endpointId, depth }) => {
+                            const label = getEndpointLabel(this.node!, endpointId);
                             return html`
                                 <md-list-item
                                     type="link"
@@ -122,7 +124,10 @@ class MatterNodeView extends LitElement {
                                         class="endpoint-icon"
                                         .path=${getEndpointIcon(this.node!, endpointId)}
                                     ></ha-svg-icon>
-                                    <div slot="headline">Endpoint ${endpointId}</div>
+                                    <div slot="headline">
+                                        Endpoint
+                                        ${endpointId}${label ? html`: <span class="endpoint-label">${label}</span>` : ""}
+                                    </div>
                                     <div slot="supporting-text">
                                         Device Type(s):
                                         ${getEndpointDeviceTypes(this.node!, endpointId)
@@ -192,6 +197,11 @@ class MatterNodeView extends LitElement {
 
             .endpoint-icon {
                 --icon-primary-color: var(--md-sys-color-on-surface-variant, #666);
+            }
+
+            .endpoint-label {
+                color: var(--md-sys-color-on-surface-variant, #666);
+                font-weight: 400;
             }
 
             .node-title-bar h2 {
