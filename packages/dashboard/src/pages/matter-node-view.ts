@@ -126,17 +126,13 @@ class MatterNodeView extends LitElement {
                                         class="endpoint-icon"
                                         .path=${getEndpointIcon(this.node!, endpointId)}
                                     ></ha-svg-icon>
-                                    <div slot="headline">
-                                        Endpoint
-                                        ${endpointId}${label ? html`: <span class="endpoint-label">${label}</span>` : ""}
-                                    </div>
-                                    <div slot="supporting-text">
-                                        Device Type(s):
-                                        ${getEndpointDeviceTypes(this.node!, endpointId)
-                                            .map(deviceType => {
-                                                return deviceType.label;
-                                            })
-                                            .join(" / ")}
+                                    <div slot="headline" class="endpoint-headline">
+                                        <span>
+                                            Endpoint
+                                            ${endpointId}${
+                                                label ? html`: <span class="endpoint-label">${label}</span>` : ""
+                                            }
+                                        </span>
                                         ${
                                             semanticTags.length > 0
                                                 ? html`
@@ -150,6 +146,14 @@ class MatterNodeView extends LitElement {
                                                   `
                                                 : ""
                                         }
+                                    </div>
+                                    <div slot="supporting-text">
+                                        Device Type(s):
+                                        ${getEndpointDeviceTypes(this.node!, endpointId)
+                                            .map(deviceType => {
+                                                return deviceType.label;
+                                            })
+                                            .join(" / ")}
                                     </div>
                                     <ha-svg-icon slot="end" .path=${mdiChevronRight}></ha-svg-icon>
                                 </md-list-item>
@@ -220,8 +224,26 @@ class MatterNodeView extends LitElement {
                 font-weight: 400;
             }
 
+            .endpoint-headline {
+                display: flex;
+                align-items: center;
+                flex-wrap: wrap;
+                gap: 8px;
+                min-width: 0;
+            }
+
             .endpoint-tags {
-                margin-top: 4px;
+                min-width: 0;
+            }
+
+            .endpoint-tags .chip {
+                font-size: 0.7rem;
+                line-height: 1.2;
+                padding: 1px 8px;
+            }
+
+            .endpoint-tags .chip {
+                white-space: nowrap;
             }
 
             .node-title-bar h2 {
