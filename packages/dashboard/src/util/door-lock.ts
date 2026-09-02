@@ -66,8 +66,8 @@ export const USER_NAME_MAX_LENGTH = 10;
 export function pinCodeLengthError(pin: string, minLength: number | null, maxLength: number | null): string | null {
     if (pin === "") return "Enter a PIN.";
     const length = new TextEncoder().encode(pin).length;
-    if (minLength !== null && length < minLength) return `The PIN must be at least ${minLength} characters.`;
-    if (maxLength !== null && length > maxLength) return `The PIN must be at most ${maxLength} characters.`;
+    if (minLength !== null && length < minLength) return `The PIN must be at least ${minLength} bytes.`;
+    if (maxLength !== null && length > maxLength) return `The PIN must be at most ${maxLength} bytes.`;
     return null;
 }
 

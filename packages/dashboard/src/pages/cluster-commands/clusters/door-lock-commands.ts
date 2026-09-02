@@ -795,27 +795,32 @@ class DoorLockClusterCommands extends BaseClusterCommands {
             );
             if (!this.isSameContext(node, endpoint)) return;
             // The user record exists at this point regardless of what happens next, so a credential
-            // failure is reported without unwinding it — the reload below must still show it.
-            let credentialError: string | undefined;
+            // failure is reported without unwinding it — the reload below must still show it. The editor
+            // closes either way: leaving it open would let a retry recompute _freeUserIndex onto a new
+            // slot and create a duplicate user rather than retrying the credential for this one.
+            let credentialError: unknown;
             if (expiring) {
                 try {
                     const capacity = readNumberOfPinUsersSupported(node, endpoint) ?? PIN_CREDENTIAL_SCAN_FALLBACK;
                     await attachPinCredential(this.client, node.node_id, endpoint, userIndex, pin, capacity);
                 } catch (error) {
                     if (!this.isSameContext(node, endpoint)) return;
-                    credentialError = `User created, but the PIN could not be set: ${errorText(error)}`;
+                    credentialError = error;
                 }
             }
-            this._addingUser = credentialError !== undefined;
+            this._addingUser = false;
             this._newUserName = "";
             this._newUserPin = "";
-            this._userEditorError = credentialError;
+            this._userEditorError = undefined;
             this.#usersRequested = true;
             // Reload preserves the current selection, so point it at the user that was just created.
             this._selectedUserIndex = userIndex;
             this._weekDaySlots = undefined;
             this._yearDaySlots = undefined;
             await this.#loadUsers();
+            if (credentialError !== undefined) {
+                this.#reportFailure("User created, but the PIN could not be set", credentialError, node, endpoint);
+            }
         } catch (error) {
             if (!this.isSameContext(node, endpoint)) return;
             this._userEditorError = errorText(error);
@@ -1098,7 +1103,8 @@ class DoorLockClusterCommands extends BaseClusterCommands {
         // A Temporary PIN is created directly with a working credential (SetCredential's combined-creation
         // use case isn't used here — see attachPinCredential — but the operator still enters the PIN up
         // front), so the option only makes sense where the lock can store PIN credentials at all.
-        const canAddExpiring = isFeatureActive(this.node, this.endpoint, "PIN");
+        const canAddExpiring =
+            isFeatureActive(this.node, this.endpoint, "PIN") && isFeatureActive(this.node, this.endpoint, "USR");
         const expiring = canAddExpiring && this._newUserType === USER_TYPE_EXPIRING;
         const minPinLength = readMinPinCodeLength(this.node, this.endpoint);
         const maxPinLength = readMaxPinCodeLength(this.node, this.endpoint);
