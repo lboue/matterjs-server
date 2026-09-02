@@ -762,9 +762,10 @@ class DoorLockClusterCommands extends BaseClusterCommands {
             this._userEditorError = nameError;
             return;
         }
-        const expiring = this._newUserType === USER_TYPE_EXPIRING;
+        const canAddExpiring =
+            isFeatureActive(node, endpoint, "PIN") && isFeatureActive(node, endpoint, "USR");
+        const expiring = canAddExpiring && this._newUserType === USER_TYPE_EXPIRING;
         const pin = this._newUserPin.trim();
-        if (expiring) {
             const pinError = pinCodeLengthError(
                 pin,
                 readMinPinCodeLength(node, endpoint),
