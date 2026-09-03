@@ -20,11 +20,14 @@ const ATTR_ACTUATOR_ENABLED = 0x02;
 const ATTR_DOOR_STATE = 0x03;
 const ATTR_NUMBER_OF_TOTAL_USERS_SUPPORTED = 0x11;
 const ATTR_NUMBER_OF_PIN_USERS_SUPPORTED = 0x12;
+const ATTR_NUMBER_OF_RFID_USERS_SUPPORTED = 0x13;
 const ATTR_NUMBER_OF_WEEK_DAY_SCHEDULES_SUPPORTED_PER_USER = 0x14;
 const ATTR_NUMBER_OF_YEAR_DAY_SCHEDULES_SUPPORTED_PER_USER = 0x15;
 const ATTR_NUMBER_OF_HOLIDAY_SCHEDULES_SUPPORTED = 0x16;
 const ATTR_MAX_PIN_CODE_LENGTH = 0x17;
 const ATTR_MIN_PIN_CODE_LENGTH = 0x18;
+const ATTR_MAX_RFID_CODE_LENGTH = 0x19;
+const ATTR_MIN_RFID_CODE_LENGTH = 0x1a;
 const ATTR_SUPPORTED_OPERATING_MODES = 0x26;
 const ATTR_REQUIRE_PIN_FOR_REMOTE_OPERATION = 0x33;
 const ATTR_EXPIRING_USER_TIMEOUT = 0x35;
@@ -52,8 +55,11 @@ export const USER_TYPE_EXPIRING = 7;
 /** UserStatusEnum.OccupiedEnabled — the status a newly created, active user is given (spec §5.2.6.17). */
 export const USER_STATUS_OCCUPIED_ENABLED = 1;
 
-/** CredentialTypeEnum.PIN — the only credential type this panel manages (spec §5.2.6.9). */
+/** CredentialTypeEnum.PIN (spec §5.2.6.9). */
 const CREDENTIAL_TYPE_PIN = 1;
+
+/** CredentialTypeEnum.RFID — an RFID/NFC tag's UID, the other credential type this panel manages (spec §5.2.6.9). */
+const CREDENTIAL_TYPE_RFID = 2;
 
 /** SetUser's UserName constraint (spec §5.2.10.34.3), enforced here instead of round-tripping it. */
 export const USER_NAME_MAX_LENGTH = 10;
@@ -68,6 +74,21 @@ export function pinCodeLengthError(pin: string, minLength: number | null, maxLen
     const length = new TextEncoder().encode(pin).length;
     if (minLength !== null && length < minLength) return `The PIN must be at least ${minLength} bytes.`;
     if (maxLength !== null && length > maxLength) return `The PIN must be at most ${maxLength} bytes.`;
+    return null;
+}
+
+/**
+ * Why the lock will reject this RFID code, or null when it will accept it. An RFID/NFC tag's UID is entered
+ * here as hex — MinRfidCodeLength/MaxRfidCodeLength (spec §5.2.9.16-17) count that hex string's length in
+ * bytes (i.e. characters, since it travels as ASCII text the same way a PIN does), not the UID's raw byte
+ * count, so the spec's own recommended value for a 10-byte UID is 20.
+ */
+export function rfidCodeLengthError(code: string, minLength: number | null, maxLength: number | null): string | null {
+    if (code === "") return "Enter an RFID code.";
+    if (!/^[0-9a-fA-F]+$/.test(code)) return "The RFID code must contain only hex digits (0-9, A-F).";
+    if (code.length % 2 !== 0) return "The RFID code must have an even number of hex digits.";
+    if (minLength !== null && code.length < minLength) return `The RFID code must be at least ${minLength} hex digits.`;
+    if (maxLength !== null && code.length > maxLength) return `The RFID code must be at most ${maxLength} hex digits.`;
     return null;
 }
 
@@ -308,6 +329,18 @@ export function readMinPinCodeLength(node: MatterNode, endpoint: number): number
 
 export function readMaxPinCodeLength(node: MatterNode, endpoint: number): number | null {
     return readNumberAttr(node, endpoint, ATTR_MAX_PIN_CODE_LENGTH);
+}
+
+export function readNumberOfRfidUsersSupported(node: MatterNode, endpoint: number): number | null {
+    return readNumberAttr(node, endpoint, ATTR_NUMBER_OF_RFID_USERS_SUPPORTED);
+}
+
+export function readMinRfidCodeLength(node: MatterNode, endpoint: number): number | null {
+    return readNumberAttr(node, endpoint, ATTR_MIN_RFID_CODE_LENGTH);
+}
+
+export function readMaxRfidCodeLength(node: MatterNode, endpoint: number): number | null {
+    return readNumberAttr(node, endpoint, ATTR_MAX_RFID_CODE_LENGTH);
 }
 
 /**
@@ -672,6 +705,18 @@ export function hasPinCredential(user: DoorLockUser): boolean {
     return user.credentials.some(credential => credential.credentialType === CREDENTIAL_TYPE_PIN);
 }
 
+/** The user's RFID/NFC tag credential index, or null when it has none. */
+export function rfidCredentialIndex(user: DoorLockUser): number | null {
+    return (
+        user.credentials.find(credential => credential.credentialType === CREDENTIAL_TYPE_RFID)?.credentialIndex ?? null
+    );
+}
+
+/** Whether a user carries an RFID/NFC tag credential, as opposed to just a UserType badge. */
+export function hasRfidCredential(user: DoorLockUser): boolean {
+    return rfidCredentialIndex(user) !== null;
+}
+
 /** The lock-wide ExpiringUserTimeout, phrased for display next to an ExpiringUser's badge. */
 export function formatExpiringTimeoutHint(minutes: number | null): string | null {
     if (minutes === null) return null;
@@ -681,6 +726,11 @@ export function formatExpiringTimeoutHint(minutes: number | null): string | null
 /** Encode a PIN for the octstr PinCode field, which reaches the lock as base64. */
 export function encodePinCode(pin: string): string {
     return btoa(String.fromCharCode(...new TextEncoder().encode(pin)));
+}
+
+/** RfidCode reaches the lock the same way PinCode does: UTF-8 bytes of its hex-digit string, base64-encoded. */
+export function encodeRfidCode(code: string): string {
+    return encodePinCode(code);
 }
 
 export async function readWeekDaySchedule(
@@ -902,15 +952,16 @@ async function getCredentialStatus(
 }
 
 /**
- * The lowest unoccupied PIN credential index in `[1, maxIndex]`, or null when every slot is taken.
- * Mirrors nextFreeUserIndex/readUsers: GetCredentialStatus's NextCredentialIndex chains through the
+ * The lowest unoccupied `credentialType` credential index in `[1, maxIndex]`, or null when every slot is
+ * taken. Mirrors nextFreeUserIndex/readUsers: GetCredentialStatus's NextCredentialIndex chains through the
  * *occupied* slots only, so free slots are never queried directly — they are whatever is left over once
  * the occupied ones are collected.
  */
-async function nextFreePinCredentialIndex(
+async function nextFreeCredentialIndex(
     client: MatterClient,
     nodeId: number | bigint,
     endpoint: number,
+    credentialType: number,
     maxIndex: number,
 ): Promise<number | null> {
     const occupied = new Set<number>();
@@ -922,7 +973,7 @@ async function nextFreePinCredentialIndex(
     while (index !== null && visited.size <= maxIndex) {
         if (visited.has(index)) break;
         visited.add(index);
-        const status = await getCredentialStatus(client, nodeId, endpoint, CREDENTIAL_TYPE_PIN, index);
+        const status = await getCredentialStatus(client, nodeId, endpoint, credentialType, index);
         if (status.credentialExists) occupied.add(index);
         index = status.nextCredentialIndex;
     }
@@ -933,26 +984,28 @@ async function nextFreePinCredentialIndex(
 }
 
 /**
- * Attaches a PIN credential to an existing user (SetCredential's "add a credential to an existing user"
- * use case — UserIndex given, UserStatus/UserType left null since the user already has both). `capacity`
+ * Attaches a credential to an existing user (SetCredential's "add a credential to an existing user" use
+ * case — UserIndex given, UserStatus/UserType left null since the user already has both). `capacity`
  * bounds the free-slot search, e.g. `readNumberOfPinUsersSupported(node, endpoint) ?? PIN_CREDENTIAL_SCAN_FALLBACK`.
  */
-export async function attachPinCredential(
+async function attachCredential(
     client: MatterClient,
     nodeId: number | bigint,
     endpoint: number,
     userIndex: number,
-    pin: string,
+    credentialType: number,
+    credentialTypeLabel: string,
+    credentialData: string,
     capacity: number,
 ): Promise<void> {
-    const credentialIndex = await nextFreePinCredentialIndex(client, nodeId, endpoint, capacity);
+    const credentialIndex = await nextFreeCredentialIndex(client, nodeId, endpoint, credentialType, capacity);
     if (credentialIndex === null) {
-        throw new Error("The lock's PIN credential database is full.");
+        throw new Error(`The lock's ${credentialTypeLabel} credential database is full.`);
     }
     const response = await client.deviceCommand(nodeId, endpoint, DOOR_LOCK_CLUSTER_ID, "SetCredential", {
         operationType: OPERATION_TYPE_ADD,
-        credential: { credentialType: CREDENTIAL_TYPE_PIN, credentialIndex },
-        credentialData: encodePinCode(pin),
+        credential: { credentialType, credentialIndex },
+        credentialData,
         userIndex,
         userStatus: null,
         userType: null,
@@ -961,6 +1014,62 @@ export async function attachPinCredential(
     if (status !== 0) {
         throw new Error(status === null ? "The lock did not report a result." : getMatterStatusName(status));
     }
+}
+
+export async function attachPinCredential(
+    client: MatterClient,
+    nodeId: number | bigint,
+    endpoint: number,
+    userIndex: number,
+    pin: string,
+    capacity: number,
+): Promise<void> {
+    await attachCredential(
+        client,
+        nodeId,
+        endpoint,
+        userIndex,
+        CREDENTIAL_TYPE_PIN,
+        "PIN",
+        encodePinCode(pin),
+        capacity,
+    );
+}
+
+/** Attaches an RFID/NFC tag credential to an existing user; see attachPinCredential for the shared mechanics. */
+export async function attachRfidCredential(
+    client: MatterClient,
+    nodeId: number | bigint,
+    endpoint: number,
+    userIndex: number,
+    rfidCode: string,
+    capacity: number,
+): Promise<void> {
+    await attachCredential(
+        client,
+        nodeId,
+        endpoint,
+        userIndex,
+        CREDENTIAL_TYPE_RFID,
+        "RFID",
+        encodeRfidCode(rfidCode),
+        capacity,
+    );
+}
+
+/**
+ * Removes one credential slot (ClearCredential) without touching the user record it belongs to — unlike
+ * removeUser, which deletes the user and every credential it holds.
+ */
+export async function clearRfidCredential(
+    client: MatterClient,
+    nodeId: number | bigint,
+    endpoint: number,
+    credentialIndex: number,
+): Promise<void> {
+    await client.deviceCommand(nodeId, endpoint, DOOR_LOCK_CLUSTER_ID, "ClearCredential", {
+        credential: { credentialType: CREDENTIAL_TYPE_RFID, credentialIndex },
+    });
 }
 
 export async function removeUser(

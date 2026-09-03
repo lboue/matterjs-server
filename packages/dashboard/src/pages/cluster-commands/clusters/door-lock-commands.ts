@@ -14,6 +14,8 @@ import {
     mdiAccountRemoveOutline,
     mdiCalendarRange,
     mdiCalendarWeek,
+    mdiCardPlusOutline,
+    mdiCardRemoveOutline,
     mdiClose,
     mdiContentSaveOutline,
     mdiLock,
@@ -32,8 +34,10 @@ import { handleAsync } from "../../../util/async-handler.js";
 import {
     addUser,
     attachPinCredential,
+    attachRfidCredential,
     buildDaySegments,
     clearHolidaySchedule,
+    clearRfidCredential,
     clearWeekDaySchedule,
     clearYearDaySchedule,
     DAY_BITS,
@@ -49,6 +53,7 @@ import {
     formatWallClock,
     defaultHolidayMode,
     hasPinCredential,
+    hasRfidCredential,
     holidayModeChoices,
     formatTimeOfDay,
     formatUserLabel,
@@ -72,8 +77,11 @@ import {
     readLockState,
     readLockType,
     readMaxPinCodeLength,
+    readMaxRfidCodeLength,
     readMinPinCodeLength,
+    readMinRfidCodeLength,
     readNumberOfPinUsersSupported,
+    readNumberOfRfidUsersSupported,
     readTotalUsersSupported,
     readUser,
     readUsers,
@@ -83,6 +91,8 @@ import {
     readYearDaySchedule,
     readYearDaySchedulesPerUser,
     requiresPinForRemoteOperation,
+    rfidCodeLengthError,
+    rfidCredentialIndex,
     SCHEDULE_INDEX_ALL,
     supportedOperatingModes,
     supportsCommand,
@@ -125,6 +135,9 @@ const USER_SCAN_FALLBACK = 32;
 
 /** Bounds the free PIN credential slot search on a lock that leaves NumberOfPinUsersSupported unreported. */
 const PIN_CREDENTIAL_SCAN_FALLBACK = 32;
+
+/** Bounds the free RFID credential slot search on a lock that leaves NumberOfRfidUsersSupported unreported. */
+const RFID_CREDENTIAL_SCAN_FALLBACK = 32;
 
 /** UserTypeEnum.UnrestrictedUser — the default "Standard" choice in the add-user editor. */
 const USER_TYPE_STANDARD = 0;
@@ -180,6 +193,9 @@ class DoorLockClusterCommands extends BaseClusterCommands {
     @state() private _newUserType = USER_TYPE_STANDARD;
     @state() private _newUserPin = "";
     @state() private _userEditorError?: string;
+    @state() private _addingRfidCard = false;
+    @state() private _newRfidCode = "";
+    @state() private _rfidEditorError?: string;
     @state() private _expiringTimeoutInput = "";
     @state() private _showEmptyWeekDay = false;
     @state() private _showEmptyYearDay = false;
@@ -241,6 +257,9 @@ class DoorLockClusterCommands extends BaseClusterCommands {
             this._newUserType = USER_TYPE_STANDARD;
             this._newUserPin = "";
             this._userEditorError = undefined;
+            this._addingRfidCard = false;
+            this._newRfidCode = "";
+            this._rfidEditorError = undefined;
             this._expiringTimeoutInput = "";
             this.#expiringTimeoutSyncedFor = null;
             this._showEmptyWeekDay = false;
@@ -450,6 +469,8 @@ class DoorLockClusterCommands extends BaseClusterCommands {
         this._editor = null;
         this._editorError = undefined;
         this._scheduleLoadError = undefined;
+        this._addingRfidCard = false;
+        this._rfidEditorError = undefined;
         handleAsync(() => this.#loadSchedules(this.node, this.endpoint, userIndex))();
     }
 
@@ -859,6 +880,80 @@ class DoorLockClusterCommands extends BaseClusterCommands {
         }
     }
 
+    #startAddRfidCard() {
+        this._rfidEditorError = undefined;
+        this._newRfidCode = "";
+        this._addingRfidCard = true;
+    }
+
+    #cancelAddRfidCard() {
+        this._addingRfidCard = false;
+        this._rfidEditorError = undefined;
+    }
+
+    async #saveRfidCard() {
+        const node = this.node;
+        const endpoint = this.endpoint;
+        const userIndex = this._selectedUserIndex;
+        if (userIndex === null) return;
+        const code = this._newRfidCode.trim();
+        const codeError = rfidCodeLengthError(
+            code,
+            readMinRfidCodeLength(node, endpoint),
+            readMaxRfidCodeLength(node, endpoint),
+        );
+        if (codeError !== null) {
+            this._rfidEditorError = codeError;
+            return;
+        }
+        if (this._busy) return;
+        const busyGeneration = this.#busyGeneration;
+        this._busy = true;
+        try {
+            const capacity = readNumberOfRfidUsersSupported(node, endpoint) ?? RFID_CREDENTIAL_SCAN_FALLBACK;
+            await attachRfidCredential(this.client, node.node_id, endpoint, userIndex, code, capacity);
+            if (!this.isSameContext(node, endpoint)) return;
+            this._addingRfidCard = false;
+            this._newRfidCode = "";
+            this._rfidEditorError = undefined;
+            this.#usersRequested = true;
+            await this.#loadUsers();
+        } catch (error) {
+            if (!this.isSameContext(node, endpoint)) return;
+            this._rfidEditorError = errorText(error);
+        } finally {
+            if (this.#busyGeneration === busyGeneration) this._busy = false;
+        }
+    }
+
+    async #removeRfidCard(user: DoorLockUser) {
+        const credentialIndex = rfidCredentialIndex(user);
+        if (credentialIndex === null) return;
+        // Captured before the confirmation dialog's await: if the panel moves to a different lock while it
+        // is open, confirming must not clear a same-numbered credential slot on the newly displayed lock.
+        const node = this.node;
+        const endpoint = this.endpoint;
+        const confirmed = await showPromptDialog({
+            title: "Remove RFID tag",
+            text: `The RFID/NFC tag credential of ${formatUserLabel(user)} will be removed from the lock.`,
+            confirmText: "Remove",
+        });
+        if (!confirmed || !this.isSameContext(node, endpoint)) return;
+        if (this._busy) return;
+        const busyGeneration = this.#busyGeneration;
+        this._busy = true;
+        try {
+            await clearRfidCredential(this.client, node.node_id, endpoint, credentialIndex);
+            if (!this.isSameContext(node, endpoint)) return;
+            this.#usersRequested = true;
+            await this.#loadUsers();
+        } catch (error) {
+            this.#reportFailure("Remove RFID tag failed", error, node, endpoint);
+        } finally {
+            if (this.#busyGeneration === busyGeneration) this._busy = false;
+        }
+    }
+
     override render() {
         if (!this.node || this.cluster !== DOOR_LOCK_CLUSTER_ID) return nothing;
         return html`${this.#renderLockPanel()}${this.#schedulesSupported() ? this.#renderSchedulePanel() : nothing}`;
@@ -1012,6 +1107,8 @@ class DoorLockClusterCommands extends BaseClusterCommands {
         // UserIndex to NumberOfTotalUsersSupported, and USER_SCAN_FALLBACK only bounds the read walk.
         const capacityKnown = readTotalUsersSupported(this.node, this.endpoint) !== null;
         const canAddUser = users !== undefined && capacityKnown && this._freeUserIndex !== null;
+        const selectedUser = users?.find(candidate => candidate.userIndex === this._selectedUserIndex);
+        const rfidActive = isFeatureActive(this.node, this.endpoint, "RID");
 
         return html`
             <div class="command-row">
@@ -1046,6 +1143,27 @@ class DoorLockClusterCommands extends BaseClusterCommands {
                               >
                                   <ha-svg-icon .path=${mdiAccountRemoveOutline}></ha-svg-icon>
                               </md-outlined-icon-button>
+                              ${
+                                  rfidActive && selectedUser !== undefined
+                                      ? hasRfidCredential(selectedUser)
+                                          ? html`<md-outlined-icon-button
+                                                title="Remove RFID tag"
+                                                aria-label="Remove RFID tag"
+                                                ?disabled=${busy}
+                                                @click=${handleAsync(() => this.#removeRfidCard(selectedUser))}
+                                            >
+                                                <ha-svg-icon .path=${mdiCardRemoveOutline}></ha-svg-icon>
+                                            </md-outlined-icon-button>`
+                                          : html`<md-outlined-icon-button
+                                                title="Add RFID tag"
+                                                aria-label="Add RFID tag"
+                                                ?disabled=${busy || this._addingRfidCard}
+                                                @click=${() => this.#startAddRfidCard()}
+                                            >
+                                                <ha-svg-icon .path=${mdiCardPlusOutline}></ha-svg-icon>
+                                            </md-outlined-icon-button>`
+                                      : nothing
+                              }
                           `
                 }
                 <md-outlined-button
@@ -1073,6 +1191,7 @@ class DoorLockClusterCommands extends BaseClusterCommands {
                 }
             </div>
             ${this.#renderExpiringTimeoutRow()} ${this._addingUser ? this.#renderAddUserEditor() : nothing}
+            ${this._addingRfidCard ? this.#renderAddRfidCardEditor() : nothing}
         `;
     }
 
@@ -1177,6 +1296,47 @@ class DoorLockClusterCommands extends BaseClusterCommands {
         `;
     }
 
+    /** Attaches an RFID/NFC tag to the currently selected user (SetCredential's add-to-existing-user use case). */
+    #renderAddRfidCardEditor(): TemplateResult {
+        const minRfidLength = readMinRfidCodeLength(this.node, this.endpoint);
+        const maxRfidLength = readMaxRfidCodeLength(this.node, this.endpoint);
+        return html`
+            <div class="editor">
+                <div class="editor-row">
+                    <label for="newRfidCode">RFID/NFC tag UID (hex):</label>
+                    <input
+                        id="newRfidCode"
+                        type="text"
+                        autocomplete="off"
+                        placeholder="04A3B2C1"
+                        maxlength=${maxRfidLength ?? nothing}
+                        .value=${live(this._newRfidCode)}
+                        @input=${(event: Event) => {
+                            this._newRfidCode = (event.target as HTMLInputElement).value;
+                        }}
+                    />
+                    ${
+                        minRfidLength !== null || maxRfidLength !== null
+                            ? html`<span class="meta"> ${minRfidLength ?? 1}–${maxRfidLength ?? "?"} hex digits </span>`
+                            : nothing
+                    }
+                    <md-outlined-button ?disabled=${this._busy} @click=${handleAsync(() => this.#saveRfidCard())}>
+                        <ha-svg-icon slot="icon" .path=${mdiContentSaveOutline}></ha-svg-icon>
+                        Save
+                    </md-outlined-button>
+                    <md-outlined-icon-button
+                        title="Cancel"
+                        aria-label="Cancel"
+                        @click=${() => this.#cancelAddRfidCard()}
+                    >
+                        <ha-svg-icon .path=${mdiClose}></ha-svg-icon>
+                    </md-outlined-icon-button>
+                </div>
+                ${this._rfidEditorError !== undefined ? html`<p class="error">${this._rfidEditorError}</p>` : nothing}
+            </div>
+        `;
+    }
+
     #renderUserBadges(): TemplateResult | typeof nothing {
         const user = this._users?.find(candidate => candidate.userIndex === this._selectedUserIndex);
         if (user === undefined) return nothing;
@@ -1190,6 +1350,7 @@ class DoorLockClusterCommands extends BaseClusterCommands {
             ${status !== null ? html`<span class="meta">${status}</span>` : nothing}
             ${type !== null ? html`<span class="meta">${type}</span>` : nothing}
             ${hasPinCredential(user) ? html`<span class="meta">PIN</span>` : nothing}
+            ${hasRfidCredential(user) ? html`<span class="meta">RFID</span>` : nothing}
             ${expiringHint !== null ? html`<span class="meta">${expiringHint}</span>` : nothing}
         `;
     }

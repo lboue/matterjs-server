@@ -7,12 +7,15 @@
 import { MatterNode, type MatterClient, type MatterNodeData } from "@matter-server/ws-client";
 import {
     attachPinCredential,
+    attachRfidCredential,
     buildDaySegments,
+    clearRfidCredential,
     decodeHolidayScheduleResponse,
     decodeUserResponse,
     decodeWeekDayScheduleResponse,
     decodeYearDayScheduleResponse,
     encodePinCode,
+    encodeRfidCode,
     formatDaysMask,
     formatExpiringTimeoutHint,
     formatOperatingMode,
@@ -24,6 +27,7 @@ import {
     defaultHolidayMode,
     formatWallClock,
     hasPinCredential,
+    hasRfidCredential,
     holidayModeChoices,
     fromDateTimeInputValue,
     holidayScheduleRangeError,
@@ -36,13 +40,18 @@ import {
     readExpiringUserTimeout,
     readHolidaySchedulesSupported,
     readMaxPinCodeLength,
+    readMaxRfidCodeLength,
     readMinPinCodeLength,
+    readMinRfidCodeLength,
     readNumberOfPinUsersSupported,
+    readNumberOfRfidUsersSupported,
     readTotalUsersSupported,
     readUsers,
     readWeekDaySchedulesPerUser,
     readYearDaySchedulesPerUser,
     requiresPinForRemoteOperation,
+    rfidCodeLengthError,
+    rfidCredentialIndex,
     supportedOperatingModes,
     supportsCommand,
     toDateTimeInputValue,
@@ -104,6 +113,10 @@ describe("door-lock util", () => {
         it("is false when FeatureMap is absent", () => {
             expect(isFeatureActive(node({}), 1, "WDSCH")).to.equal(false);
         });
+        it("resolves RID against the real DoorLock FeatureMap", () => {
+            expect(isFeatureActive(node({ "1/257/65532": 1 << 1 }), 1, "RID")).to.equal(true);
+            expect(isFeatureActive(node({ "1/257/65532": 1 << 4 }), 1, "RID")).to.equal(false);
+        });
     });
 
     describe("attribute readers", () => {
@@ -128,6 +141,13 @@ describe("door-lock util", () => {
             expect(readMaxPinCodeLength(lock, 1)).to.equal(8);
             expect(readMinPinCodeLength(lock, 1)).to.equal(4);
             expect(readNumberOfPinUsersSupported(node({}), 1)).to.equal(null);
+        });
+        it("reads the RFID credential capacity and length bounds", () => {
+            const lock = node({ "1/257/19": 8, "1/257/25": 20, "1/257/26": 8 });
+            expect(readNumberOfRfidUsersSupported(lock, 1)).to.equal(8);
+            expect(readMaxRfidCodeLength(lock, 1)).to.equal(20);
+            expect(readMinRfidCodeLength(lock, 1)).to.equal(8);
+            expect(readNumberOfRfidUsersSupported(node({}), 1)).to.equal(null);
         });
         it("reads ExpiringUserTimeout", () => {
             expect(readExpiringUserTimeout(node({ "1/257/53": 1440 }), 1)).to.equal(1440);
@@ -403,6 +423,18 @@ describe("door-lock util", () => {
                 credentials: [{ credentialType: 2, credentialIndex: 0 }],
             })!;
             expect(hasPinCredential(rfidOnly)).to.equal(false);
+            expect(hasRfidCredential(rfidOnly)).to.equal(true);
+            expect(rfidCredentialIndex(rfidOnly)).to.equal(0);
+        });
+        it("reports no RFID credential when credentials are absent or of another type", () => {
+            expect(hasRfidCredential(decodeUserResponse({ userIndex: 1, userStatus: 1 })!)).to.equal(false);
+            const pinOnly = decodeUserResponse({
+                userIndex: 1,
+                userStatus: 1,
+                credentials: [{ credentialType: 1, credentialIndex: 3 }],
+            })!;
+            expect(hasRfidCredential(pinOnly)).to.equal(false);
+            expect(rfidCredentialIndex(pinOnly)).to.equal(null);
         });
         it("treats a null and an Available status as a free slot", () => {
             expect(decodeUserResponse({ userIndex: 2, userStatus: null })?.occupied).to.equal(false);
@@ -610,6 +642,29 @@ describe("door-lock util", () => {
         });
     });
 
+    describe("rfidCodeLengthError", () => {
+        it("rejects an empty code", () => {
+            expect(rfidCodeLengthError("", null, null)).to.equal("Enter an RFID code.");
+        });
+        it("rejects non-hex characters", () => {
+            expect(rfidCodeLengthError("04A3B2G1", null, null)).to.contain("hex digits");
+        });
+        it("rejects an odd number of hex digits", () => {
+            expect(rfidCodeLengthError("04A3B2C", null, null)).to.contain("even number");
+        });
+        it("accepts any well-formed code when the lock reports no length bounds", () => {
+            expect(rfidCodeLengthError("04A3B2C1", null, null)).to.equal(null);
+        });
+        it("enforces known bounds, using the spec's recommended 4-byte/10-byte UID lengths", () => {
+            // A 4-byte ISO 14443A UID (spec's recommended MinRfidCodeLength) is 8 hex digits.
+            expect(rfidCodeLengthError("04A3B2C1", 8, 20)).to.equal(null);
+            expect(rfidCodeLengthError("04A3B2", 8, 20)).to.contain("at least 8");
+            // A 10-byte UID (spec's recommended MaxRfidCodeLength) is 20 hex digits.
+            expect(rfidCodeLengthError("CF8E87213C4672DA29AA", 8, 20)).to.equal(null);
+            expect(rfidCodeLengthError("C0B2BB7A55E2057C499C42", 8, 20)).to.contain("at most 20");
+        });
+    });
+
     describe("formatExpiringTimeoutHint", () => {
         it("phrases the lock-wide timeout", () => {
             expect(formatExpiringTimeoutHint(1440)).to.equal("Disables 1440 min after first PIN use");
@@ -622,6 +677,12 @@ describe("door-lock util", () => {
     describe("encodePinCode", () => {
         it("encodes the PIN as base64 for the octstr field", () => {
             expect(encodePinCode("1234")).to.equal("MTIzNA==");
+        });
+    });
+
+    describe("encodeRfidCode", () => {
+        it("encodes the RFID code's hex-digit string the same way a PIN is encoded", () => {
+            expect(encodeRfidCode("04A3B2C1")).to.equal(encodePinCode("04A3B2C1"));
         });
     });
 
@@ -727,6 +788,83 @@ describe("door-lock util", () => {
         it("throws the lock's status name when SetCredential reports failure", async () => {
             const { client } = fakeCredentialClient({ occupiedChain: {}, setCredentialResponse: { status: 2 } });
             await expect(attachPinCredential(client, 1, 6, 3, "1234", 5)).to.be.rejectedWith("Unknown(2)");
+        });
+    });
+
+    describe("attachRfidCredential", () => {
+        /** `occupiedChain` maps an occupied RFID credential index to the next occupied one (or null). */
+        function fakeCredentialClient(options: {
+            occupiedChain: Record<number, number | null>;
+            setCredentialResponse?: unknown;
+        }) {
+            const setCredentialCalls = new Array<Record<string, unknown>>();
+            const client = {
+                deviceCommand: (
+                    _nodeId: number | bigint,
+                    _endpointId: number,
+                    _clusterId: number,
+                    commandName: string,
+                    payload: Record<string, unknown> = {},
+                ) => {
+                    if (commandName === "GetCredentialStatus") {
+                        const { credentialIndex } = payload["credential"] as { credentialIndex: number };
+                        const exists = credentialIndex in options.occupiedChain;
+                        return Promise.resolve({
+                            credentialExists: exists,
+                            nextCredentialIndex: exists ? options.occupiedChain[credentialIndex] : null,
+                        });
+                    }
+                    if (commandName === "SetCredential") {
+                        setCredentialCalls.push(payload);
+                        return Promise.resolve(options.setCredentialResponse ?? { status: 0, userIndex: null });
+                    }
+                    throw new Error(`unexpected command ${commandName}`);
+                },
+            } as unknown as MatterClient;
+            return { client, setCredentialCalls };
+        }
+
+        it("attaches the RFID code at the first free credential index", async () => {
+            const { client, setCredentialCalls } = fakeCredentialClient({ occupiedChain: { 1: 2, 2: null } });
+            await attachRfidCredential(client, 1, 6, 3, "04A3B2C1", 5);
+            expect(setCredentialCalls).to.have.length(1);
+            expect(setCredentialCalls[0]?.["credential"]).to.deep.equal({ credentialType: 2, credentialIndex: 3 });
+            expect(setCredentialCalls[0]?.["credentialData"]).to.equal(encodeRfidCode("04A3B2C1"));
+            expect(setCredentialCalls[0]?.["userIndex"]).to.equal(3);
+            expect(setCredentialCalls[0]?.["userStatus"]).to.equal(null);
+            expect(setCredentialCalls[0]?.["userType"]).to.equal(null);
+        });
+
+        it("throws once every slot up to capacity is occupied", async () => {
+            const { client } = fakeCredentialClient({ occupiedChain: { 1: 2, 2: null } });
+            await expect(attachRfidCredential(client, 1, 6, 3, "04A3B2C1", 2)).to.be.rejectedWith("full");
+        });
+
+        it("throws the lock's status name when SetCredential reports failure", async () => {
+            const { client } = fakeCredentialClient({ occupiedChain: {}, setCredentialResponse: { status: 2 } });
+            await expect(attachRfidCredential(client, 1, 6, 3, "04A3B2C1", 5)).to.be.rejectedWith("Unknown(2)");
+        });
+    });
+
+    describe("clearRfidCredential", () => {
+        it("sends ClearCredential targeting the RFID credential type and index", async () => {
+            const calls = new Array<Record<string, unknown>>();
+            const client = {
+                deviceCommand: (
+                    _nodeId: number | bigint,
+                    _endpointId: number,
+                    _clusterId: number,
+                    commandName: string,
+                    payload: Record<string, unknown> = {},
+                ) => {
+                    calls.push({ commandName, ...payload });
+                    return Promise.resolve({});
+                },
+            } as unknown as MatterClient;
+            await clearRfidCredential(client, 1, 6, 3);
+            expect(calls).to.deep.equal([
+                { commandName: "ClearCredential", credential: { credentialType: 2, credentialIndex: 3 } },
+            ]);
         });
     });
 });
