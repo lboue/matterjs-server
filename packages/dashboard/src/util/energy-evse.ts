@@ -4,7 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { toNumber, toText } from "./attribute-shapes.js";
+import type { MatterClient } from "@matter-server/ws-client";
+import { asObject, pickArray, pickBoolean, pickNumber, toNumber, toText } from "./attribute-shapes.js";
 
 export const ENERGY_EVSE_CLUSTER_ID = 153; // 0x99
 
@@ -207,4 +208,152 @@ export function energyEvseInfo(attributes: Record<string, unknown>, endpoint: nu
         plugAndChargeSupported: ((featureMap ?? 0) & FEATURE_BIT_PLUG_AND_CHARGE) !== 0,
         vehicleId: nullableText(attr(attributes, endpoint, ATTR_VEHICLE_ID)),
     };
+}
+
+export async function disableEvse(client: MatterClient, nodeId: number | bigint, endpoint: number): Promise<void> {
+    await client.deviceCommand(nodeId, endpoint, ENERGY_EVSE_CLUSTER_ID, "Disable");
+}
+
+export interface EnableChargingParams {
+    /** null: no expiry. */
+    chargingEnabledUntil: number | null;
+    minimumChargeCurrentA: number;
+    maximumChargeCurrentA: number;
+}
+
+export async function enableCharging(
+    client: MatterClient,
+    nodeId: number | bigint,
+    endpoint: number,
+    params: EnableChargingParams,
+): Promise<void> {
+    await client.deviceCommand(nodeId, endpoint, ENERGY_EVSE_CLUSTER_ID, "EnableCharging", {
+        chargingEnabledUntil: params.chargingEnabledUntil,
+        minimumChargeCurrent: Math.round(params.minimumChargeCurrentA * 1000),
+        maximumChargeCurrent: Math.round(params.maximumChargeCurrentA * 1000),
+    });
+}
+
+export async function startDiagnostics(client: MatterClient, nodeId: number | bigint, endpoint: number): Promise<void> {
+    await client.deviceCommand(nodeId, endpoint, ENERGY_EVSE_CLUSTER_ID, "StartDiagnostics");
+}
+
+export interface EnableDischargingParams {
+    /** null: no expiry. */
+    dischargingEnabledUntil: number | null;
+    maximumDischargeCurrentA: number;
+}
+
+export async function enableDischarging(
+    client: MatterClient,
+    nodeId: number | bigint,
+    endpoint: number,
+    params: EnableDischargingParams,
+): Promise<void> {
+    await client.deviceCommand(nodeId, endpoint, ENERGY_EVSE_CLUSTER_ID, "EnableDischarging", {
+        dischargingEnabledUntil: params.dischargingEnabledUntil,
+        maximumDischargeCurrent: Math.round(params.maximumDischargeCurrentA * 1000),
+    });
+}
+
+export type EvseWeekday = "sunday" | "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday";
+
+/** TargetDayOfWeekBitmap fields per Matter 1.6 §9.3.7.1, in calendar (Monday-first) display order. */
+export const EVSE_WEEKDAYS: { key: EvseWeekday; label: string }[] = [
+    { key: "monday", label: "Mon" },
+    { key: "tuesday", label: "Tue" },
+    { key: "wednesday", label: "Wed" },
+    { key: "thursday", label: "Thu" },
+    { key: "friday", label: "Fri" },
+    { key: "saturday", label: "Sat" },
+    { key: "sunday", label: "Sun" },
+];
+
+export interface EditableChargingTarget {
+    /** Minutes since local midnight, 0-1439. */
+    timeMinutes: number;
+    /** Percent. Mutually exclusive with addedEnergyKWh: set at most one. */
+    targetSoC?: number;
+    /** Mutually exclusive with targetSoC: set at most one. */
+    addedEnergyKWh?: number;
+}
+
+export interface EditableChargingSchedule {
+    days: Partial<Record<EvseWeekday, boolean>>;
+    targets: EditableChargingTarget[];
+}
+
+function decodeChargingTarget(value: unknown): EditableChargingTarget | undefined {
+    const obj = asObject(value);
+    if (obj === null) return undefined;
+    const timeMinutes = pickNumber(obj, "targetTimeMinutesPastMidnight");
+    if (timeMinutes === null) return undefined;
+    const addedEnergy = toNumber(obj.addedEnergy);
+    return {
+        timeMinutes,
+        targetSoC: pickNumber(obj, "targetSoC") ?? undefined,
+        addedEnergyKWh: addedEnergy !== undefined ? addedEnergy / 1_000_000 : undefined,
+    };
+}
+
+function decodeChargingTargetSchedule(value: unknown): EditableChargingSchedule | undefined {
+    const obj = asObject(value);
+    if (obj === null) return undefined;
+    const daysObj = asObject(obj.dayOfWeekForSequence) ?? {};
+    const days: Partial<Record<EvseWeekday, boolean>> = {};
+    for (const { key } of EVSE_WEEKDAYS) {
+        if (pickBoolean(daysObj, key) === true) days[key] = true;
+    }
+    const targets = pickArray(obj, "chargingTargets")
+        .map(decodeChargingTarget)
+        .filter((target): target is EditableChargingTarget => target !== undefined);
+    return { days, targets };
+}
+
+/** Decodes a GetTargets/SetTargets response's ChargingTargetSchedules list. */
+export function decodeChargingTargetSchedules(response: unknown): EditableChargingSchedule[] {
+    const obj = asObject(response);
+    if (obj === null) return [];
+    return pickArray(obj, "chargingTargetSchedules")
+        .map(decodeChargingTargetSchedule)
+        .filter((schedule): schedule is EditableChargingSchedule => schedule !== undefined);
+}
+
+export async function getChargingTargets(
+    client: MatterClient,
+    nodeId: number | bigint,
+    endpoint: number,
+): Promise<EditableChargingSchedule[]> {
+    const response = await client.deviceCommand(nodeId, endpoint, ENERGY_EVSE_CLUSTER_ID, "GetTargets");
+    return decodeChargingTargetSchedules(response);
+}
+
+export async function setChargingTargets(
+    client: MatterClient,
+    nodeId: number | bigint,
+    endpoint: number,
+    schedules: EditableChargingSchedule[],
+): Promise<void> {
+    await client.deviceCommand(nodeId, endpoint, ENERGY_EVSE_CLUSTER_ID, "SetTargets", {
+        chargingTargetSchedules: schedules.map(schedule => ({
+            dayOfWeekForSequence: Object.fromEntries(
+                EVSE_WEEKDAYS.filter(({ key }) => schedule.days[key] === true).map(({ key }) => [key, true]),
+            ),
+            chargingTargets: schedule.targets.map(target => ({
+                targetTimeMinutesPastMidnight: target.timeMinutes,
+                ...(target.targetSoC !== undefined ? { targetSoC: target.targetSoC } : {}),
+                ...(target.addedEnergyKWh !== undefined
+                    ? { addedEnergy: Math.round(target.addedEnergyKWh * 1_000_000) }
+                    : {}),
+            })),
+        })),
+    });
+}
+
+export async function clearChargingTargets(
+    client: MatterClient,
+    nodeId: number | bigint,
+    endpoint: number,
+): Promise<void> {
+    await client.deviceCommand(nodeId, endpoint, ENERGY_EVSE_CLUSTER_ID, "ClearTargets");
 }
