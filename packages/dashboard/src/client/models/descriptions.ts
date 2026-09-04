@@ -8711,7 +8711,7 @@ export const clusters: Record<number, ClusterDescription> = {
             "4": {
                 "bit": 4,
                 "code": "V2X",
-                "label": "V2 X"
+                "label": "V2X"
             }
         }
     },
