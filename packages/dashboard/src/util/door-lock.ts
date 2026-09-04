@@ -700,21 +700,16 @@ export function decodeUserResponse(response: unknown): DoorLockUser | null {
     };
 }
 
-/** Whether a user carries a working PIN credential, as opposed to just a UserType badge. */
-export function hasPinCredential(user: DoorLockUser): boolean {
-    return user.credentials.some(credential => credential.credentialType === CREDENTIAL_TYPE_PIN);
-}
-
-/** The user's RFID/NFC tag credential index, or null when it has none. */
-export function rfidCredentialIndex(user: DoorLockUser): number | null {
-    return (
-        user.credentials.find(credential => credential.credentialType === CREDENTIAL_TYPE_RFID)?.credentialIndex ?? null
-    );
-}
-
-/** Whether a user carries an RFID/NFC tag credential, as opposed to just a UserType badge. */
-export function hasRfidCredential(user: DoorLockUser): boolean {
-    return rfidCredentialIndex(user) !== null;
+/** The display label for a CredentialTypeEnum value, or a numbered fallback for an unrecognized one. */
+export function formatCredentialType(credentialType: number): string {
+    switch (credentialType) {
+        case CREDENTIAL_TYPE_PIN:
+            return "PIN";
+        case CREDENTIAL_TYPE_RFID:
+            return "RFID";
+        default:
+            return `Credential type ${credentialType}`;
+    }
 }
 
 /** The lock-wide ExpiringUserTimeout, phrased for display next to an ExpiringUser's badge. */
@@ -1059,16 +1054,18 @@ export async function attachRfidCredential(
 
 /**
  * Removes one credential slot (ClearCredential) without touching the user record it belongs to — unlike
- * removeUser, which deletes the user and every credential it holds.
+ * removeUser, which deletes the user and every credential it holds. Takes the credential's own type since
+ * a user can hold several credentials of the same type: the (type, index) pair is what identifies the slot.
  */
-export async function clearRfidCredential(
+export async function clearCredential(
     client: MatterClient,
     nodeId: number | bigint,
     endpoint: number,
+    credentialType: number,
     credentialIndex: number,
 ): Promise<void> {
     await client.deviceCommand(nodeId, endpoint, DOOR_LOCK_CLUSTER_ID, "ClearCredential", {
-        credential: { credentialType: CREDENTIAL_TYPE_RFID, credentialIndex },
+        credential: { credentialType, credentialIndex },
     });
 }
 

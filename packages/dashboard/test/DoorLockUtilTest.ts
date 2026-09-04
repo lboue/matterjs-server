@@ -9,13 +9,14 @@ import {
     attachPinCredential,
     attachRfidCredential,
     buildDaySegments,
-    clearRfidCredential,
+    clearCredential,
     decodeHolidayScheduleResponse,
     decodeUserResponse,
     decodeWeekDayScheduleResponse,
     decodeYearDayScheduleResponse,
     encodePinCode,
     encodeRfidCode,
+    formatCredentialType,
     formatDaysMask,
     formatExpiringTimeoutHint,
     formatOperatingMode,
@@ -26,8 +27,6 @@ import {
     formatUserType,
     defaultHolidayMode,
     formatWallClock,
-    hasPinCredential,
-    hasRfidCredential,
     holidayModeChoices,
     fromDateTimeInputValue,
     holidayScheduleRangeError,
@@ -51,7 +50,6 @@ import {
     readYearDaySchedulesPerUser,
     requiresPinForRemoteOperation,
     rfidCodeLengthError,
-    rfidCredentialIndex,
     supportedOperatingModes,
     supportsCommand,
     toDateTimeInputValue,
@@ -413,28 +411,25 @@ describe("door-lock util", () => {
                 credentials: [{ credentialType: 1, credentialIndex: 3 }],
             })!;
             expect(user.credentials).to.deep.equal([{ credentialType: 1, credentialIndex: 3 }]);
-            expect(hasPinCredential(user)).to.equal(true);
         });
-        it("reports no PIN credential when credentials are absent or of another type", () => {
-            expect(hasPinCredential(decodeUserResponse({ userIndex: 1, userStatus: 1 })!)).to.equal(false);
-            const rfidOnly = decodeUserResponse({
+        it("decodes an empty credentials list when the field is absent", () => {
+            expect(decodeUserResponse({ userIndex: 1, userStatus: 1 })!.credentials).to.deep.equal([]);
+        });
+        it("decodes several credentials of the same or different types", () => {
+            const user = decodeUserResponse({
                 userIndex: 1,
                 userStatus: 1,
-                credentials: [{ credentialType: 2, credentialIndex: 0 }],
+                credentials: [
+                    { credentialType: 1, credentialIndex: 3 },
+                    { credentialType: 2, credentialIndex: 0 },
+                    { credentialType: 2, credentialIndex: 1 },
+                ],
             })!;
-            expect(hasPinCredential(rfidOnly)).to.equal(false);
-            expect(hasRfidCredential(rfidOnly)).to.equal(true);
-            expect(rfidCredentialIndex(rfidOnly)).to.equal(0);
-        });
-        it("reports no RFID credential when credentials are absent or of another type", () => {
-            expect(hasRfidCredential(decodeUserResponse({ userIndex: 1, userStatus: 1 })!)).to.equal(false);
-            const pinOnly = decodeUserResponse({
-                userIndex: 1,
-                userStatus: 1,
-                credentials: [{ credentialType: 1, credentialIndex: 3 }],
-            })!;
-            expect(hasRfidCredential(pinOnly)).to.equal(false);
-            expect(rfidCredentialIndex(pinOnly)).to.equal(null);
+            expect(user.credentials).to.deep.equal([
+                { credentialType: 1, credentialIndex: 3 },
+                { credentialType: 2, credentialIndex: 0 },
+                { credentialType: 2, credentialIndex: 1 },
+            ]);
         });
         it("treats a null and an Available status as a free slot", () => {
             expect(decodeUserResponse({ userIndex: 2, userStatus: null })?.occupied).to.equal(false);
@@ -674,6 +669,16 @@ describe("door-lock util", () => {
         });
     });
 
+    describe("formatCredentialType", () => {
+        it("labels the known credential types", () => {
+            expect(formatCredentialType(1)).to.equal("PIN");
+            expect(formatCredentialType(2)).to.equal("RFID");
+        });
+        it("falls back to the raw type for an unrecognized credential type", () => {
+            expect(formatCredentialType(9)).to.equal("Credential type 9");
+        });
+    });
+
     describe("encodePinCode", () => {
         it("encodes the PIN as base64 for the octstr field", () => {
             expect(encodePinCode("1234")).to.equal("MTIzNA==");
@@ -846,8 +851,8 @@ describe("door-lock util", () => {
         });
     });
 
-    describe("clearRfidCredential", () => {
-        it("sends ClearCredential targeting the RFID credential type and index", async () => {
+    describe("clearCredential", () => {
+        it("sends ClearCredential targeting the given credential type and index", async () => {
             const calls = new Array<Record<string, unknown>>();
             const client = {
                 deviceCommand: (
@@ -861,7 +866,7 @@ describe("door-lock util", () => {
                     return Promise.resolve({});
                 },
             } as unknown as MatterClient;
-            await clearRfidCredential(client, 1, 6, 3);
+            await clearCredential(client, 1, 6, 2, 3);
             expect(calls).to.deep.equal([
                 { commandName: "ClearCredential", credential: { credentialType: 2, credentialIndex: 3 } },
             ]);

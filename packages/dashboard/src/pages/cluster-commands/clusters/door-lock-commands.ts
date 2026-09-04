@@ -15,9 +15,9 @@ import {
     mdiCalendarRange,
     mdiCalendarWeek,
     mdiCardPlusOutline,
-    mdiCardRemoveOutline,
     mdiClose,
     mdiContentSaveOutline,
+    mdiKeyPlus,
     mdiLock,
     mdiLockOpenVariant,
     mdiPencilOutline,
@@ -36,13 +36,14 @@ import {
     attachPinCredential,
     attachRfidCredential,
     buildDaySegments,
+    clearCredential,
     clearHolidaySchedule,
-    clearRfidCredential,
     clearWeekDaySchedule,
     clearYearDaySchedule,
     DAY_BITS,
     DAY_LABELS,
     DOOR_LOCK_CLUSTER_ID,
+    formatCredentialType,
     formatDaysMask,
     formatDoorState,
     formatExpiringTimeoutHint,
@@ -52,8 +53,6 @@ import {
     formatOperatingMode,
     formatWallClock,
     defaultHolidayMode,
-    hasPinCredential,
-    hasRfidCredential,
     holidayModeChoices,
     formatTimeOfDay,
     formatUserLabel,
@@ -92,7 +91,6 @@ import {
     readYearDaySchedulesPerUser,
     requiresPinForRemoteOperation,
     rfidCodeLengthError,
-    rfidCredentialIndex,
     SCHEDULE_INDEX_ALL,
     supportedOperatingModes,
     supportsCommand,
@@ -113,6 +111,7 @@ import {
     yearDayScheduleRangeError,
     type DoorLockUser,
     type HolidayScheduleSlot,
+    type UserCredential,
     type WeekDayScheduleSlot,
     type YearDayScheduleSlot,
 } from "../../../util/door-lock.js";
@@ -196,6 +195,9 @@ class DoorLockClusterCommands extends BaseClusterCommands {
     @state() private _addingRfidCard = false;
     @state() private _newRfidCode = "";
     @state() private _rfidEditorError?: string;
+    @state() private _addingPinCode = false;
+    @state() private _newPinCode = "";
+    @state() private _pinEditorError?: string;
     @state() private _expiringTimeoutInput = "";
     @state() private _showEmptyWeekDay = false;
     @state() private _showEmptyYearDay = false;
@@ -260,6 +262,9 @@ class DoorLockClusterCommands extends BaseClusterCommands {
             this._addingRfidCard = false;
             this._newRfidCode = "";
             this._rfidEditorError = undefined;
+            this._addingPinCode = false;
+            this._newPinCode = "";
+            this._pinEditorError = undefined;
             this._expiringTimeoutInput = "";
             this.#expiringTimeoutSyncedFor = null;
             this._showEmptyWeekDay = false;
@@ -378,6 +383,19 @@ class DoorLockClusterCommands extends BaseClusterCommands {
                 ? previousSelection
                 : (users[0]?.userIndex ?? null);
             this._selectedUserIndex = selected;
+            if (selected !== previousSelection) {
+                // The operator did not choose this user, so any open per-user editor is now stale — most
+                // importantly, an open Add PIN/Add RFID editor must not go on to attach its pending value to
+                // whichever different user this landed on.
+                this._addingRfidCard = false;
+                this._newRfidCode = "";
+                this._rfidEditorError = undefined;
+                this._addingPinCode = false;
+                this._newPinCode = "";
+                this._pinEditorError = undefined;
+                this._editor = null;
+                this._editorError = undefined;
+            }
             if (selected !== null) {
                 await this.#loadSchedules(node, endpoint, selected);
             }
@@ -471,6 +489,8 @@ class DoorLockClusterCommands extends BaseClusterCommands {
         this._scheduleLoadError = undefined;
         this._addingRfidCard = false;
         this._rfidEditorError = undefined;
+        this._addingPinCode = false;
+        this._pinEditorError = undefined;
         handleAsync(() => this.#loadSchedules(this.node, this.endpoint, userIndex))();
     }
 
@@ -881,6 +901,8 @@ class DoorLockClusterCommands extends BaseClusterCommands {
     }
 
     #startAddRfidCard() {
+        this._addingPinCode = false;
+        this._pinEditorError = undefined;
         this._rfidEditorError = undefined;
         this._newRfidCode = "";
         this._addingRfidCard = true;
@@ -926,16 +948,16 @@ class DoorLockClusterCommands extends BaseClusterCommands {
         }
     }
 
-    async #removeRfidCard(user: DoorLockUser) {
-        const credentialIndex = rfidCredentialIndex(user);
-        if (credentialIndex === null) return;
+    /** Removes one of the selected user's credentials, identified by its own (type, index) pair. */
+    async #removeCredential(user: DoorLockUser, credential: UserCredential) {
         // Captured before the confirmation dialog's await: if the panel moves to a different lock while it
         // is open, confirming must not clear a same-numbered credential slot on the newly displayed lock.
         const node = this.node;
         const endpoint = this.endpoint;
+        const typeLabel = formatCredentialType(credential.credentialType);
         const confirmed = await showPromptDialog({
-            title: "Remove RFID tag",
-            text: `The RFID/NFC tag credential of ${formatUserLabel(user)} will be removed from the lock.`,
+            title: `Remove ${typeLabel}`,
+            text: `The ${typeLabel} credential #${credential.credentialIndex} of ${formatUserLabel(user)} will be removed from the lock.`,
             confirmText: "Remove",
         });
         if (!confirmed || !this.isSameContext(node, endpoint)) return;
@@ -943,12 +965,56 @@ class DoorLockClusterCommands extends BaseClusterCommands {
         const busyGeneration = this.#busyGeneration;
         this._busy = true;
         try {
-            await clearRfidCredential(this.client, node.node_id, endpoint, credentialIndex);
+            await clearCredential(this.client, node.node_id, endpoint, credential.credentialType, credential.credentialIndex);
             if (!this.isSameContext(node, endpoint)) return;
             this.#usersRequested = true;
             await this.#loadUsers();
         } catch (error) {
-            this.#reportFailure("Remove RFID tag failed", error, node, endpoint);
+            this.#reportFailure(`Remove ${typeLabel} failed`, error, node, endpoint);
+        } finally {
+            if (this.#busyGeneration === busyGeneration) this._busy = false;
+        }
+    }
+
+    #startAddPinCode() {
+        this._addingRfidCard = false;
+        this._rfidEditorError = undefined;
+        this._pinEditorError = undefined;
+        this._newPinCode = "";
+        this._addingPinCode = true;
+    }
+
+    #cancelAddPinCode() {
+        this._addingPinCode = false;
+        this._pinEditorError = undefined;
+    }
+
+    async #savePinCode() {
+        const node = this.node;
+        const endpoint = this.endpoint;
+        const userIndex = this._selectedUserIndex;
+        if (userIndex === null) return;
+        const pin = this._newPinCode.trim();
+        const pinError = pinCodeLengthError(pin, readMinPinCodeLength(node, endpoint), readMaxPinCodeLength(node, endpoint));
+        if (pinError !== null) {
+            this._pinEditorError = pinError;
+            return;
+        }
+        if (this._busy) return;
+        const busyGeneration = this.#busyGeneration;
+        this._busy = true;
+        try {
+            const capacity = readNumberOfPinUsersSupported(node, endpoint) ?? PIN_CREDENTIAL_SCAN_FALLBACK;
+            await attachPinCredential(this.client, node.node_id, endpoint, userIndex, pin, capacity);
+            if (!this.isSameContext(node, endpoint)) return;
+            this._addingPinCode = false;
+            this._newPinCode = "";
+            this._pinEditorError = undefined;
+            this.#usersRequested = true;
+            await this.#loadUsers();
+        } catch (error) {
+            if (!this.isSameContext(node, endpoint)) return;
+            this._pinEditorError = errorText(error);
         } finally {
             if (this.#busyGeneration === busyGeneration) this._busy = false;
         }
@@ -1108,6 +1174,7 @@ class DoorLockClusterCommands extends BaseClusterCommands {
         const capacityKnown = readTotalUsersSupported(this.node, this.endpoint) !== null;
         const canAddUser = users !== undefined && capacityKnown && this._freeUserIndex !== null;
         const selectedUser = users?.find(candidate => candidate.userIndex === this._selectedUserIndex);
+        const pinActive = isFeatureActive(this.node, this.endpoint, "PIN");
         const rfidActive = isFeatureActive(this.node, this.endpoint, "RID");
 
         return html`
@@ -1144,24 +1211,27 @@ class DoorLockClusterCommands extends BaseClusterCommands {
                                   <ha-svg-icon .path=${mdiAccountRemoveOutline}></ha-svg-icon>
                               </md-outlined-icon-button>
                               ${
+                                  pinActive && selectedUser !== undefined
+                                      ? html`<md-outlined-icon-button
+                                            title="Add PIN"
+                                            aria-label="Add PIN"
+                                            ?disabled=${busy || this._addingPinCode}
+                                            @click=${() => this.#startAddPinCode()}
+                                        >
+                                            <ha-svg-icon .path=${mdiKeyPlus}></ha-svg-icon>
+                                        </md-outlined-icon-button>`
+                                      : nothing
+                              }
+                              ${
                                   rfidActive && selectedUser !== undefined
-                                      ? hasRfidCredential(selectedUser)
-                                          ? html`<md-outlined-icon-button
-                                                title="Remove RFID tag"
-                                                aria-label="Remove RFID tag"
-                                                ?disabled=${busy}
-                                                @click=${handleAsync(() => this.#removeRfidCard(selectedUser))}
-                                            >
-                                                <ha-svg-icon .path=${mdiCardRemoveOutline}></ha-svg-icon>
-                                            </md-outlined-icon-button>`
-                                          : html`<md-outlined-icon-button
-                                                title="Add RFID tag"
-                                                aria-label="Add RFID tag"
-                                                ?disabled=${busy || this._addingRfidCard}
-                                                @click=${() => this.#startAddRfidCard()}
-                                            >
-                                                <ha-svg-icon .path=${mdiCardPlusOutline}></ha-svg-icon>
-                                            </md-outlined-icon-button>`
+                                      ? html`<md-outlined-icon-button
+                                            title="Add RFID tag"
+                                            aria-label="Add RFID tag"
+                                            ?disabled=${busy || this._addingRfidCard}
+                                            @click=${() => this.#startAddRfidCard()}
+                                        >
+                                            <ha-svg-icon .path=${mdiCardPlusOutline}></ha-svg-icon>
+                                        </md-outlined-icon-button>`
                                       : nothing
                               }
                           `
@@ -1190,8 +1260,41 @@ class DoorLockClusterCommands extends BaseClusterCommands {
                         : nothing
                 }
             </div>
+            ${selectedUser !== undefined ? this.#renderCredentialsRow(selectedUser) : nothing}
             ${this.#renderExpiringTimeoutRow()} ${this._addingUser ? this.#renderAddUserEditor() : nothing}
+            ${this._addingPinCode ? this.#renderAddPinCodeEditor() : nothing}
             ${this._addingRfidCard ? this.#renderAddRfidCardEditor() : nothing}
+        `;
+    }
+
+    /**
+     * Lists every credential the selected user holds — not just "the" PIN or "the" RFID tag: a user can
+     * carry several credentials of the same type (e.g. two RFID fobs), and SetUser/SetCredential expose all
+     * of them via the user's `credentials` list, keyed by (credentialType, credentialIndex) pairs.
+     */
+    #renderCredentialsRow(user: DoorLockUser): TemplateResult | typeof nothing {
+        if (user.credentials.length === 0) return nothing;
+        const busy = this._busy || this._loadingUsers || this._loadingSchedules;
+        return html`
+            <div class="command-row">
+                <span class="meta">Credentials:</span>
+                ${user.credentials.map(credential => {
+                    const label = `${formatCredentialType(credential.credentialType)} #${credential.credentialIndex}`;
+                    return html`
+                        <span class="chip">
+                            ${label}
+                            <md-outlined-icon-button
+                                title="Remove ${label}"
+                                aria-label="Remove ${label}"
+                                ?disabled=${busy}
+                                @click=${handleAsync(() => this.#removeCredential(user, credential))}
+                            >
+                                <ha-svg-icon .path=${mdiClose}></ha-svg-icon>
+                            </md-outlined-icon-button>
+                        </span>
+                    `;
+                })}
+            </div>
         `;
     }
 
@@ -1307,12 +1410,23 @@ class DoorLockClusterCommands extends BaseClusterCommands {
                     <input
                         id="newRfidCode"
                         type="text"
+                        inputmode="text"
                         autocomplete="off"
                         placeholder="04A3B2C1"
+                        pattern="[0-9A-Fa-f]*"
                         maxlength=${maxRfidLength ?? nothing}
                         .value=${live(this._newRfidCode)}
                         @input=${(event: Event) => {
-                            this._newRfidCode = (event.target as HTMLInputElement).value;
+                            const input = event.target as HTMLInputElement;
+                            const toHex = (s: string) => s.toUpperCase().replace(/[^0-9A-F]/g, "");
+                            // Masking only recases and drops characters, in order, so the caret stays after
+                            // the same hex digits it was after before the transform rather than jumping to
+                            // the end of the field.
+                            const caret = toHex(input.value.slice(0, input.selectionStart ?? input.value.length)).length;
+                            const value = toHex(input.value).slice(0, maxRfidLength ?? undefined);
+                            input.value = value;
+                            input.setSelectionRange(Math.min(caret, value.length), Math.min(caret, value.length));
+                            this._newRfidCode = value;
                         }}
                     />
                     ${
@@ -1337,6 +1451,42 @@ class DoorLockClusterCommands extends BaseClusterCommands {
         `;
     }
 
+    /** Attaches a PIN to the currently selected user (SetCredential's add-to-existing-user use case). */
+    #renderAddPinCodeEditor(): TemplateResult {
+        const minPinLength = readMinPinCodeLength(this.node, this.endpoint);
+        const maxPinLength = readMaxPinCodeLength(this.node, this.endpoint);
+        return html`
+            <div class="editor">
+                <div class="editor-row">
+                    <label for="newPinCode">PIN:</label>
+                    <input
+                        id="newPinCode"
+                        type="password"
+                        autocomplete="off"
+                        maxlength=${maxPinLength ?? nothing}
+                        .value=${live(this._newPinCode)}
+                        @input=${(event: Event) => {
+                            this._newPinCode = (event.target as HTMLInputElement).value;
+                        }}
+                    />
+                    ${
+                        minPinLength !== null || maxPinLength !== null
+                            ? html`<span class="meta"> ${minPinLength ?? 1}–${maxPinLength ?? "?"} characters </span>`
+                            : nothing
+                    }
+                    <md-outlined-button ?disabled=${this._busy} @click=${handleAsync(() => this.#savePinCode())}>
+                        <ha-svg-icon slot="icon" .path=${mdiContentSaveOutline}></ha-svg-icon>
+                        Save
+                    </md-outlined-button>
+                    <md-outlined-icon-button title="Cancel" aria-label="Cancel" @click=${() => this.#cancelAddPinCode()}>
+                        <ha-svg-icon .path=${mdiClose}></ha-svg-icon>
+                    </md-outlined-icon-button>
+                </div>
+                ${this._pinEditorError !== undefined ? html`<p class="error">${this._pinEditorError}</p>` : nothing}
+            </div>
+        `;
+    }
+
     #renderUserBadges(): TemplateResult | typeof nothing {
         const user = this._users?.find(candidate => candidate.userIndex === this._selectedUserIndex);
         if (user === undefined) return nothing;
@@ -1349,8 +1499,6 @@ class DoorLockClusterCommands extends BaseClusterCommands {
         return html`
             ${status !== null ? html`<span class="meta">${status}</span>` : nothing}
             ${type !== null ? html`<span class="meta">${type}</span>` : nothing}
-            ${hasPinCredential(user) ? html`<span class="meta">PIN</span>` : nothing}
-            ${hasRfidCredential(user) ? html`<span class="meta">RFID</span>` : nothing}
             ${expiringHint !== null ? html`<span class="meta">${expiringHint}</span>` : nothing}
         `;
     }
@@ -1952,6 +2100,23 @@ class DoorLockClusterCommands extends BaseClusterCommands {
 
             .meta.warn {
                 color: var(--danger-color);
+            }
+
+            .chip {
+                display: inline-flex;
+                align-items: center;
+                gap: 4px;
+                padding: 2px 4px 2px 10px;
+                border-radius: 8px;
+                font-size: 0.8rem;
+                background: var(--md-sys-color-surface-container-highest);
+                color: var(--md-sys-color-on-surface);
+            }
+
+            .chip md-outlined-icon-button {
+                --md-outlined-icon-button-container-height: 24px;
+                --md-outlined-icon-button-container-width: 24px;
+                --md-outlined-icon-button-icon-size: 14px;
             }
 
             .command-row input[type="password"],
