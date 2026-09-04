@@ -23,13 +23,28 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const EVENT_LIST_ATTRIBUTE_ID = 0xfffa;
 
 /**
+ * Acronyms with an embedded capital preceded by a lowercase letter (e.g. the "C" in "SoC"). decamelize
+ * splits on every lowercase-to-uppercase transition, so it reads that capital as its own word start and
+ * lowercases it with the rest: "SoCReporting" -> "so creporting". Protecting the acronym behind a
+ * digit-suffixed placeholder sidesteps the split, since decamelize does treat digit-to-letter as a boundary.
+ */
+const ACRONYMS = ["SoC"];
+
+/**
  * Convert camelCase name to human-readable label with a title case.
  * e.g., "OnOffLight" -> "On Off Light" when "addSpaces" is set to true, else camelize with first letter uppercase
  */
 function toLabel(name: string, addSpaces = false): string {
-    const words = addSpaces ? decamelize(name, " ") : name;
+    if (!addSpaces) {
+        return name.replace(/\b\w/g, char => char.toUpperCase());
+    }
+    let protectedName = name;
+    ACRONYMS.forEach((acronym, index) => {
+        protectedName = protectedName.split(acronym).join(`Acronym${index}`);
+    });
     // Title case: capitalize the first letter of each word
-    return words.replace(/\b\w/g, char => char.toUpperCase());
+    const label = decamelize(protectedName, " ").replace(/\b\w/g, char => char.toUpperCase());
+    return ACRONYMS.reduce((text, acronym, index) => text.replace(`Acronym${index}`, acronym), label);
 }
 
 interface DeviceType {

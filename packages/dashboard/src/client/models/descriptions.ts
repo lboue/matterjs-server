@@ -8696,7 +8696,7 @@ export const clusters: Record<number, ClusterDescription> = {
             "1": {
                 "bit": 1,
                 "code": "SOC",
-                "label": "So Creporting"
+                "label": "SoC Reporting"
             },
             "2": {
                 "bit": 2,
