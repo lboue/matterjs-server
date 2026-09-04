@@ -270,7 +270,9 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
             }
             .info-grid {
                 display: grid;
-                grid-template-columns: auto 1fr;
+                /* Fixed, not auto: several separate <dl>s share this panel, and each auto-sized
+                   column would size to its own widest label, misaligning the value column across sections. */
+                grid-template-columns: 190px 1fr;
                 gap: 6px 16px;
                 margin: 0;
             }
