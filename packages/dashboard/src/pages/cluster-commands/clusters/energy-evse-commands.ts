@@ -36,6 +36,10 @@ import { registerClusterCommands } from "../registry.js";
 const MAX_SCHEDULES = 7;
 const MAX_TARGETS_PER_SCHEDULE = 10;
 
+/** Matter only reports a status code (e.g. "Failure(1)"), not the device's reason, so name the likely cause. */
+const DIAGNOSTICS_OR_ALREADY_ENABLED_HINT =
+    "If the EVSE is in self-diagnostics mode, or already enabled for charging/discharging, click Disable first and try again.";
+
 function minutesToTimeInputValue(minutes: number): string {
     const hours = Math.floor(minutes / 60) % 24;
     const mins = minutes % 60;
@@ -171,8 +175,17 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                         }
                     </dl>
 
-                    ${this._renderChargingActions()} ${this._renderSession(info.session, info.v2xSupported)}
-                    ${info.v2xSupported ? this._renderV2x(info.dischargingEnabledUntil, info.maximumDischargeCurrentA) : nothing}
+                    ${this._renderChargingActions(info.diagnosticsActive, info.canStartDiagnostics)}
+                    ${this._renderSession(info.session, info.v2xSupported)}
+                    ${
+                        info.v2xSupported
+                            ? this._renderV2x(
+                                  info.dischargingEnabledUntil,
+                                  info.maximumDischargeCurrentA,
+                                  info.diagnosticsActive,
+                              )
+                            : nothing
+                    }
                     ${
                         info.chargingPreferencesSupported
                             ? this._renderChargingPreferences(info, info.soCReportingSupported)
@@ -252,14 +265,18 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
         `;
     }
 
-    private _renderChargingActions(): TemplateResult {
+    private _renderChargingActions(diagnosticsActive: boolean, canStartDiagnostics: boolean): TemplateResult {
         return html`
             <h4>Charging control</h4>
             <div class="command-row">
                 <md-outlined-button @click=${handleAsync(() => this._handleDisable())} ?disabled=${this._busy}>
                     Disable
                 </md-outlined-button>
-                <md-outlined-button @click=${handleAsync(() => this._handleStartDiagnostics())} ?disabled=${this._busy}>
+                <md-outlined-button
+                    @click=${handleAsync(() => this._handleStartDiagnostics())}
+                    ?disabled=${this._busy || !canStartDiagnostics}
+                    title=${canStartDiagnostics ? nothing : "Only available while charging is disabled"}
+                >
                     Start Diagnostics
                 </md-outlined-button>
             </div>
@@ -303,7 +320,11 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                     />
                     A
                 </label>
-                <md-filled-button @click=${handleAsync(() => this._handleEnableCharging())} ?disabled=${this._busy}>
+                <md-filled-button
+                    @click=${handleAsync(() => this._handleEnableCharging())}
+                    ?disabled=${this._busy || diagnosticsActive}
+                    title=${diagnosticsActive ? "Not available while self-diagnostics are active — click Disable first" : nothing}
+                >
                     Enable Charging
                 </md-filled-button>
             </div>
@@ -314,6 +335,7 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
     private _renderV2x(
         dischargingEnabledUntil: number | null | undefined,
         maximumDischargeCurrentA: number | undefined,
+        diagnosticsActive: boolean,
     ): TemplateResult {
         return html`
             <h4>Bidirectional charging (V2X)</h4>
@@ -363,7 +385,11 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                     />
                     A
                 </label>
-                <md-filled-button @click=${handleAsync(() => this._handleEnableDischarging())} ?disabled=${this._busy}>
+                <md-filled-button
+                    @click=${handleAsync(() => this._handleEnableDischarging())}
+                    ?disabled=${this._busy || diagnosticsActive}
+                    title=${diagnosticsActive ? "Not available while self-diagnostics are active — click Disable first" : nothing}
+                >
                     Enable Discharging
                 </md-filled-button>
             </div>
@@ -579,7 +605,7 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
         try {
             await startDiagnostics(this.client, node.node_id, endpoint);
         } catch (error) {
-            this.#reportFailure("Start diagnostics failed", error);
+            this.#reportFailure("Start diagnostics failed", error, DIAGNOSTICS_OR_ALREADY_ENABLED_HINT);
         } finally {
             if (this.#busyGeneration === busyGeneration) this._busy = false;
         }
@@ -612,7 +638,7 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                 maximumChargeCurrentA: this._maxChargeCurrentA,
             });
         } catch (error) {
-            this.#reportFailure("Enable charging failed", error);
+            this.#reportFailure("Enable charging failed", error, DIAGNOSTICS_OR_ALREADY_ENABLED_HINT);
         } finally {
             if (this.#busyGeneration === busyGeneration) this._busy = false;
         }
@@ -640,16 +666,22 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                 maximumDischargeCurrentA: this._maxDischargeCurrentA,
             });
         } catch (error) {
-            this.#reportFailure("Enable discharging failed", error);
+            this.#reportFailure("Enable discharging failed", error, DIAGNOSTICS_OR_ALREADY_ENABLED_HINT);
         } finally {
             if (this.#busyGeneration === busyGeneration) this._busy = false;
         }
     }
 
-    #reportFailure(title: string, error: unknown) {
-        showAlertDialog({ title, text: errorText(error) }).catch(alertError =>
-            console.error("Failed to show alert dialog:", alertError),
-        );
+    /**
+     * `hint` adds a line of general guidance below the raw failure: Matter only sends the controller a
+     * status code (e.g. "Failure(1)"), never the descriptive reason the device logged locally.
+     */
+    #reportFailure(title: string, error: unknown, hint?: string) {
+        const text = hint
+            ? html`<p>${errorText(error)}</p>
+                  <p>${hint}</p>`
+            : errorText(error);
+        showAlertDialog({ title, text }).catch(alertError => console.error("Failed to show alert dialog:", alertError));
     }
 
     private async _handleLoadSchedule() {
