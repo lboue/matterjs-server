@@ -40,6 +40,10 @@ const FEATURE_BIT_SOC_REPORTING = 0b10;
 const FEATURE_BIT_PLUG_AND_CHARGE = 0b100;
 const FEATURE_BIT_V2X = 0b10000;
 
+const SUPPLY_STATE_DISABLED = 0;
+/** Self-diagnostics mode: EnableCharging/EnableDischarging are rejected until Disable clears it. */
+const SUPPLY_STATE_DISABLED_DIAGNOSTICS = 4;
+
 const STATE_NAMES: Record<number, string> = {
     0: "Not plugged in",
     1: "Plugged in, no demand",
@@ -90,6 +94,10 @@ export interface EnergyEvseInfo {
     supported: boolean;
     state?: string;
     supplyState?: string;
+    /** SupplyState is DisabledDiagnostics: EnableCharging/EnableDischarging are rejected until Disable clears it. */
+    diagnosticsActive: boolean;
+    /** Whether StartDiagnostics is expected to succeed right now (the device only accepts it while fully disabled). */
+    canStartDiagnostics: boolean;
     faultState?: string;
     faultActive: boolean;
     /** undefined: not reported. null: no expiry, i.e. charging stays enabled until disabled explicitly. */
@@ -169,11 +177,14 @@ function decodeSession(attributes: Record<string, unknown>, endpoint: number): S
 export function energyEvseInfo(attributes: Record<string, unknown>, endpoint: number): EnergyEvseInfo {
     const featureMap = toNumber(attr(attributes, endpoint, ATTR_FEATURE_MAP));
     const faultStateRaw = toNumber(attr(attributes, endpoint, ATTR_FAULT_STATE));
+    const supplyStateRaw = toNumber(attr(attributes, endpoint, ATTR_SUPPLY_STATE));
 
     return {
         supported: featureMap !== undefined,
         state: enumName(attr(attributes, endpoint, ATTR_STATE), STATE_NAMES),
-        supplyState: enumName(attr(attributes, endpoint, ATTR_SUPPLY_STATE), SUPPLY_STATE_NAMES),
+        supplyState: enumName(supplyStateRaw, SUPPLY_STATE_NAMES),
+        diagnosticsActive: supplyStateRaw === SUPPLY_STATE_DISABLED_DIAGNOSTICS,
+        canStartDiagnostics: supplyStateRaw === undefined || supplyStateRaw === SUPPLY_STATE_DISABLED,
         faultState: enumName(faultStateRaw, FAULT_STATE_NAMES),
         faultActive: faultStateRaw !== undefined && faultStateRaw !== 0,
         chargingEnabledUntil: nullableNumber(attr(attributes, endpoint, ATTR_CHARGING_ENABLED_UNTIL)),
