@@ -45,7 +45,12 @@ function toLabel(name: string, addSpaces = false): string {
     });
     // Title case: capitalize the first letter of each word
     const label = decamelize(protectedName, " ").replace(/\b\w/g, char => char.toUpperCase());
-    return ACRONYMS.reduce((text, acronym, index) => text.replace(`Acronym${index}`, acronym), label);
+    // Global, and tolerant of a separator decamelize might insert before the digit (e.g. "Acronym 0"):
+    // a plain string .replace() would only fix the first occurrence and only the exact "AcronymN" spelling.
+    return ACRONYMS.reduce(
+        (text, acronym, index) => text.replace(new RegExp(`Acronym\\s*${index}`, "g"), acronym),
+        label,
+    );
 }
 
 interface DeviceType {

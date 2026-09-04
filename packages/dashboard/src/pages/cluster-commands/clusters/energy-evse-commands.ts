@@ -512,6 +512,7 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                             <button
                                 type="button"
                                 class="day-chip ${schedule.days[key] ? "selected" : ""}"
+                                aria-pressed=${schedule.days[key] ? "true" : "false"}
                                 @click=${() => this._handleToggleDay(scheduleIndex, key)}
                             >
                                 ${label}
