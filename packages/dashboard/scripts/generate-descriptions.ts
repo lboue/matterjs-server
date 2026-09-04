@@ -23,12 +23,13 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const EVENT_LIST_ATTRIBUTE_ID = 0xfffa;
 
 /**
- * Acronyms with an embedded capital preceded by a lowercase letter (e.g. the "C" in "SoC"). decamelize
- * splits on every lowercase-to-uppercase transition, so it reads that capital as its own word start and
- * lowercases it with the rest: "SoCReporting" -> "so creporting". Protecting the acronym behind a
+ * Names decamelize can't segment as a unit: an acronym with an embedded capital preceded by a lowercase
+ * letter (e.g. the "C" in "SoC"), or letters split apart by a digit (e.g. "V2X"). decamelize splits on
+ * every lowercase-to-uppercase and letter-to-digit transition, so it reads each of those as its own word
+ * start: "SoCReporting" -> "so creporting", "V2X" -> "v2 x". Protecting the acronym behind a
  * digit-suffixed placeholder sidesteps the split, since decamelize does treat digit-to-letter as a boundary.
  */
-const ACRONYMS = ["SoC"];
+const ACRONYMS = ["SoC", "V2X"];
 
 /**
  * Convert camelCase name to human-readable label with a title case.
