@@ -27,7 +27,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function decodeLabelListValues(raw: unknown): string[] {
     return attributeArray(raw)
         .map(entry => (isRecord(entry) ? entry["1"] : undefined))
-        .filter((value): value is string => typeof value === "string" && value.length > 0);
+        .filter((value): value is string => typeof value === "string")
+        .map(value => value.trim())
+        .filter(value => value.length > 0);
 }
 
 /**
