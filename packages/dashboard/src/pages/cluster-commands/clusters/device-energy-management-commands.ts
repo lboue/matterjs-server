@@ -179,12 +179,14 @@ export class DeviceEnergyManagementClusterCommands extends BaseClusterCommands {
 
     /** Nominal draw when the device commits to one, otherwise the band it stays inside. */
     private _slotPower(slot: ForecastSlotInfo, info: DeviceEnergyManagementInfo): TemplateResult | typeof nothing {
-        const generating = (slot.nominalPowerW ?? slot.energyWh ?? 0) < 0;
+        const generating = (slot.nominalPowerW ?? slot.energyWh ?? slot.minPowerW ?? slot.maxPowerW ?? 0) < 0;
         const value =
             slot.nominalPowerW !== undefined
                 ? formatPower(Math.abs(slot.nominalPowerW))
                 : slot.minPowerW !== undefined && slot.maxPowerW !== undefined
-                  ? `${formatPower(Math.abs(slot.minPowerW))}–${formatPower(Math.abs(slot.maxPowerW))}`
+                  ? generating
+                      ? `${formatPower(Math.abs(slot.maxPowerW))}–${formatPower(Math.abs(slot.minPowerW))}`
+                      : `${formatPower(Math.abs(slot.minPowerW))}–${formatPower(Math.abs(slot.maxPowerW))}`
                   : undefined;
         if (value === undefined) return nothing;
         return html`
