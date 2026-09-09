@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { redactSensitiveCommandFields } from "@matter-server/ws-client";
 import {
     MatterError,
     Diagnostic,
@@ -679,7 +680,17 @@ export class WebSocketControllerHandler implements WebServerHandler {
         let messageId: string | undefined;
         let command: string | undefined;
         try {
-            logger.debug(`[${connId}] WebSocket request`, () => data);
+            // Redacted defensively: a request too malformed to redact still needs to reach the log verbatim,
+            // since it's the only record of why parsing (below) is about to fail.
+            logger.debug(`[${connId}] WebSocket request`, () => {
+                try {
+                    return toBigIntAwareJson(
+                        redactSensitiveCommandFields(parseBigIntAwareJson(data) as { args?: unknown }),
+                    );
+                } catch {
+                    return data;
+                }
+            });
             const request = parseBigIntAwareJson(data) as { message_id: string; command: string; args: any };
             const { args } = request;
             messageId = request.message_id;

@@ -675,7 +675,7 @@ export function hasPinCredential(user: DoorLockUser): boolean {
 /** The lock-wide ExpiringUserTimeout, phrased for display next to an ExpiringUser's badge. */
 export function formatExpiringTimeoutHint(minutes: number | null): string | null {
     if (minutes === null) return null;
-    return `Disables ${minutes} min after first PIN use`;
+    return `Disables ${minutes} min after first credential use`;
 }
 
 /** Encode a PIN for the octstr PinCode field, which reaches the lock as base64. */
@@ -877,6 +877,16 @@ function decodeSetCredentialResponse(response: unknown): { status: number | null
     };
 }
 
+/** DlStatus values SetCredential can return beyond the generic interaction-model status set (spec §5.2.6.20). */
+const SET_CREDENTIAL_STATUS_NAMES: Record<number, string> = {
+    2: "Duplicate",
+    3: "Occupied",
+};
+
+function formatSetCredentialStatus(status: number): string {
+    return SET_CREDENTIAL_STATUS_NAMES[status] ?? getMatterStatusName(status);
+}
+
 function decodeCredentialStatusResponse(response: unknown): {
     credentialExists: boolean;
     nextCredentialIndex: number | null;
@@ -916,11 +926,12 @@ async function nextFreePinCredentialIndex(
     const occupied = new Set<number>();
     // Visited is tracked separately from occupied: a lock reporting NextCredentialIndex values that never
     // flag as existing (malformed, or genuinely free slots surfaced by mistake) must not loop forever just
-    // because `occupied` never grows.
+    // because `occupied` never grows. The [1, maxIndex] bound below guards the same malformed-lock case for
+    // an out-of-range index, which would otherwise keep "visited" growing on values the candidate scan below
+    // never looks at.
     const visited = new Set<number>();
     let index: number | null = 1;
-    while (index !== null && visited.size <= maxIndex) {
-        if (visited.has(index)) break;
+    while (index !== null && index >= 1 && index <= maxIndex && !visited.has(index)) {
         visited.add(index);
         const status = await getCredentialStatus(client, nodeId, endpoint, CREDENTIAL_TYPE_PIN, index);
         if (status.credentialExists) occupied.add(index);
@@ -935,7 +946,8 @@ async function nextFreePinCredentialIndex(
 /**
  * Attaches a PIN credential to an existing user (SetCredential's "add a credential to an existing user"
  * use case — UserIndex given, UserStatus/UserType left null since the user already has both). `capacity`
- * bounds the free-slot search, e.g. `readNumberOfPinUsersSupported(node, endpoint) ?? PIN_CREDENTIAL_SCAN_FALLBACK`.
+ * bounds the free-slot search — pass the lock's actual `readNumberOfPinUsersSupported(node, endpoint)`
+ * rather than a guessed fallback, since a guess too high can select an index beyond the lock's real table.
  */
 export async function attachPinCredential(
     client: MatterClient,
@@ -959,7 +971,11 @@ export async function attachPinCredential(
     });
     const { status } = decodeSetCredentialResponse(response);
     if (status !== 0) {
-        throw new Error(status === null ? "The lock did not report a result." : getMatterStatusName(status));
+        throw new Error(
+            status === null
+                ? "Setting the PIN credential failed: the lock did not report a result."
+                : `Setting the PIN credential failed: ${formatSetCredentialStatus(status)} (${status})`,
+        );
     }
 }
 

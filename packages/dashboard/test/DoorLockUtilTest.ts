@@ -612,7 +612,7 @@ describe("door-lock util", () => {
 
     describe("formatExpiringTimeoutHint", () => {
         it("phrases the lock-wide timeout", () => {
-            expect(formatExpiringTimeoutHint(1440)).to.equal("Disables 1440 min after first PIN use");
+            expect(formatExpiringTimeoutHint(1440)).to.equal("Disables 1440 min after first credential use");
         });
         it("is absent when the lock does not report the attribute", () => {
             expect(formatExpiringTimeoutHint(null)).to.equal(null);
@@ -682,6 +682,7 @@ describe("door-lock util", () => {
             setCredentialResponse?: unknown;
         }) {
             const setCredentialCalls = new Array<Record<string, unknown>>();
+            const credentialStatusIndexes = new Array<number>();
             const client = {
                 deviceCommand: (
                     _nodeId: number | bigint,
@@ -692,6 +693,7 @@ describe("door-lock util", () => {
                 ) => {
                     if (commandName === "GetCredentialStatus") {
                         const { credentialIndex } = payload["credential"] as { credentialIndex: number };
+                        credentialStatusIndexes.push(credentialIndex);
                         const exists = credentialIndex in options.occupiedChain;
                         return Promise.resolve({
                             credentialExists: exists,
@@ -705,7 +707,7 @@ describe("door-lock util", () => {
                     throw new Error(`unexpected command ${commandName}`);
                 },
             } as unknown as MatterClient;
-            return { client, setCredentialCalls };
+            return { client, setCredentialCalls, credentialStatusIndexes };
         }
 
         it("attaches the PIN at the first free credential index", async () => {
@@ -724,9 +726,23 @@ describe("door-lock util", () => {
             await expect(attachPinCredential(client, 1, 6, 3, "1234", 2)).to.be.rejectedWith("full");
         });
 
-        it("throws the lock's status name when SetCredential reports failure", async () => {
-            const { client } = fakeCredentialClient({ occupiedChain: {}, setCredentialResponse: { status: 2 } });
-            await expect(attachPinCredential(client, 1, 6, 3, "1234", 5)).to.be.rejectedWith("Unknown(2)");
+        it("stops scanning once NextCredentialIndex reports a value outside [1, maxIndex]", async () => {
+            const { client, credentialStatusIndexes } = fakeCredentialClient({ occupiedChain: { 1: 999 } });
+            await attachPinCredential(client, 1, 6, 3, "1234", 5);
+            expect(credentialStatusIndexes).to.deep.equal([1]);
+        });
+
+        it("maps the Door Lock-specific Duplicate/Occupied statuses instead of falling back to Unknown", async () => {
+            const duplicate = fakeCredentialClient({ occupiedChain: {}, setCredentialResponse: { status: 2 } });
+            await expect(attachPinCredential(duplicate.client, 1, 6, 3, "1234", 5)).to.be.rejectedWith("Duplicate (2)");
+
+            const occupied = fakeCredentialClient({ occupiedChain: {}, setCredentialResponse: { status: 3 } });
+            await expect(attachPinCredential(occupied.client, 1, 6, 3, "1234", 5)).to.be.rejectedWith("Occupied (3)");
+        });
+
+        it("falls back to the generic status name and numeric code for other failures", async () => {
+            const { client } = fakeCredentialClient({ occupiedChain: {}, setCredentialResponse: { status: 135 } });
+            await expect(attachPinCredential(client, 1, 6, 3, "1234", 5)).to.be.rejectedWith("ConstraintError (135)");
         });
     });
 });

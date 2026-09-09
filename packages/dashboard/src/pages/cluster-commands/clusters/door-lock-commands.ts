@@ -123,8 +123,8 @@ const DATE_TIME_MAX = "2136-02-07T06:28:15";
 /** Bounds the GetUser walk on a lock that leaves NumberOfTotalUsersSupported unreported. */
 const USER_SCAN_FALLBACK = 32;
 
-/** Bounds the free PIN credential slot search on a lock that leaves NumberOfPinUsersSupported unreported. */
-const PIN_CREDENTIAL_SCAN_FALLBACK = 32;
+/** ExpiringUserTimeout's upper bound: the Door Lock data model constrains it to 1–2880 minutes (spec §7.18.2.51). */
+const EXPIRING_USER_TIMEOUT_MAX_MINUTES = 2880;
 
 /** UserTypeEnum.UnrestrictedUser — the default "Standard" choice in the add-user editor. */
 const USER_TYPE_STANDARD = 0;
@@ -272,13 +272,9 @@ class DoorLockClusterCommands extends BaseClusterCommands {
         // The attribute cache fills in progressively: the feature bits can resolve before the numeric
         // capacity attributes the load depends on. Wait for those too, or the load runs once with fallback
         // values (32 scanned users, 0 schedule slots) and #usersRequested latches true forever, so it never
-        // gets a chance to retry with the real numbers.
-        if (
-            !this.#usersRequested &&
-            this.#perUserSchedulesSupported() &&
-            isFeatureActive(this.node, this.endpoint, "USR") &&
-            this.#scheduleCapacityReady()
-        ) {
+        // gets a chance to retry with the real numbers. Users load whenever the lock has a user database at
+        // all: PIN/Temporary-PIN management needs it even on a lock with no WDSCH/YDSCH schedule feature.
+        if (!this.#usersRequested && this.#userManagementSupported() && this.#scheduleCapacityReady()) {
             this.#usersRequested = true;
             handleAsync(() => this.#loadUsers())();
         }
@@ -326,12 +322,26 @@ class DoorLockClusterCommands extends BaseClusterCommands {
         );
     }
 
-    #perUserSchedulesSupported(): boolean {
-        return isFeatureActive(this.node, this.endpoint, "WDSCH") || isFeatureActive(this.node, this.endpoint, "YDSCH");
-    }
-
     #holidaySupported(): boolean {
         return isFeatureActive(this.node, this.endpoint, "HDSCH");
+    }
+
+    /** Whether the lock exposes a user database at all — independent of whether it also supports schedules. */
+    #userManagementSupported(): boolean {
+        return isFeatureActive(this.node, this.endpoint, "USR");
+    }
+
+    /**
+     * Whether the "Temporary PIN" user type can be offered. PIN implies USR, but neither guarantees
+     * ExpiringUser support: UserTypeEnum's Expiring value and ExpiringUserTimeout are both optional under
+     * USR, so the attribute's presence is the only reliable signal a lock actually accepts it.
+     */
+    #expiringUserSupported(): boolean {
+        return (
+            isFeatureActive(this.node, this.endpoint, "PIN") &&
+            this.#userManagementSupported() &&
+            readExpiringUserTimeout(this.node, this.endpoint) !== null
+        );
     }
 
     /** Whether a load started for `node`/`endpoint` at `generation` still owns its loader's counter. */
@@ -591,8 +601,11 @@ class DoorLockClusterCommands extends BaseClusterCommands {
         const endpoint = this.endpoint;
         if (this._busy) return;
         const minutes = Number(this._expiringTimeoutInput);
-        if (!Number.isInteger(minutes) || minutes < 1 || minutes > 0xffff) {
-            await showAlertDialog({ title: "Invalid timeout", text: "The timeout must be 1 to 65535 minutes." });
+        if (!Number.isInteger(minutes) || minutes < 1 || minutes > EXPIRING_USER_TIMEOUT_MAX_MINUTES) {
+            await showAlertDialog({
+                title: "Invalid timeout",
+                text: `The timeout must be 1 to ${EXPIRING_USER_TIMEOUT_MAX_MINUTES} minutes.`,
+            });
             return;
         }
         const busyGeneration = this.#busyGeneration;
@@ -762,8 +775,7 @@ class DoorLockClusterCommands extends BaseClusterCommands {
             this._userEditorError = nameError;
             return;
         }
-        const canAddExpiring = isFeatureActive(node, endpoint, "PIN") && isFeatureActive(node, endpoint, "USR");
-        const expiring = canAddExpiring && this._newUserType === USER_TYPE_EXPIRING;
+        const expiring = this.#expiringUserSupported() && this._newUserType === USER_TYPE_EXPIRING;
         const pin = this._newUserPin.trim();
         if (expiring) {
             const pinError = pinCodeLengthError(
@@ -773,6 +785,12 @@ class DoorLockClusterCommands extends BaseClusterCommands {
             );
             if (pinError !== null) {
                 this._userEditorError = pinError;
+                return;
+            }
+            // Checked before SetUser runs, not guessed afterwards: SetUser would already have created the
+            // user by the time a missing capacity surfaced, leaving it with no PIN and no retry path.
+            if (readNumberOfPinUsersSupported(node, endpoint) === null) {
+                this._userEditorError = "The lock hasn't reported its PIN credential capacity yet.";
                 return;
             }
         }
@@ -802,7 +820,10 @@ class DoorLockClusterCommands extends BaseClusterCommands {
             let credentialError: unknown;
             if (expiring) {
                 try {
-                    const capacity = readNumberOfPinUsersSupported(node, endpoint) ?? PIN_CREDENTIAL_SCAN_FALLBACK;
+                    const capacity = readNumberOfPinUsersSupported(node, endpoint);
+                    if (capacity === null) {
+                        throw new Error("The lock's PIN credential capacity is no longer available.");
+                    }
                     await attachPinCredential(this.client, node.node_id, endpoint, userIndex, pin, capacity);
                 } catch (error) {
                     if (!this.isSameContext(node, endpoint)) return;
@@ -861,7 +882,9 @@ class DoorLockClusterCommands extends BaseClusterCommands {
 
     override render() {
         if (!this.node || this.cluster !== DOOR_LOCK_CLUSTER_ID) return nothing;
-        return html`${this.#renderLockPanel()}${this.#schedulesSupported() ? this.#renderSchedulePanel() : nothing}`;
+        // A PIN+USR lock with no WDSCH/YDSCH/HDSCH feature still needs this panel for user/PIN management.
+        const showUsersPanel = this.#schedulesSupported() || this.#userManagementSupported();
+        return html`${this.#renderLockPanel()}${showUsersPanel ? this.#renderSchedulePanel() : nothing}`;
     }
 
     #renderLockPanel(): TemplateResult {
@@ -952,17 +975,20 @@ class DoorLockClusterCommands extends BaseClusterCommands {
         const weekDayActive = isFeatureActive(this.node, this.endpoint, "WDSCH");
         const yearDayActive = isFeatureActive(this.node, this.endpoint, "YDSCH");
         const holidayActive = this.#holidaySupported();
-        const userActive = isFeatureActive(this.node, this.endpoint, "USR");
+        const userActive = this.#userManagementSupported();
         const perUserActive = weekDayActive || yearDayActive;
-        const features = [weekDayActive && "WDSCH", yearDayActive && "YDSCH", holidayActive && "HDSCH"].filter(
-            (code): code is string => code !== false,
-        );
+        const features = [
+            userActive && "USR",
+            weekDayActive && "WDSCH",
+            yearDayActive && "YDSCH",
+            holidayActive && "HDSCH",
+        ].filter((code): code is string => code !== false);
 
         return html`
             <details class="command-panel" open>
                 <summary>
                     <ha-svg-icon .path=${mdiCalendarWeek}></ha-svg-icon>
-                    Access Schedules
+                    Users &amp; Access Schedules
                     <span class="feature-map-badge">FeatureMap: ${features.join(" · ")}</span>
                 </summary>
                 <div class="command-content">
@@ -973,24 +999,24 @@ class DoorLockClusterCommands extends BaseClusterCommands {
                             : nothing
                     }
                     ${
-                        !perUserActive
-                            ? nothing
-                            : userActive
-                              ? html`
-                                    ${this.#renderUserSelector()}
-                                    ${
-                                        this._selectedUserIndex === null
-                                            ? nothing
-                                            : html`
-                                                  ${weekDayActive ? this.#renderWeekDaySection() : nothing}
-                                                  ${yearDayActive ? this.#renderYearDaySection() : nothing}
-                                              `
-                                    }
-                                `
-                              : html`<p class="empty">
+                        userActive
+                            ? html`
+                                  ${this.#renderUserSelector()}
+                                  ${
+                                      this._selectedUserIndex === null
+                                          ? nothing
+                                          : html`
+                                                ${weekDayActive ? this.#renderWeekDaySection() : nothing}
+                                                ${yearDayActive ? this.#renderYearDaySection() : nothing}
+                                            `
+                                  }
+                              `
+                            : perUserActive
+                              ? html`<p class="empty">
                                     Schedules are assigned per user, which this lock does not expose: it reports no User
                                     (USR) feature, so its user database cannot be read.
                                 </p>`
+                              : nothing
                     }
                     ${holidayActive ? this.#renderHolidaySection() : nothing}
                 </div>
@@ -1086,7 +1112,7 @@ class DoorLockClusterCommands extends BaseClusterCommands {
                     id="expiringTimeout"
                     type="number"
                     min="1"
-                    max="65535"
+                    max=${EXPIRING_USER_TIMEOUT_MAX_MINUTES}
                     .value=${live(this._expiringTimeoutInput)}
                     @input=${(event: Event) => {
                         this._expiringTimeoutInput = (event.target as HTMLInputElement).value;
@@ -1104,8 +1130,7 @@ class DoorLockClusterCommands extends BaseClusterCommands {
         // A Temporary PIN is created directly with a working credential (SetCredential's combined-creation
         // use case isn't used here — see attachPinCredential — but the operator still enters the PIN up
         // front), so the option only makes sense where the lock can store PIN credentials at all.
-        const canAddExpiring =
-            isFeatureActive(this.node, this.endpoint, "PIN") && isFeatureActive(this.node, this.endpoint, "USR");
+        const canAddExpiring = this.#expiringUserSupported();
         const expiring = canAddExpiring && this._newUserType === USER_TYPE_EXPIRING;
         const minPinLength = readMinPinCodeLength(this.node, this.endpoint);
         const maxPinLength = readMaxPinCodeLength(this.node, this.endpoint);
@@ -1164,7 +1189,7 @@ class DoorLockClusterCommands extends BaseClusterCommands {
                                   ${
                                       minPinLength !== null || maxPinLength !== null
                                           ? html`<span class="meta">
-                                                ${minPinLength ?? 1}–${maxPinLength ?? "?"} characters
+                                                ${minPinLength ?? 1}–${maxPinLength ?? "?"} bytes
                                             </span>`
                                           : nothing
                                   }
