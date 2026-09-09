@@ -71,9 +71,9 @@ class MediaPlaybackClusterCommands extends BaseClusterCommands {
                             >${formatPlaybackState(playbackState)}</span
                         >
                         ${
-                            positionMs !== null
+                            positionMs !== null || durationMs !== null
                                 ? html`<span
-                                      >${formatDurationMs(positionMs)}${
+                                      >${positionMs !== null ? formatDurationMs(positionMs) : "—"}${
                                           durationMs !== null ? html` / ${formatDurationMs(durationMs)}` : nothing
                                       }</span
                                   >`
@@ -189,7 +189,7 @@ class MediaPlaybackClusterCommands extends BaseClusterCommands {
 
     private _handleSkipMsChange(event: Event) {
         const input = event.target as HTMLInputElement;
-        const roundedValue = Math.round(value);
+        const roundedValue = Math.round(Number(input.value));
         this._skipMs = Number.isSafeInteger(roundedValue) && roundedValue > 0 ? roundedValue : DEFAULT_SKIP_MS;
         input.value = String(this._skipMs);
     }
@@ -244,7 +244,6 @@ class MediaPlaybackClusterCommands extends BaseClusterCommands {
     ];
 }
 
-// Register this component for the MediaPlayback cluster
 registerClusterCommands(MEDIA_PLAYBACK_CLUSTER_ID, "media-playback-cluster-commands");
 
 declare global {
