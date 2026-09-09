@@ -188,8 +188,10 @@ class MediaPlaybackClusterCommands extends BaseClusterCommands {
     }
 
     private _handleSkipMsChange(event: Event) {
-        const value = Number((event.target as HTMLInputElement).value);
+        const input = event.target as HTMLInputElement;
+        const value = Number(input.value);
         this._skipMs = Number.isFinite(value) && value > 0 ? Math.round(value) : DEFAULT_SKIP_MS;
+        input.value = String(this._skipMs);
     }
 
     private async _skipForward() {
