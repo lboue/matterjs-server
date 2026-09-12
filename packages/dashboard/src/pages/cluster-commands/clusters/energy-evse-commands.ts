@@ -29,6 +29,11 @@ import {
     type SessionInfo,
 } from "../../../util/energy-evse.js";
 import type { EnergyEvseInfo } from "../../../util/energy-evse.js";
+import {
+    chargingScheduleError,
+    MAX_CHARGING_SCHEDULES,
+    MAX_CHARGING_TARGETS_PER_SCHEDULE,
+} from "../../../util/energy-evse.js";
 import { errorText } from "../../../util/error-text.js";
 import {
     formatEpochTime,
@@ -41,8 +46,6 @@ import { registerClusterCommands } from "../registry.js";
 
 const DEFAULT_MIN_CHARGE_CURRENT_A = 6;
 const DEFAULT_MAX_CURRENT_A = 16;
-const MAX_SCHEDULES = 7;
-const MAX_TARGETS_PER_SCHEDULE = 10;
 
 /** Matter only reports a status code (e.g. "Failure(1)"), not the device's reason, so name the likely cause. */
 const DIAGNOSTICS_OR_ALREADY_ENABLED_HINT =
@@ -72,12 +75,12 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
 
     @state() private _chargeNoExpiry = true;
     @state() private _chargeUntil = "";
-    @state() private _minChargeCurrentA = DEFAULT_MIN_CHARGE_CURRENT_A;
-    @state() private _maxChargeCurrentA = DEFAULT_MAX_CURRENT_A;
+    @state() private _minChargeCurrentA = String(DEFAULT_MIN_CHARGE_CURRENT_A);
+    @state() private _maxChargeCurrentA = String(DEFAULT_MAX_CURRENT_A);
 
     @state() private _dischargeNoExpiry = true;
     @state() private _dischargeUntil = "";
-    @state() private _maxDischargeCurrentA = DEFAULT_MAX_CURRENT_A;
+    @state() private _maxDischargeCurrentA = String(DEFAULT_MAX_CURRENT_A);
 
     @state() private _schedules?: EditableChargingSchedule[];
     @state() private _scheduleBusy = false;
@@ -107,9 +110,9 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
 
         const info = energyEvseInfo(this.node.attributes, this.endpoint);
         // Falling back to the current field values would prefill the new EVSE with the old one's limits.
-        this._minChargeCurrentA = info.minimumChargeCurrentA ?? DEFAULT_MIN_CHARGE_CURRENT_A;
-        this._maxChargeCurrentA = info.maximumChargeCurrentA ?? DEFAULT_MAX_CURRENT_A;
-        this._maxDischargeCurrentA = info.maximumDischargeCurrentA ?? DEFAULT_MAX_CURRENT_A;
+        this._minChargeCurrentA = String(info.minimumChargeCurrentA ?? DEFAULT_MIN_CHARGE_CURRENT_A);
+        this._maxChargeCurrentA = String(info.maximumChargeCurrentA ?? DEFAULT_MAX_CURRENT_A);
+        this._maxDischargeCurrentA = String(info.maximumDischargeCurrentA ?? DEFAULT_MAX_CURRENT_A);
     }
 
     override render() {
@@ -325,8 +328,8 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                         type="number"
                         min="0"
                         step="0.1"
-                        .value=${String(this._minChargeCurrentA)}
-                        @input=${(e: Event) => (this._minChargeCurrentA = this.#parsePositiveNumber(e, this._minChargeCurrentA))}
+                        .value=${this._minChargeCurrentA}
+                        @input=${(e: Event) => (this._minChargeCurrentA = (e.target as HTMLInputElement).value)}
                     />
                     A
                 </label>
@@ -336,8 +339,8 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                         type="number"
                         min="0"
                         step="0.1"
-                        .value=${String(this._maxChargeCurrentA)}
-                        @input=${(e: Event) => (this._maxChargeCurrentA = this.#parsePositiveNumber(e, this._maxChargeCurrentA))}
+                        .value=${this._maxChargeCurrentA}
+                        @input=${(e: Event) => (this._maxChargeCurrentA = (e.target as HTMLInputElement).value)}
                     />
                     A
                 </label>
@@ -404,9 +407,8 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                         type="number"
                         min="0"
                         step="0.1"
-                        .value=${String(this._maxDischargeCurrentA)}
-                        @input=${(e: Event) =>
-                            (this._maxDischargeCurrentA = this.#parsePositiveNumber(e, this._maxDischargeCurrentA))}
+                        .value=${this._maxDischargeCurrentA}
+                        @input=${(e: Event) => (this._maxDischargeCurrentA = (e.target as HTMLInputElement).value)}
                     />
                     A
                 </label>
@@ -508,7 +510,7 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                 <div class="command-row">
                     <md-text-button
                         @click=${() => this._handleAddSchedule()}
-                        ?disabled=${(this._schedules ?? []).length >= MAX_SCHEDULES}
+                        ?disabled=${(this._schedules ?? []).length >= MAX_CHARGING_SCHEDULES}
                     >
                         Add schedule
                     </md-text-button>
@@ -551,7 +553,7 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                 )}
                 <md-text-button
                     @click=${() => this._handleAddTarget(scheduleIndex)}
-                    ?disabled=${schedule.targets.length >= MAX_TARGETS_PER_SCHEDULE}
+                    ?disabled=${schedule.targets.length >= MAX_CHARGING_TARGETS_PER_SCHEDULE}
                 >
                     Add target
                 </md-text-button>
@@ -614,9 +616,12 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
         return Number.isFinite(value) ? value : undefined;
     }
 
-    #parsePositiveNumber(e: Event, previous: number): number {
-        const value = this.#optionalNumber(e);
-        return value !== undefined && value >= 0 ? value : previous;
+    /** The amperage a current field would send, or null while it holds no submittable value. */
+    #currentAmps(raw: string): number | null {
+        const trimmed = raw.trim();
+        if (trimmed === "") return null;
+        const amps = Number(trimmed);
+        return Number.isFinite(amps) && amps >= 0 ? amps : null;
     }
 
     private async _handleDisable() {
@@ -661,7 +666,13 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
             }
             chargingEnabledUntil = parsed;
         }
-        if (this._minChargeCurrentA > this._maxChargeCurrentA) {
+        const minimumChargeCurrentA = this.#currentAmps(this._minChargeCurrentA);
+        const maximumChargeCurrentA = this.#currentAmps(this._maxChargeCurrentA);
+        if (minimumChargeCurrentA === null || maximumChargeCurrentA === null) {
+            this._formError = "Enter a charging current of 0 A or more.";
+            return;
+        }
+        if (minimumChargeCurrentA > maximumChargeCurrentA) {
             this._formError = "The minimum current cannot exceed the maximum current.";
             return;
         }
@@ -672,8 +683,8 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
         try {
             await enableCharging(this.client, node.node_id, endpoint, {
                 chargingEnabledUntil,
-                minimumChargeCurrentA: this._minChargeCurrentA,
-                maximumChargeCurrentA: this._maxChargeCurrentA,
+                minimumChargeCurrentA,
+                maximumChargeCurrentA,
             });
         } catch (error) {
             this.#reportFailure("Enable charging failed", error, DIAGNOSTICS_OR_ALREADY_ENABLED_HINT, busyGeneration);
@@ -694,6 +705,11 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
             }
             dischargingEnabledUntil = parsed;
         }
+        const maximumDischargeCurrentA = this.#currentAmps(this._maxDischargeCurrentA);
+        if (maximumDischargeCurrentA === null) {
+            this._formError = "Enter a discharging current of 0 A or more.";
+            return;
+        }
         const node = this.node;
         const endpoint = this.endpoint;
         const busyGeneration = this.#busyGeneration;
@@ -701,7 +717,7 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
         try {
             await enableDischarging(this.client, node.node_id, endpoint, {
                 dischargingEnabledUntil,
-                maximumDischargeCurrentA: this._maxDischargeCurrentA,
+                maximumDischargeCurrentA,
             });
         } catch (error) {
             this.#reportFailure(
@@ -753,33 +769,10 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
     private async _handleSaveSchedule() {
         const schedules = this._schedules;
         if (!schedules || schedules.length === 0 || this._scheduleBusy) return;
-        if (schedules.some(schedule => Object.values(schedule.days).every(selected => selected !== true))) {
-            this._scheduleError = "Select at least one day for every schedule.";
-            return;
-        }
-        if (schedules.some(schedule => schedule.targets.length === 0)) {
-            this._scheduleError = "Add at least one target time to every schedule.";
-            return;
-        }
-        // ChargingTargetSchedules: a weekday may appear in only one schedule.
-        const claimedDays = new Set<string>();
-        for (const schedule of schedules) {
-            for (const [day, selected] of Object.entries(schedule.days)) {
-                if (selected !== true) continue;
-                if (claimedDays.has(day)) {
-                    this._scheduleError = "Each day may be used by only one schedule.";
-                    return;
-                }
-                claimedDays.add(day);
-            }
-        }
-        // ChargingTargetStruct's O.a+ group: a target must carry a SoC or an added-energy goal.
-        if (
-            schedules.some(schedule =>
-                schedule.targets.some(target => target.targetSoC === undefined && target.addedEnergyKWh === undefined),
-            )
-        ) {
-            this._scheduleError = "Give every target a SoC or an added-energy goal.";
+        const soCSupported = energyEvseInfo(this.node.attributes, this.endpoint).soCReportingSupported;
+        const error = chargingScheduleError(schedules, soCSupported);
+        if (error !== null) {
+            this._scheduleError = error;
             return;
         }
         const node = this.node;
@@ -823,7 +816,7 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
 
     private _handleAddSchedule() {
         const schedules = this._schedules ?? [];
-        if (schedules.length >= MAX_SCHEDULES) return;
+        if (schedules.length >= MAX_CHARGING_SCHEDULES) return;
         this._schedules = [...schedules, { days: {}, targets: [{ timeMinutes: 360 }] }];
     }
 
@@ -841,7 +834,7 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
 
     private _handleAddTarget(scheduleIndex: number) {
         this.#updateSchedule(scheduleIndex, schedule =>
-            schedule.targets.length >= MAX_TARGETS_PER_SCHEDULE
+            schedule.targets.length >= MAX_CHARGING_TARGETS_PER_SCHEDULE
                 ? schedule
                 : { ...schedule, targets: [...schedule.targets, { timeMinutes: 360 }] },
         );
@@ -862,21 +855,17 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
 
     private _handleTargetSoCChange(scheduleIndex: number, targetIndex: number, e: Event) {
         const value = this.#optionalNumber(e);
-        const targetSoC = value === undefined ? undefined : Math.min(100, Math.max(0, value));
         this.#updateTarget(scheduleIndex, targetIndex, target => ({
-            timeMinutes: target.timeMinutes,
-            targetSoC,
-            addedEnergyKWh: targetSoC === undefined ? target.addedEnergyKWh : undefined,
+            ...target,
+            targetSoC: value === undefined ? undefined : Math.min(100, Math.max(0, value)),
         }));
     }
 
     private _handleTargetEnergyChange(scheduleIndex: number, targetIndex: number, e: Event) {
         const value = this.#optionalNumber(e);
-        const addedEnergyKWh = value === undefined || value < 0 ? undefined : value;
         this.#updateTarget(scheduleIndex, targetIndex, target => ({
-            timeMinutes: target.timeMinutes,
-            targetSoC: addedEnergyKWh === undefined ? target.targetSoC : undefined,
-            addedEnergyKWh,
+            ...target,
+            addedEnergyKWh: value === undefined || value < 0 ? undefined : value,
         }));
     }
 

@@ -6,6 +6,7 @@
 
 import type { MatterClient } from "@matter-server/ws-client";
 import {
+    chargingScheduleError,
     clearChargingTargets,
     decodeChargingTargetSchedules,
     disableEvse,
@@ -13,8 +14,12 @@ import {
     energyEvseInfo,
     getChargingTargets,
     setChargingTargets,
+    MAX_CHARGING_SCHEDULES,
+    MAX_CHARGING_TARGETS_PER_SCHEDULE,
     startDiagnostics,
     type EditableChargingSchedule,
+    type EditableChargingTarget,
+    type EvseWeekday,
 } from "../src/util/energy-evse.js";
 import { fromLocalDateTimeInputValue, toLocalDateTimeInputValue } from "../src/util/time.js";
 
@@ -55,7 +60,7 @@ describe("energy evse util", () => {
         expect(info.maximumChargeCurrentA).to.equal(16);
     });
 
-    it("gates StartDiagnostics and EnableCharging/Discharging on SupplyState", () => {
+    it("offers StartDiagnostics only while SupplyState is Disabled", () => {
         const chargingEnabled = energyEvseInfo(BASE_ATTRS, 1); // SupplyState: ChargingEnabled (1)
         expect(chargingEnabled.canStartDiagnostics).to.equal(false);
 
@@ -65,8 +70,9 @@ describe("energy evse util", () => {
         const diagnostics = energyEvseInfo({ ...BASE_ATTRS, "1/153/1": 4 }, 1);
         expect(diagnostics.canStartDiagnostics).to.equal(false);
 
+        // An unread SupplyState is not evidence that the command would be accepted.
         const unknown = energyEvseInfo({ ...BASE_ATTRS, "1/153/1": undefined }, 1);
-        expect(unknown.canStartDiagnostics).to.equal(true);
+        expect(unknown.canStartDiagnostics).to.equal(false);
     });
 
     it("flags an active fault", () => {
@@ -308,7 +314,76 @@ describe("charging target schedule decoding", () => {
     });
 });
 
+describe("chargingScheduleError", () => {
+    const schedule = (
+        days: Partial<Record<EvseWeekday, boolean>>,
+        targets: EditableChargingTarget[],
+    ): EditableChargingSchedule => ({ days, targets });
+
+    it("accepts a SoC target on a SoC-reporting EVSE", () => {
+        expect(
+            chargingScheduleError([schedule({ monday: true }, [{ timeMinutes: 360, targetSoC: 80 }])], true),
+        ).to.equal(null);
+    });
+
+    it("accepts a SoC target that also carries an added-energy goal", () => {
+        // AddedEnergy is "[SOC], O.a+": allowed alongside TargetSoC, not instead of it.
+        const targets = [{ timeMinutes: 360, targetSoC: 80, addedEnergyKWh: 10 }];
+        expect(chargingScheduleError([schedule({ monday: true }, targets)], true)).to.equal(null);
+    });
+
+    it("requires a SoC goal on a SoC-reporting EVSE even when energy is given", () => {
+        const targets = [{ timeMinutes: 360, addedEnergyKWh: 10 }];
+        expect(chargingScheduleError([schedule({ monday: true }, targets)], true)).to.contain("state of charge");
+    });
+
+    it("requires an added-energy goal when the EVSE does not report SoC", () => {
+        expect(chargingScheduleError([schedule({ monday: true }, [{ timeMinutes: 360 }])], false)).to.contain(
+            "added-energy",
+        );
+        const targets = [{ timeMinutes: 360, addedEnergyKWh: 10 }];
+        expect(chargingScheduleError([schedule({ monday: true }, targets)], false)).to.equal(null);
+    });
+
+    it("accepts a schedule with no targets, which is how a day is cleared", () => {
+        // ChargingTargets is "max 10" with no minimum.
+        expect(chargingScheduleError([schedule({ monday: true }, [])], true)).to.equal(null);
+    });
+
+    it("rejects a schedule with no day selected", () => {
+        expect(chargingScheduleError([schedule({}, [])], true)).to.contain("at least one day");
+    });
+
+    it("rejects a weekday claimed by more than one schedule", () => {
+        const schedules = [schedule({ monday: true, friday: true }, []), schedule({ friday: true }, [])];
+        expect(chargingScheduleError(schedules, true)).to.contain("only one schedule");
+    });
+
+    it("rejects more targets or schedules than the device stores", () => {
+        const targets = Array.from({ length: MAX_CHARGING_TARGETS_PER_SCHEDULE + 1 }, (_, i) => ({
+            timeMinutes: i,
+            targetSoC: 50,
+        }));
+        expect(chargingScheduleError([schedule({ monday: true }, targets)], true)).to.contain("at most");
+
+        const many = Array.from({ length: MAX_CHARGING_SCHEDULES + 1 }, () => schedule({ monday: true }, []));
+        expect(chargingScheduleError(many, true)).to.contain("at most");
+    });
+
+    it("rejects a target time outside the day", () => {
+        const targets = [{ timeMinutes: 1440, targetSoC: 50 }];
+        expect(chargingScheduleError([schedule({ monday: true }, targets)], true)).to.contain("time of day");
+    });
+});
+
 describe("local datetime-local <-> Matter epoch-s conversion", () => {
+    it("rejects a local time that does not exist because of a DST jump", () => {
+        // Only meaningful in a zone with a spring-forward gap; elsewhere the value round-trips and is kept.
+        const gap = "2027-03-14T02:30";
+        const parsed = fromLocalDateTimeInputValue(gap);
+        if (parsed !== undefined) expect(toLocalDateTimeInputValue(parsed)).to.equal(gap);
+    });
+
     it("rejects a date the uint32 epoch-s field cannot carry", () => {
         expect(fromLocalDateTimeInputValue("1999-12-31T23:59")).to.equal(undefined);
         expect(fromLocalDateTimeInputValue("2137-01-01T00:00")).to.equal(undefined);

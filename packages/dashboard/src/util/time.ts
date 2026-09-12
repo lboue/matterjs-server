@@ -43,9 +43,12 @@ export function fromLocalDateTimeInputValue(value: string): number | undefined {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return undefined;
     const seconds = Math.floor(date.getTime() / 1000) - MATTER_EPOCH_OFFSET_SECONDS;
-    return seconds < 0 || seconds > MATTER_EPOCH_MAX_SECONDS ? undefined : seconds;
+    if (seconds < 0 || seconds > MATTER_EPOCH_MAX_SECONDS) return undefined;
+    // A local time inside a DST spring-forward gap does not exist; `new Date` silently moves it forward
+    // rather than rejecting it, which would send an expiry an hour off the one that was typed.
+    return toLocalDateTimeInputValue(seconds) === value.trim() ? seconds : undefined;
 }
 
-/** `min`/`max` for an `<input type="datetime-local">` bound to a Matter epoch-s field. */
-export const MATTER_EPOCH_MIN_INPUT_VALUE = "2000-01-01T00:00";
-export const MATTER_EPOCH_MAX_INPUT_VALUE = "2136-02-07T06:28";
+/** `min`/`max` for an `<input type="datetime-local">` bound to a Matter epoch-s field, in the viewer's zone. */
+export const MATTER_EPOCH_MIN_INPUT_VALUE = toLocalDateTimeInputValue(0);
+export const MATTER_EPOCH_MAX_INPUT_VALUE = toLocalDateTimeInputValue(MATTER_EPOCH_MAX_SECONDS);

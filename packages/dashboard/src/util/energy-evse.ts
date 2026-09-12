@@ -96,7 +96,10 @@ export interface EnergyEvseInfo {
     supported: boolean;
     state?: string;
     supplyState?: string;
-    /** Whether StartDiagnostics is expected to succeed right now (the device only accepts it while fully disabled). */
+    /**
+     * Whether StartDiagnostics is expected to succeed right now. The device only accepts it while fully
+     * disabled, so an unread SupplyState is not evidence that it would be accepted.
+     */
     canStartDiagnostics: boolean;
     /** StartDiagnostics is an optional command, so it only exists where AcceptedCommandList lists it. */
     startDiagnosticsSupported: boolean;
@@ -190,7 +193,7 @@ export function energyEvseInfo(attributes: Record<string, unknown>, endpoint: nu
         supported: featureMap !== undefined,
         state: enumName(attr(attributes, endpoint, ATTR_STATE), STATE_NAMES),
         supplyState: enumName(supplyStateRaw, SUPPLY_STATE_NAMES),
-        canStartDiagnostics: supplyStateRaw === undefined || supplyStateRaw === SUPPLY_STATE_DISABLED,
+        canStartDiagnostics: supplyStateRaw === SUPPLY_STATE_DISABLED,
         startDiagnosticsSupported: acceptsCommand(attributes, endpoint, COMMAND_START_DIAGNOSTICS),
         faultState: enumName(faultStateRaw, FAULT_STATE_NAMES),
         faultActive: faultStateRaw !== undefined && faultStateRaw !== 0,
@@ -302,6 +305,51 @@ export function decodeWeekdayBitmap(value: unknown): Partial<Record<EvseWeekday,
 
 export function encodeWeekdayBitmap(days: Partial<Record<EvseWeekday, boolean>>): number {
     return EVSE_WEEKDAYS.reduce((bitmap, { key, bit }) => (days[key] === true ? bitmap | (1 << bit) : bitmap), 0);
+}
+
+/** ChargingTargetSchedules is `max 7`; ChargingTargets within a schedule is `max 10`. */
+export const MAX_CHARGING_SCHEDULES = 7;
+export const MAX_CHARGING_TARGETS_PER_SCHEDULE = 10;
+
+/**
+ * Why SetTargets would be rejected, or null when the schedules are sendable. The rules come from
+ * ChargingTargetStruct's conformance, which depends on the device's features: TargetSoC is `SOC, O.a+`
+ * — mandatory once the SOC feature is active — and AddedEnergy is `[SOC], O.a+`, so it may accompany a
+ * SoC goal but cannot replace one. ChargingTargets itself is `max 10` with no minimum: an empty target
+ * list is how a day's targets are cleared.
+ */
+export function chargingScheduleError(schedules: EditableChargingSchedule[], soCSupported: boolean): string | null {
+    if (schedules.length > MAX_CHARGING_SCHEDULES) {
+        return `A lock stores at most ${MAX_CHARGING_SCHEDULES} schedules.`;
+    }
+    if (schedules.some(schedule => EVSE_WEEKDAYS.every(({ key }) => schedule.days[key] !== true))) {
+        return "Select at least one day for every schedule.";
+    }
+    // ChargingTargetSchedules: a weekday may appear in only one schedule.
+    const claimedDays = new Set<EvseWeekday>();
+    for (const schedule of schedules) {
+        for (const { key } of EVSE_WEEKDAYS) {
+            if (schedule.days[key] !== true) continue;
+            if (claimedDays.has(key)) return "Each day may be used by only one schedule.";
+            claimedDays.add(key);
+        }
+    }
+    for (const schedule of schedules) {
+        if (schedule.targets.length > MAX_CHARGING_TARGETS_PER_SCHEDULE) {
+            return `A schedule holds at most ${MAX_CHARGING_TARGETS_PER_SCHEDULE} targets.`;
+        }
+        for (const target of schedule.targets) {
+            if (!Number.isInteger(target.timeMinutes) || target.timeMinutes < 0 || target.timeMinutes > 1439) {
+                return "Every target needs a time of day.";
+            }
+            if (soCSupported) {
+                if (target.targetSoC === undefined) return "Give every target a target state of charge.";
+            } else if (target.addedEnergyKWh === undefined) {
+                return "Give every target an added-energy goal.";
+            }
+        }
+    }
+    return null;
 }
 
 export interface EditableChargingTarget {
