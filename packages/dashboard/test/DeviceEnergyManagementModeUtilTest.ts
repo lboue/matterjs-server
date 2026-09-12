@@ -53,6 +53,19 @@ describe("device energy management mode util", () => {
         expect(info.supportedModes[0].tags[0].label).to.equal("Tag 0x1234");
     });
 
+    it("keeps a manufacturer tag in its vendor namespace instead of the standard table", () => {
+        const info = deviceEnergyManagementModeInfo(
+            // MfgCode present, and a Value that collides with the standard "Auto" tag.
+            { "1/159/0": [{ "0": "Vendor", "1": 0, "2": [{ "0": 0x1234, "1": 0x0000 }] }] },
+            1,
+        );
+        expect(info.supportedModes[0].tags[0]).to.deep.equal({
+            mfgCode: 0x1234,
+            value: 0,
+            label: "Mfg 0x1234 tag 0x0000",
+        });
+    });
+
     it("omits a mode tag entry that carries no value", () => {
         const info = deviceEnergyManagementModeInfo(
             { "1/159/0": [{ "0": "No Value", "1": 0, "2": [{ "0": 0xfff1 }] }] },

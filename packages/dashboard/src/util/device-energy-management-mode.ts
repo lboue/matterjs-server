@@ -6,6 +6,7 @@
 
 import { attributeArray } from "./access-control.js";
 import { asObject, pickNumber, tagField as field, toNumber, toText } from "./attribute-shapes.js";
+import { formatHex } from "./format_hex.js";
 
 export const DEVICE_ENERGY_MANAGEMENT_MODE_CLUSTER_ID = 159;
 
@@ -67,15 +68,21 @@ function attr(attributes: Record<string, unknown>, endpoint: number, attributeId
     return attributes[`${endpoint}/${DEVICE_ENERGY_MANAGEMENT_MODE_CLUSTER_ID}/${attributeId}`];
 }
 
-function modeTagLabel(value: number): string {
-    return MODE_TAG_NAMES[value] ?? `Tag 0x${value.toString(16).toUpperCase()}`;
+/**
+ * MfgCode is the tag's namespace: the same Value means different things under different vendors, so a
+ * manufacturer tag is never resolved against the standard table. Mirrors describeSemanticTag().
+ */
+function modeTagLabel(value: number, mfgCode: number | undefined): string {
+    if (mfgCode !== undefined) return `Mfg ${formatHex(mfgCode)} tag ${formatHex(value)}`;
+    return MODE_TAG_NAMES[value] ?? `Tag ${formatHex(value)}`;
 }
 
 /** ModeTagStruct is field-tag keyed: "0" MfgCode (optional), "1" Value. */
 function decodeModeTag(entry: unknown): ModeTagInfo | undefined {
     const value = toNumber(field(entry, 1));
     if (value === undefined) return undefined;
-    return { mfgCode: toNumber(field(entry, 0)), value, label: modeTagLabel(value) };
+    const mfgCode = toNumber(field(entry, 0));
+    return { mfgCode, value, label: modeTagLabel(value, mfgCode) };
 }
 
 /** ModeOptionStruct is field-tag keyed: "0" Label, "1" Mode, "2" ModeTags. */
