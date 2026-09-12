@@ -137,8 +137,14 @@ class MatterEndpointView extends LitElement {
                                     ? html`
                                           <ul class="chip-list endpoint-tags" role="list">
                                               ${semanticTags.map(entry => {
-                                                  const { text, title } = describeSemanticTagListEntry(entry);
-                                                  return html`<li class="chip" title=${title}>${text}</li>`;
+                                                  const { text, title, erroneous } =
+                                                      describeSemanticTagListEntry(entry);
+                                                  return html`<li
+                                                      class=${erroneous ? "chip chip-error" : "chip"}
+                                                      title=${title}
+                                                  >
+                                                      ${text}
+                                                  </li>`;
                                               })}
                                           </ul>
                                       `
@@ -252,7 +258,7 @@ class MatterEndpointView extends LitElement {
             }
 
             .endpoint-label {
-color: var(--md-sys-color-on-surface-variant);
+                color: var(--md-sys-color-on-surface-variant);
                 font-weight: 400;
             }
 

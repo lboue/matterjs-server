@@ -42,7 +42,7 @@ export function getEndpointLabel(node: MatterNode, endpoint: number): string | u
         node.attributes[
             `${endpoint}/${BRIDGED_DEVICE_BASIC_INFORMATION_CLUSTER_ID}/${BRIDGED_NODE_LABEL_ATTRIBUTE_ID}`
         ];
-if (typeof bridgedNodeLabel === "string" && !bridgedNodeLabel.includes("\u0000\u0000")) {
+    if (typeof bridgedNodeLabel === "string" && !bridgedNodeLabel.includes("\u0000\u0000")) {
         const normalizedLabel = bridgedNodeLabel.trim();
         if (normalizedLabel.length > 0) return normalizedLabel;
     }

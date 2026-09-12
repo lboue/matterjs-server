@@ -52,6 +52,13 @@ export const chipListStyles = css`
         padding: 4px 10px;
         border-radius: 8px;
     }
+
+    .chip.chip-error {
+        color: var(--md-sys-color-on-error-container);
+        background: var(--md-sys-color-error-container);
+        border: 1px solid var(--md-sys-color-error);
+        font-family: var(--monospace-font);
+    }
 `;
 
 /** Bordered panel holding one or more `.info-section` blocks, each optionally listing `.chip`s. */

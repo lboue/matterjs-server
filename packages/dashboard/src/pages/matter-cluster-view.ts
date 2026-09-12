@@ -781,13 +781,6 @@ class MatterClusterView extends LitElement {
                 padding: 0 4px;
                 border-radius: 3px;
             }
-
-            .chip.chip-error {
-                color: var(--md-sys-color-on-error-container);
-                background: var(--md-sys-color-error-container);
-                border: 1px solid var(--md-sys-color-error);
-                font-family: var(--monospace-font);
-            }
         `,
     ];
 }
