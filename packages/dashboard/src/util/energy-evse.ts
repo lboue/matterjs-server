@@ -108,6 +108,12 @@ export interface EnergyEvseInfo {
     startDiagnosticsSupported: boolean;
     faultState?: string;
     faultActive: boolean;
+    /**
+     * Why Disable, EnableCharging and EnableDischarging would be refused, or undefined when they are
+     * accepted. The reference delegate guards all three with the same CheckFaultOrDiagnostic(), which
+     * fails on any FaultState other than NoError and while SupplyState is DisabledDiagnostics.
+     */
+    supplyCommandsBlockedReason?: string;
     /** undefined: not reported. null: no expiry, i.e. charging stays enabled until disabled explicitly. */
     chargingEnabledUntil?: number | null;
     circuitCapacityA?: number;
@@ -182,6 +188,20 @@ function decodeSession(attributes: Record<string, unknown>, endpoint: number): S
     };
 }
 
+function supplyCommandsBlockedReason(
+    faultStateRaw: number | undefined,
+    supplyStateRaw: number | undefined,
+): string | undefined {
+    if (faultStateRaw !== undefined && faultStateRaw !== 0) {
+        return "The EVSE reports a fault, and refuses charging commands until it clears.";
+    }
+    if (supplyStateRaw === SUPPLY_STATE_DISABLED_DIAGNOSTICS) {
+        // Only the device leaves this state, by finishing its diagnostics; Disable is refused too.
+        return "The EVSE is running self-diagnostics, and refuses charging commands until it finishes.";
+    }
+    return undefined;
+}
+
 function acceptsCommand(attributes: Record<string, unknown>, endpoint: number, commandId: number): boolean {
     const accepted = attr(attributes, endpoint, ATTR_ACCEPTED_COMMAND_LIST);
     return Array.isArray(accepted) && accepted.some(value => Number(value) === commandId);
@@ -201,6 +221,7 @@ export function energyEvseInfo(attributes: Record<string, unknown>, endpoint: nu
         startDiagnosticsSupported: acceptsCommand(attributes, endpoint, COMMAND_START_DIAGNOSTICS),
         faultState: enumName(faultStateRaw, FAULT_STATE_NAMES),
         faultActive: faultStateRaw !== undefined && faultStateRaw !== 0,
+        supplyCommandsBlockedReason: supplyCommandsBlockedReason(faultStateRaw, supplyStateRaw),
         chargingEnabledUntil: nullableNumber(attr(attributes, endpoint, ATTR_CHARGING_ENABLED_UNTIL)),
         circuitCapacityA: toAmps(toNumber(attr(attributes, endpoint, ATTR_CIRCUIT_CAPACITY))),
         minimumChargeCurrentA: toAmps(toNumber(attr(attributes, endpoint, ATTR_MINIMUM_CHARGE_CURRENT))),

@@ -48,8 +48,8 @@ const DEFAULT_MIN_CHARGE_CURRENT_A = 6;
 const DEFAULT_MAX_CURRENT_A = 16;
 
 /** Matter only reports a status code (e.g. "Failure(1)"), not the device's reason, so name the likely cause. */
-const DIAGNOSTICS_OR_ALREADY_ENABLED_HINT =
-    "If the EVSE is in self-diagnostics mode, or already enabled for charging/discharging, click Disable first and try again.";
+const COMMAND_REFUSED_HINT =
+    "The EVSE refuses these commands while it reports a fault or is running self-diagnostics. A fault has to clear and diagnostics finish on the device itself; neither can be ended from here.";
 
 function minutesToTimeInputValue(minutes: number): string {
     const hours = Math.floor(minutes / 60) % 24;
@@ -197,7 +197,7 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                             ? this._renderV2x(
                                   info.dischargingEnabledUntil,
                                   info.maximumDischargeCurrentA,
-                                  info.diagnosticsActive,
+                                  info.supplyCommandsBlockedReason,
                                   offline,
                               )
                             : nothing
@@ -282,14 +282,15 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
     }
 
     private _renderChargingActions(info: EnergyEvseInfo, offline: boolean): TemplateResult {
-        const diagnosticsActive = info.diagnosticsActive;
+        const blocked = info.supplyCommandsBlockedReason;
         const canStartDiagnostics = info.canStartDiagnostics;
         return html`
             <h4>Charging control</h4>
             <div class="command-row">
                 <md-outlined-button
                     @click=${handleAsync(() => this._handleDisable())}
-                    ?disabled=${this._busy || offline}
+                    ?disabled=${this._busy || offline || blocked !== undefined}
+                    title=${blocked ?? nothing}
                 >
                     Disable
                 </md-outlined-button>
@@ -352,8 +353,8 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                 </label>
                 <md-filled-button
                     @click=${handleAsync(() => this._handleEnableCharging())}
-                    ?disabled=${this._busy || offline || diagnosticsActive}
-                    title=${diagnosticsActive ? "Not available while self-diagnostics are active — click Disable first" : nothing}
+                    ?disabled=${this._busy || offline || blocked !== undefined}
+                    title=${blocked ?? nothing}
                 >
                     Enable Charging
                 </md-filled-button>
@@ -365,7 +366,7 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
     private _renderV2x(
         dischargingEnabledUntil: number | null | undefined,
         maximumDischargeCurrentA: number | undefined,
-        diagnosticsActive: boolean,
+        blocked: string | undefined,
         offline: boolean,
     ): TemplateResult {
         return html`
@@ -422,8 +423,8 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                 </label>
                 <md-filled-button
                     @click=${handleAsync(() => this._handleEnableDischarging())}
-                    ?disabled=${this._busy || offline || diagnosticsActive}
-                    title=${diagnosticsActive ? "Not available while self-diagnostics are active — click Disable first" : nothing}
+                    ?disabled=${this._busy || offline || blocked !== undefined}
+                    title=${blocked ?? nothing}
                 >
                     Enable Discharging
                 </md-filled-button>
@@ -670,7 +671,7 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
         try {
             await startDiagnostics(this.client, node.node_id, endpoint);
         } catch (error) {
-            this.#reportFailure("Start diagnostics failed", error, DIAGNOSTICS_OR_ALREADY_ENABLED_HINT, busyGeneration);
+            this.#reportFailure("Start diagnostics failed", error, COMMAND_REFUSED_HINT, busyGeneration);
         } finally {
             if (this.#busyGeneration === busyGeneration) this._busy = false;
         }
@@ -709,7 +710,7 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                 maximumChargeCurrentA,
             });
         } catch (error) {
-            this.#reportFailure("Enable charging failed", error, DIAGNOSTICS_OR_ALREADY_ENABLED_HINT, busyGeneration);
+            this.#reportFailure("Enable charging failed", error, COMMAND_REFUSED_HINT, busyGeneration);
         } finally {
             if (this.#busyGeneration === busyGeneration) this._busy = false;
         }
@@ -742,12 +743,7 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                 maximumDischargeCurrentA,
             });
         } catch (error) {
-            this.#reportFailure(
-                "Enable discharging failed",
-                error,
-                DIAGNOSTICS_OR_ALREADY_ENABLED_HINT,
-                busyGeneration,
-            );
+            this.#reportFailure("Enable discharging failed", error, COMMAND_REFUSED_HINT, busyGeneration);
         } finally {
             if (this.#busyGeneration === busyGeneration) this._busy = false;
         }

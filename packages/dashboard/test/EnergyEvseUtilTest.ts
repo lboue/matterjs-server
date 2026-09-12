@@ -79,6 +79,22 @@ describe("energy evse util", () => {
         expect(unknown.canStartDiagnostics).to.equal(false);
     });
 
+    it("blocks the supply commands while a fault is active or diagnostics are running", () => {
+        // The reference delegate guards Disable, EnableCharging and EnableDischarging with the same
+        // CheckFaultOrDiagnostic(), so all three are refused in either state.
+        expect(energyEvseInfo(BASE_ATTRS, 1).supplyCommandsBlockedReason).to.equal(undefined);
+
+        const diagnostics = energyEvseInfo({ ...BASE_ATTRS, "1/153/1": 4 }, 1);
+        expect(diagnostics.supplyCommandsBlockedReason).to.contain("self-diagnostics");
+
+        const faulted = energyEvseInfo({ ...BASE_ATTRS, "1/153/2": 3 }, 1);
+        expect(faulted.supplyCommandsBlockedReason).to.contain("fault");
+
+        // A fault outranks diagnostics: it is the condition the operator has to deal with first.
+        const both = energyEvseInfo({ ...BASE_ATTRS, "1/153/1": 4, "1/153/2": 3 }, 1);
+        expect(both.supplyCommandsBlockedReason).to.contain("fault");
+    });
+
     it("flags an active fault", () => {
         const info = energyEvseInfo({ ...BASE_ATTRS, "1/153/2": 4 }, 1);
         expect(info.faultState).to.equal("Over current");
