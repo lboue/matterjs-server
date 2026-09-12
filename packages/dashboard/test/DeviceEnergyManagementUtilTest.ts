@@ -171,10 +171,13 @@ describe("device energy management util", () => {
             "2": FORECAST_START,
             "7": [{ "2": 600 }, { "8": 1 }, { "2": 600 }],
         };
-        const slots = deviceEnergyManagementInfo({ ...DISHWASHER_ATTRS, "1/152/6": forecast }, 1).forecast!.slots;
+        const info = deviceEnergyManagementInfo({ ...DISHWASHER_ATTRS, "1/152/6": forecast }, 1).forecast!;
+        const slots = info.slots;
         expect(slots[1].startTime).to.equal(FORECAST_START + 600);
         expect(slots[1].endTime).to.equal(undefined);
         expect(slots[2].startTime).to.equal(undefined);
+        // The slots that do have a duration sum to 1200 s, which is not the forecast's length.
+        expect(info.durationSeconds).to.equal(undefined);
     });
 
     it("totals the forecast's consumption over its slots", () => {

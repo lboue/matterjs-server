@@ -316,7 +316,11 @@ function decodeForecast(value: unknown): ForecastInfo | undefined {
     applySlotTimes(slots, startTime);
 
     const energies = slots.map(slot => slot.energyWh).filter((wh): wh is number => wh !== undefined);
-    const slotSeconds = slots.reduce((total, slot) => total + (slot.durationSeconds ?? 0), 0);
+    // A partial sum would be shown as the whole forecast's length, so the fallback only applies when
+    // every slot contributes.
+    const slotSeconds = slots.every(slot => slot.durationSeconds !== undefined)
+        ? slots.reduce((total, slot) => total + (slot.durationSeconds ?? 0), 0)
+        : 0;
 
     return {
         forecastId: toNumber(field(value, 0)),
