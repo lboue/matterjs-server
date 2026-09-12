@@ -913,9 +913,9 @@ async function getCredentialStatus(
 
 /**
  * The lowest unoccupied PIN credential index in `[1, maxIndex]`, or null when every slot is taken.
- * Mirrors nextFreeUserIndex/readUsers: GetCredentialStatus's NextCredentialIndex chains through the
- * *occupied* slots only, so free slots are never queried directly — they are whatever is left over once
- * the occupied ones are collected.
+ * GetCredentialStatus's NextCredentialIndex chains through the *occupied* slots, but it is an optional
+ * response field: a lock that omits it ends the chain after the first slot, so any index the chain did
+ * not reach is probed directly rather than assumed free.
  */
 async function nextFreePinCredentialIndex(
     client: MatterClient,
@@ -938,7 +938,11 @@ async function nextFreePinCredentialIndex(
         index = status.nextCredentialIndex;
     }
     for (let candidate = 1; candidate <= maxIndex; candidate++) {
-        if (!occupied.has(candidate)) return candidate;
+        if (occupied.has(candidate)) continue;
+        if (visited.has(candidate)) return candidate;
+        const status = await getCredentialStatus(client, nodeId, endpoint, CREDENTIAL_TYPE_PIN, candidate);
+        if (!status.credentialExists) return candidate;
+        occupied.add(candidate);
     }
     return null;
 }

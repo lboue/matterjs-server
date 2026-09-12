@@ -676,10 +676,14 @@ describe("door-lock util", () => {
     });
 
     describe("attachPinCredential", () => {
-        /** `occupiedChain` maps an occupied PIN credential index to the next occupied one (or null). */
+        /**
+         * `occupiedChain` maps an occupied PIN credential index to the next occupied one (or null).
+         * `omitNextCredentialIndex` models a lock that leaves out the optional response field.
+         */
         function fakeCredentialClient(options: {
             occupiedChain: Record<number, number | null>;
             setCredentialResponse?: unknown;
+            omitNextCredentialIndex?: boolean;
         }) {
             const setCredentialCalls = new Array<Record<string, unknown>>();
             const credentialStatusIndexes = new Array<number>();
@@ -697,7 +701,12 @@ describe("door-lock util", () => {
                         const exists = credentialIndex in options.occupiedChain;
                         return Promise.resolve({
                             credentialExists: exists,
-                            nextCredentialIndex: exists ? options.occupiedChain[credentialIndex] : null,
+                            nextCredentialIndex:
+                                options.omitNextCredentialIndex === true
+                                    ? undefined
+                                    : exists
+                                      ? options.occupiedChain[credentialIndex]
+                                      : null,
                         });
                     }
                     if (commandName === "SetCredential") {
@@ -726,10 +735,21 @@ describe("door-lock util", () => {
             await expect(attachPinCredential(client, 1, 6, 3, "1234", 2)).to.be.rejectedWith("full");
         });
 
-        it("stops scanning once NextCredentialIndex reports a value outside [1, maxIndex]", async () => {
+        it("stops chaining once NextCredentialIndex reports a value outside [1, maxIndex]", async () => {
             const { client, credentialStatusIndexes } = fakeCredentialClient({ occupiedChain: { 1: 999 } });
             await attachPinCredential(client, 1, 6, 3, "1234", 5);
-            expect(credentialStatusIndexes).to.deep.equal([1]);
+            // The chain ends at 1, so 2 is probed rather than assumed free.
+            expect(credentialStatusIndexes).to.deep.equal([1, 2]);
+        });
+
+        it("probes candidates directly when the lock omits the optional NextCredentialIndex", async () => {
+            const { client, setCredentialCalls, credentialStatusIndexes } = fakeCredentialClient({
+                occupiedChain: { 1: null, 2: null },
+                omitNextCredentialIndex: true,
+            });
+            await attachPinCredential(client, 1, 6, 3, "1234", 5);
+            expect(credentialStatusIndexes).to.deep.equal([1, 2, 3]);
+            expect(setCredentialCalls[0]?.["credential"]).to.deep.equal({ credentialType: 1, credentialIndex: 3 });
         });
 
         it("maps the Door Lock-specific Duplicate/Occupied statuses instead of falling back to Unknown", async () => {

@@ -123,7 +123,7 @@ const DATE_TIME_MAX = "2136-02-07T06:28:15";
 /** Bounds the GetUser walk on a lock that leaves NumberOfTotalUsersSupported unreported. */
 const USER_SCAN_FALLBACK = 32;
 
-/** ExpiringUserTimeout's upper bound: the Door Lock data model constrains it to 1–2880 minutes (spec §7.18.2.51). */
+/** ExpiringUserTimeout's upper bound: the Door Lock data model constrains it to 1–2880 minutes. */
 const EXPIRING_USER_TIMEOUT_MAX_MINUTES = 2880;
 
 /** UserTypeEnum.UnrestrictedUser — the default "Standard" choice in the add-user editor. */
@@ -826,9 +826,14 @@ class DoorLockClusterCommands extends BaseClusterCommands {
                     }
                     await attachPinCredential(this.client, node.node_id, endpoint, userIndex, pin, capacity);
                 } catch (error) {
-                    if (!this.isSameContext(node, endpoint)) return;
                     credentialError = error;
                 }
+            }
+            if (!this.isSameContext(node, endpoint)) {
+                if (credentialError !== undefined) {
+                    console.error("The PIN could not be set for the user that was just created", credentialError);
+                }
+                return;
             }
             this._addingUser = false;
             this._newUserName = "";
@@ -1127,9 +1132,6 @@ class DoorLockClusterCommands extends BaseClusterCommands {
     }
 
     #renderAddUserEditor(): TemplateResult {
-        // A Temporary PIN is created directly with a working credential (SetCredential's combined-creation
-        // use case isn't used here — see attachPinCredential — but the operator still enters the PIN up
-        // front), so the option only makes sense where the lock can store PIN credentials at all.
         const canAddExpiring = this.#expiringUserSupported();
         const expiring = canAddExpiring && this._newUserType === USER_TYPE_EXPIRING;
         const minPinLength = readMinPinCodeLength(this.node, this.endpoint);

@@ -680,15 +680,15 @@ export class WebSocketControllerHandler implements WebServerHandler {
         let messageId: string | undefined;
         let command: string | undefined;
         try {
-            // Redacted defensively: a request too malformed to redact still needs to reach the log verbatim,
-            // since it's the only record of why parsing (below) is about to fail.
             logger.debug(`[${connId}] WebSocket request`, () => {
                 try {
-                    return toBigIntAwareJson(
-                        redactSensitiveCommandFields(parseBigIntAwareJson(data) as { args?: unknown }),
-                    );
+                    const parsed = parseBigIntAwareJson(data);
+                    if (parsed === null || typeof parsed !== "object") throw new Error("not an object");
+                    return toBigIntAwareJson(redactSensitiveCommandFields(parsed));
                 } catch {
-                    return data;
+                    // A frame that cannot be parsed cannot be redacted either, and it may still carry a
+                    // credential, so only its size reaches the log.
+                    return `<unparseable request, ${data.length} bytes>`;
                 }
             });
             const request = parseBigIntAwareJson(data) as { message_id: string; command: string; args: any };
