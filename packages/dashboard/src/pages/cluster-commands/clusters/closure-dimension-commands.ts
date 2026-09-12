@@ -211,7 +211,7 @@ class ClosureDimensionClusterCommands extends BaseClusterCommands {
                                           }
                                           @click=${handleAsync(
                                               () => this._handleSetTarget(),
-                                              err => this._reportCommandFailure("SetTarget", err),
+                                              this._failureReporter("SetTarget"),
                                           )}
                                       >
                                           Set
@@ -280,7 +280,7 @@ class ClosureDimensionClusterCommands extends BaseClusterCommands {
                                               ?disabled=${stepCount === null}
                                               @click=${handleAsync(
                                                   () => this._handleStep(),
-                                                  err => this._reportCommandFailure("Step", err),
+                                                  this._failureReporter("Step"),
                                               )}
                                           >
                                               Step
@@ -403,10 +403,19 @@ class ClosureDimensionClusterCommands extends BaseClusterCommands {
         });
     }
 
-    private _reportCommandFailure(command: string, err: Error) {
-        showAlertDialog({ title: `${command} failed`, text: err.message }).catch(dialogErr =>
-            console.error("Failed to show the ClosureDimension command error", dialogErr),
-        );
+    /** Captures the panel's context at render time; a reused panel must not raise the old device's error. */
+    private _failureReporter(command: string) {
+        const node = this.node;
+        const endpoint = this.endpoint;
+        return (err: Error) => {
+            if (!this.isSameContext(node, endpoint)) {
+                console.error(`${command} failed (panel moved on)`, err);
+                return;
+            }
+            showAlertDialog({ title: `${command} failed`, text: err.message }).catch(dialogErr =>
+                console.error("Failed to show the ClosureDimension command error", dialogErr),
+            );
+        };
     }
 
     static override styles = [
