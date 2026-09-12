@@ -5,14 +5,12 @@
  */
 
 import { attributeArray } from "./access-control.js";
-import { tagField as field, toNumber, toText } from "./attribute-shapes.js";
+import { asObject, pickNumber, tagField as field, toNumber, toText } from "./attribute-shapes.js";
 
 export const DEVICE_ENERGY_MANAGEMENT_MODE_CLUSTER_ID = 159;
 
 const ATTR_SUPPORTED_MODES = 0;
 const ATTR_CURRENT_MODE = 1;
-const ATTR_START_UP_MODE = 2;
-const ATTR_ON_MODE = 3;
 
 /** ModeBase's ModeChangeStatus enum (Matter 1.6 §1.10.6.6); DeviceEnergyManagementMode adds no cluster-specific codes. */
 const MODE_CHANGE_STATUS_NAMES: Record<number, string> = {
@@ -56,10 +54,6 @@ export interface DeviceEnergyManagementModeInfo {
     supportedModes: ModeOptionInfo[];
     currentMode?: number;
     currentModeLabel?: string;
-    startUpMode?: number;
-    startUpModeLabel?: string;
-    onMode?: number;
-    onModeLabel?: string;
 }
 
 export interface ChangeToModeResult {
@@ -104,27 +98,25 @@ export function deviceEnergyManagementModeInfo(
     const labelFor = (mode: number | undefined) => supportedModes.find(m => m.mode === mode)?.label;
 
     const currentMode = toNumber(attr(attributes, endpoint, ATTR_CURRENT_MODE));
-    const startUpMode = toNumber(attr(attributes, endpoint, ATTR_START_UP_MODE));
-    const onMode = toNumber(attr(attributes, endpoint, ATTR_ON_MODE));
 
-    return {
-        supportedModes,
-        currentMode,
-        currentModeLabel: labelFor(currentMode),
-        startUpMode,
-        startUpModeLabel: labelFor(startUpMode),
-        onMode,
-        onModeLabel: labelFor(onMode),
-    };
+    return { supportedModes, currentMode, currentModeLabel: labelFor(currentMode) };
 }
 
-/** ChangeToModeResponse is field-tag keyed: "0" Status, "1" StatusText (present unless Status is Success). */
+/**
+ * Command responses are name-keyed (convertMatterToWebSocketNameBased), unlike the tag-keyed
+ * attributes above. A response carrying no Status says nothing about the outcome, so it must not
+ * read as Success.
+ */
 export function decodeChangeToModeResult(response: unknown): ChangeToModeResult {
-    const status = toNumber(field(response, 0)) ?? 0;
+    const obj = asObject(response);
+    const status = obj === null ? null : pickNumber(obj, "status");
+    if (status === null) {
+        throw new Error("The device answered ChangeToMode without a status");
+    }
     return {
         success: status === 0,
         status,
         statusName: MODE_CHANGE_STATUS_NAMES[status] ?? `Unknown (${status})`,
-        statusText: toText(field(response, 1)),
+        statusText: obj === null ? undefined : (toText(obj["statusText"]) ?? undefined),
     };
 }

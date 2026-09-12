@@ -5,6 +5,8 @@
  */
 
 import "@material/web/button/outlined-button";
+import "@material/web/select/outlined-select";
+import "@material/web/select/select-option";
 import { css, html, nothing, type CSSResultGroup } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { handleAsync } from "../../../util/async-handler.js";
@@ -26,12 +28,29 @@ class DeviceEnergyManagementModeClusterCommands extends BaseClusterCommands {
     @state() private _busy = false;
     @state() private _result?: { mode: number; result: ChangeToModeResult };
     @state() private _error?: string;
+    private _formContext?: string;
+    /** An invoke started before a reset must not write its outcome into the panel that replaced it. */
+    private _invokeGeneration = 0;
 
-    private async _changeToMode() {
+    override willUpdate(changedProperties: Map<string, unknown>) {
+        super.willUpdate(changedProperties);
+        if (!this.node) return;
+        const context = `${String(this.node.node_id)}/${this.endpoint}/${this.cluster}`;
+        if (this._formContext !== undefined && this._formContext !== context) {
+            this._selectedMode = null;
+            this._result = undefined;
+            this._error = undefined;
+            this._busy = false;
+            this._invokeGeneration++;
+        }
+        this._formContext = context;
+    }
+
+    private async _changeToMode(mode: number) {
         const node = this.node;
         const endpoint = this.endpoint;
-        const mode = this._selectedMode;
-        if (mode === null) return;
+        const generation = ++this._invokeGeneration;
+        const isCurrent = () => this._invokeGeneration === generation && this.isSameContext(node, endpoint);
         this._busy = true;
         this._error = undefined;
         this._result = undefined;
@@ -39,12 +58,12 @@ class DeviceEnergyManagementModeClusterCommands extends BaseClusterCommands {
             const response = await this.client.deviceCommand(node.node_id, endpoint, CLUSTER_ID, "ChangeToMode", {
                 newMode: mode,
             });
-            if (!this.isSameContext(node, endpoint)) return;
+            if (!isCurrent()) return;
             this._result = { mode, result: decodeChangeToModeResult(response) };
         } catch (err) {
-            if (this.isSameContext(node, endpoint)) this._error = errorText(err);
+            if (isCurrent()) this._error = errorText(err);
         } finally {
-            if (this.isSameContext(node, endpoint)) this._busy = false;
+            if (isCurrent()) this._busy = false;
         }
     }
 
@@ -69,49 +88,40 @@ class DeviceEnergyManagementModeClusterCommands extends BaseClusterCommands {
                             ></span
                         >
                     </div>
-                    ${
-                        info.startUpMode !== undefined
-                            ? html`<div class="command-row">
-                                  <span>Start-up mode: ${info.startUpModeLabel ?? info.startUpMode}</span>
-                              </div>`
-                            : nothing
-                    }
-                    ${
-                        info.onMode !== undefined
-                            ? html`<div class="command-row">
-                                  <span>On mode: ${info.onModeLabel ?? info.onMode}</span>
-                              </div>`
-                            : nothing
-                    }
                     <div class="command-row">
-                        <label for="newMode">New mode:</label>
-                        <select
-                            id="newMode"
+                        <md-outlined-select
+                            label="New mode"
                             ?disabled=${this._busy || !this.node.available || info.supportedModes.length === 0}
+                            .value=${selected !== null ? String(selected) : ""}
                             @change=${(e: Event) => {
-                                this._selectedMode = parseInt((e.target as HTMLSelectElement).value, 10);
+                                this._selectedMode = Number((e.target as HTMLSelectElement).value);
                             }}
                         >
                             ${info.supportedModes.map(
                                 m => html`
-                                    <option value=${m.mode} .selected=${m.mode === selected}>
-                                        ${m.label}
-                                        (${m.mode})${
-                                            m.tags.length > 0 ? ` — ${m.tags.map(t => t.label).join(", ")}` : ""
-                                        }
-                                    </option>
+                                    <md-select-option value=${String(m.mode)} ?selected=${m.mode === selected}>
+                                        <div slot="headline">
+                                            ${m.label}
+                                            (${m.mode})${
+                                                m.tags.length > 0 ? ` — ${m.tags.map(t => t.label).join(", ")}` : ""
+                                            }
+                                        </div>
+                                    </md-select-option>
                                 `,
                             )}
-                        </select>
+                        </md-outlined-select>
                         <md-outlined-button
                             ?disabled=${this._busy || !this.node.available || selected === null}
-                            @click=${handleAsync(() => this._changeToMode())}
+                            @click=${handleAsync(() => this._changeToMode(selected))}
                             >Change To Mode</md-outlined-button
                         >
                     </div>
                     ${
                         this._result
-                            ? html`<div class="result ${this._result.result.success ? "" : "result-error"}">
+                            ? html`<div
+                                  class="result ${this._result.result.success ? "" : "result-error"}"
+                                  role=${this._result.result.success ? "status" : "alert"}
+                              >
                                   ChangeToMode(${this._result.mode}) → ${this._result.result.statusName}
                                   (${this._result.result.status})${
                                       this._result.result.statusText
@@ -121,7 +131,7 @@ class DeviceEnergyManagementModeClusterCommands extends BaseClusterCommands {
                               </div>`
                             : nothing
                     }
-                    ${this._error ? html`<div class="result result-error">${this._error}</div>` : nothing}
+                    ${this._error ? html`<div class="result result-error" role="alert">${this._error}</div>` : nothing}
                 </div>
             </details>
         `;

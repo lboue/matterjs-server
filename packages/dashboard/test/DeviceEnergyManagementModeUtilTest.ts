@@ -14,8 +14,6 @@ const DEM_MODE_ATTRS: Record<string, unknown> = {
         { "0": "Local Optimization", "1": 2, "2": [{ "1": 0x4002 }, { "1": 0x0000 }] },
     ],
     "1/159/1": 1,
-    "1/159/2": 0,
-    "1/159/3": 2,
 };
 
 describe("device energy management mode util", () => {
@@ -36,14 +34,10 @@ describe("device energy management mode util", () => {
         expect(info.supportedModes[2].tags.map(t => t.label)).to.deep.equal(["LocalOptimization", "Auto"]);
     });
 
-    it("resolves the current, start-up and on mode labels from the supported modes list", () => {
+    it("resolves the current mode label from the supported modes list", () => {
         const info = deviceEnergyManagementModeInfo(DEM_MODE_ATTRS, 1);
         expect(info.currentMode).to.equal(1);
         expect(info.currentModeLabel).to.equal("Device Optimization");
-        expect(info.startUpMode).to.equal(0);
-        expect(info.startUpModeLabel).to.equal("No Optimization");
-        expect(info.onMode).to.equal(2);
-        expect(info.onModeLabel).to.equal("Local Optimization");
     });
 
     it("falls back to a generated label for a supported mode without one", () => {
@@ -69,26 +63,29 @@ describe("device energy management mode util", () => {
 });
 
 describe("decodeChangeToModeResult", () => {
-    it("decodes a successful response without a status text", () => {
-        const result = decodeChangeToModeResult({ "0": 0 });
+    it("decodes a successful name-keyed response without a status text", () => {
+        const result = decodeChangeToModeResult({ status: 0 });
         expect(result).to.deep.equal({ success: true, status: 0, statusName: "Success", statusText: undefined });
     });
 
     it("decodes a rejected response with its status text", () => {
-        const result = decodeChangeToModeResult({ "0": 1, "1": "Mode is not currently available" });
+        const result = decodeChangeToModeResult({ status: 1, statusText: "Mode is not currently available" });
         expect(result.success).to.equal(false);
         expect(result.statusName).to.equal("UnsupportedMode");
         expect(result.statusText).to.equal("Mode is not currently available");
     });
 
     it("names an unrecognized status code", () => {
-        const result = decodeChangeToModeResult({ "0": 9 });
+        const result = decodeChangeToModeResult({ status: 9 });
         expect(result.statusName).to.equal("Unknown (9)");
     });
 
-    it("treats a missing status as Success", () => {
-        const result = decodeChangeToModeResult({});
-        expect(result.status).to.equal(0);
-        expect(result.success).to.equal(true);
+    it("rejects a response carrying no status instead of reporting Success", () => {
+        expect(() => decodeChangeToModeResult({})).to.throw("without a status");
+        expect(() => decodeChangeToModeResult(null)).to.throw("without a status");
+    });
+
+    it("does not read the tag-keyed attribute encoding", () => {
+        expect(() => decodeChangeToModeResult({ "0": 1, "1": "rejected" })).to.throw("without a status");
     });
 });
