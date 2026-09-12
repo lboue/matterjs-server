@@ -205,8 +205,8 @@ class DoorLockClusterCommands extends BaseClusterCommands {
      */
     #busyGeneration = 0;
     #freeIndexCapacity: number | null = null;
-    /** The context `_expiringTimeoutInput` was last synced from the device for, so a user's own edits stick. */
-    #expiringTimeoutSyncedFor: string | null = null;
+    /** Set once the operator edits the expiry field, so a device report cannot overwrite what they typed. */
+    #expiringTimeoutDirty = false;
 
     override willUpdate(changedProperties: PropertyValues) {
         super.willUpdate(changedProperties);
@@ -242,7 +242,7 @@ class DoorLockClusterCommands extends BaseClusterCommands {
             this._newUserPin = "";
             this._userEditorError = undefined;
             this._expiringTimeoutInput = "";
-            this.#expiringTimeoutSyncedFor = null;
+            this.#expiringTimeoutDirty = false;
             this._showEmptyWeekDay = false;
             this._showEmptyYearDay = false;
             this._showEmptyHoliday = false;
@@ -259,14 +259,11 @@ class DoorLockClusterCommands extends BaseClusterCommands {
             this._freeUserIndex = nextFreeUserIndex(this._users, userCapacity ?? USER_SCAN_FALLBACK);
         }
 
-        // Synced once per context rather than on every render, so a value the operator is mid-edit on isn't
-        // clobbered by the attribute simply being re-read.
-        if (this.#expiringTimeoutSyncedFor !== context) {
+        // Tracks the device until the operator types something: another client (or the lock itself) can
+        // change the timeout at any time, and saving a value read once at mount would undo that.
+        if (!this.#expiringTimeoutDirty) {
             const expiringTimeout = readExpiringUserTimeout(this.node, this.endpoint);
-            if (expiringTimeout !== null) {
-                this._expiringTimeoutInput = String(expiringTimeout);
-                this.#expiringTimeoutSyncedFor = context;
-            }
+            if (expiringTimeout !== null) this._expiringTimeoutInput = String(expiringTimeout);
         }
 
         // The attribute cache fills in progressively: the feature bits can resolve before the numeric
@@ -612,6 +609,8 @@ class DoorLockClusterCommands extends BaseClusterCommands {
         this._busy = true;
         try {
             await writeExpiringUserTimeout(this.client, node.node_id, endpoint, minutes);
+            // The field matches the lock again, so let the next report track it.
+            if (this.isSameContext(node, endpoint)) this.#expiringTimeoutDirty = false;
         } catch (error) {
             this.#reportFailure("Set Temporary PIN expiry failed", error, node, endpoint);
         } finally {
@@ -1123,6 +1122,7 @@ class DoorLockClusterCommands extends BaseClusterCommands {
                     .value=${live(this._expiringTimeoutInput)}
                     @input=${(event: Event) => {
                         this._expiringTimeoutInput = (event.target as HTMLInputElement).value;
+                        this.#expiringTimeoutDirty = true;
                     }}
                 />
                 <md-outlined-button ?disabled=${this._busy} @click=${handleAsync(() => this.#saveExpiringTimeout())}>
