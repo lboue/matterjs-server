@@ -12,18 +12,19 @@ import "@material/web/list/list-item";
 import { consume } from "@lit/context";
 import { isTestNodeId, MatterClient, MatterNode } from "@matter-server/ws-client";
 import { mdiAlertCircleOutline, mdiChevronRight, mdiGraphOutline } from "@mdi/js";
-import { css, html, LitElement } from "lit";
+import { css, html, LitElement, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { guard } from "lit/directives/guard.js";
 import { clientContext, tickContext } from "../client/client-context.js";
 import "../components/ha-svg-icon";
+import { renderSemanticTagChips } from "../components/semantic-tag-chips.js";
 import { getDeviceIcon, getEndpointIcon } from "../util/device-icons.js";
 import { getEndpointLabel } from "../util/endpoint-label.js";
 import { getEndpointDeviceTypes, getEndpointTree } from "../util/endpoints.js";
-import { formatNodeAddress, getEffectiveFabricIndex } from "../util/format_hex.js";
 import "./components/header";
 import "./components/node-details";
-import { describeSemanticTagListEntry, getEndpointSemanticTags } from "../util/semantic-tags.js";
+import { formatNodeAddress, getEffectiveFabricIndex } from "../util/format_hex.js";
+import { getEndpointSemanticTags } from "../util/semantic-tags.js";
 import { chipListStyles, notFoundStyles, reducedMotionStyles } from "../util/shared-styles.js";
 import { getNetworkType } from "./network/network-utils.js";
 
@@ -130,27 +131,10 @@ class MatterNodeView extends LitElement {
                                         <span>
                                             Endpoint
                                             ${endpointId}${
-                                                label ? html`: <span class="endpoint-label">${label}</span>` : ""
+                                                label ? html`: <span class="endpoint-label">${label}</span>` : nothing
                                             }
                                         </span>
-                                        ${
-                                            semanticTags.length > 0
-                                                ? html`
-                                                      <ul class="chip-list endpoint-tags" role="list">
-                                                          ${semanticTags.map(entry => {
-                                                              const { text, title, erroneous } =
-                                                                  describeSemanticTagListEntry(entry);
-                                                              return html`<li
-                                                                  class=${erroneous ? "chip chip-error" : "chip"}
-                                                                  title=${title}
-                                                              >
-                                                                  ${text}
-                                                              </li>`;
-                                                          })}
-                                                      </ul>
-                                                  `
-                                                : ""
-                                        }
+                                        ${renderSemanticTagChips(semanticTags, "endpoint-tags chip-compact")}
                                     </div>
                                     <div slot="supporting-text">
                                         Device Type(s):
@@ -239,15 +223,6 @@ class MatterNodeView extends LitElement {
 
             .endpoint-tags {
                 min-width: 0;
-            }
-
-            .endpoint-tags .chip {
-                font-size: 0.75rem;
-                line-height: 1.3;
-                padding: 3px 9px;
-                display: inline-flex;
-                align-items: center;
-                white-space: nowrap;
             }
 
             .node-title-bar h2 {

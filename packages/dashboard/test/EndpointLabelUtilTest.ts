@@ -71,6 +71,54 @@ describe("endpoint-label util", () => {
             expect(getEndpointLabel(n, 1)).to.equal("Garden");
         });
 
+        it("rejects a NUL-padded label the way MatterNode.nodeLabel does", () => {
+            const n = node({
+                "1/57/5": "Kitchen Plug\u0000\u0000\u0000",
+                "1/65/0": [{ "0": "room", "1": "Kitchen" }],
+            });
+            expect(getEndpointLabel(n, 1)).to.equal("Kitchen");
+        });
+
+        it("rejects NUL padding inside a LabelList value", () => {
+            const n = node({
+                "1/65/0": [{ "0": "room", "1": "Kitchen\u0000" }],
+                "1/64/0": [{ "0": "room", "1": "Lounge" }],
+            });
+            expect(getEndpointLabel(n, 1)).to.equal("Lounge");
+        });
+
+        it("falls through to FixedLabel when every UserLabel value is blank", () => {
+            const n = node({
+                "1/65/0": [{ "0": "room", "1": "   " }],
+                "1/64/0": [{ "0": "room", "1": "Lounge" }],
+            });
+            expect(getEndpointLabel(n, 1)).to.equal("Lounge");
+        });
+
+        it("reads a LabelList that arrives index-keyed instead of as an array", () => {
+            const n = node({ "1/65/0": { "0": { "0": "room", "1": "Kitchen" } } });
+            expect(getEndpointLabel(n, 1)).to.equal("Kitchen");
+        });
+
+        it("caps the number of joined entries so the header stays on one line", () => {
+            const n = node({
+                "1/65/0": [
+                    { "0": "a", "1": "One" },
+                    { "0": "b", "1": "Two" },
+                    { "0": "c", "1": "Three" },
+                    { "0": "d", "1": "Four" },
+                ],
+            });
+            expect(getEndpointLabel(n, 1)).to.equal("One / Two / Three");
+        });
+
+        it("ellipsizes a label longer than the header can hold", () => {
+            const n = node({ "1/57/5": "L".repeat(80) });
+            const label = getEndpointLabel(n, 1);
+            expect(label).to.have.length(60);
+            expect(label?.endsWith("\u2026")).to.equal(true);
+        });
+
         it("is scoped per endpoint", () => {
             const n = node({ "1/65/0": [{ "0": "room", "1": "Kitchen" }] });
             expect(getEndpointLabel(n, 2)).to.equal(undefined);

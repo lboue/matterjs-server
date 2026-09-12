@@ -6,6 +6,7 @@
 
 import type { MatterNode } from "@matter-server/ws-client";
 import { attributeArray } from "./access-control.js";
+import { tagField, toText } from "./attribute-shapes.js";
 
 // BridgedDeviceBasicInformation cluster (0x39 / 57): carries its own NodeLabel per bridged
 // endpoint, distinct from the whole-node BasicInformation NodeLabel on endpoint 0.
@@ -19,24 +20,30 @@ const FIXED_LABEL_CLUSTER_ID = 64;
 const USER_LABEL_CLUSTER_ID = 65;
 const LABEL_LIST_ATTRIBUTE_ID = 0;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null;
-}
+/** The label shares a single-line header with the endpoint number and the cluster name. */
+const MAX_LABEL_ENTRIES = 3;
+const MAX_LABEL_LENGTH = 60;
 
-// A NUL anywhere in a wire string means a corrupted/padded fixed-length buffer, not a real
-// value; trim() doesn't strip \u0000, so it's checked separately, and any occurrence - not just
-// an adjacent pair - discards the whole value rather than risk showing a garbled label.
-function isNulCorrupted(value: string): boolean {
-    return value.includes("\u0000");
+/**
+ * A device padding a fixed-width label field with NULs reports the padding as text;
+ * `MatterNode.nodeLabel` rejects the same shape rather than rendering it.
+ */
+function labelText(value: unknown): string | undefined {
+    const text = toText(value);
+    return text === undefined || text.includes("\u0000") ? undefined : text;
 }
 
 // LabelStruct wire entries are field-tag keyed: "0" Label (category, e.g. "room"), "1" Value.
 function decodeLabelListValues(raw: unknown): string[] {
     return attributeArray(raw)
-        .map(entry => (isRecord(entry) ? entry["1"] : undefined))
-        .filter((value): value is string => typeof value === "string" && !isNulCorrupted(value))
-        .map(value => value.trim())
-        .filter(value => value.length > 0);
+        .map(entry => labelText(tagField(entry, 1)))
+        .filter((value): value is string => value !== undefined);
+}
+
+function joinLabels(values: string[]): string | undefined {
+    if (values.length === 0) return undefined;
+    const joined = values.slice(0, MAX_LABEL_ENTRIES).join(" / ");
+    return joined.length > MAX_LABEL_LENGTH ? `${joined.slice(0, MAX_LABEL_LENGTH - 1)}\u2026` : joined;
 }
 
 /**
@@ -45,24 +52,19 @@ function decodeLabelListValues(raw: unknown): string[] {
  * LabelList, FixedLabel LabelList. Returns undefined when none are present/non-empty.
  */
 export function getEndpointLabel(node: MatterNode, endpoint: number): string | undefined {
-    const bridgedNodeLabel =
+    const bridgedNodeLabel = labelText(
         node.attributes[
             `${endpoint}/${BRIDGED_DEVICE_BASIC_INFORMATION_CLUSTER_ID}/${BRIDGED_NODE_LABEL_ATTRIBUTE_ID}`
-        ];
-    if (typeof bridgedNodeLabel === "string" && !isNulCorrupted(bridgedNodeLabel)) {
-        const normalizedLabel = bridgedNodeLabel.trim();
-        if (normalizedLabel.length > 0) return normalizedLabel;
-    }
-
-    const userLabels = decodeLabelListValues(
-        node.attributes[`${endpoint}/${USER_LABEL_CLUSTER_ID}/${LABEL_LIST_ATTRIBUTE_ID}`],
+        ],
     );
-    if (userLabels.length > 0) return userLabels.join(" / ");
+    if (bridgedNodeLabel !== undefined) return joinLabels([bridgedNodeLabel]);
 
-    const fixedLabels = decodeLabelListValues(
-        node.attributes[`${endpoint}/${FIXED_LABEL_CLUSTER_ID}/${LABEL_LIST_ATTRIBUTE_ID}`],
+    return (
+        joinLabels(
+            decodeLabelListValues(node.attributes[`${endpoint}/${USER_LABEL_CLUSTER_ID}/${LABEL_LIST_ATTRIBUTE_ID}`]),
+        ) ??
+        joinLabels(
+            decodeLabelListValues(node.attributes[`${endpoint}/${FIXED_LABEL_CLUSTER_ID}/${LABEL_LIST_ATTRIBUTE_ID}`]),
+        )
     );
-    if (fixedLabels.length > 0) return fixedLabels.join(" / ");
-
-    return undefined;
 }

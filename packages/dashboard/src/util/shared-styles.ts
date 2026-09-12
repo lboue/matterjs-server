@@ -53,6 +53,15 @@ export const chipListStyles = css`
         border-radius: 8px;
     }
 
+    .chip-list.chip-compact .chip {
+        font-size: 0.75rem;
+        line-height: 1.3;
+        padding: 3px 9px;
+        display: inline-flex;
+        align-items: center;
+        white-space: nowrap;
+    }
+
     .chip.chip-error {
         color: var(--md-sys-color-on-error-container);
         background: var(--md-sys-color-error-container);

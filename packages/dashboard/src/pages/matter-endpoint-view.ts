@@ -20,11 +20,12 @@ import "./cluster-commands/clusters/binding-commands.js";
 import { clientContext, tickContext } from "../client/client-context.js";
 import { clusters } from "../client/models/descriptions.js";
 import "../components/ha-svg-icon";
+import { renderSemanticTagChips } from "../components/semantic-tag-chips.js";
 import { BINDING_CLUSTER_ID, boundClientClusterIds, sourceClientClusters } from "../util/binding.js";
 import { getEndpointLabel } from "../util/endpoint-label.js";
 import { getEndpointDeviceTypes } from "../util/endpoints.js";
 import { formatHex, formatNodeAddress, getEffectiveFabricIndex } from "../util/format_hex.js";
-import { describeSemanticTagListEntry, getEndpointSemanticTags } from "../util/semantic-tags.js";
+import { getEndpointSemanticTags } from "../util/semantic-tags.js";
 import { infoPanelStyles, notFoundStyles } from "../util/shared-styles.js";
 import { bindingContext } from "./components/context.js";
 
@@ -121,7 +122,9 @@ class MatterEndpointView extends LitElement {
                             <b
                                 >Clusters on Endpoint
                                 ${this.endpoint}${
-                                    endpointLabel ? html`: <span class="endpoint-label">${endpointLabel}</span>` : ""
+                                    endpointLabel
+                                        ? html`: <span class="endpoint-label">${endpointLabel}</span>`
+                                        : nothing
                                 }</b
                             >
                         </div>
@@ -132,24 +135,7 @@ class MatterEndpointView extends LitElement {
                                     return deviceType.label;
                                 })
                                 .join(" / ")}
-                            ${
-                                semanticTags.length > 0
-                                    ? html`
-                                          <ul class="chip-list endpoint-tags" role="list">
-                                              ${semanticTags.map(entry => {
-                                                  const { text, title, erroneous } =
-                                                      describeSemanticTagListEntry(entry);
-                                                  return html`<li
-                                                      class=${erroneous ? "chip chip-error" : "chip"}
-                                                      title=${title}
-                                                  >
-                                                      ${text}
-                                                  </li>`;
-                                              })}
-                                          </ul>
-                                      `
-                                    : nothing
-                            }
+                            ${renderSemanticTagChips(semanticTags, "endpoint-tags chip-compact")}
                         </div>
                     </md-list-item>
                     ${guard(
