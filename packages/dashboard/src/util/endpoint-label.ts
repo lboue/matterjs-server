@@ -23,11 +23,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null;
 }
 
+// A NUL anywhere in a wire string means a corrupted/padded fixed-length buffer, not a real
+// value; trim() doesn't strip \u0000, so it's checked separately, and any occurrence - not just
+// an adjacent pair - discards the whole value rather than risk showing a garbled label.
+function isNulCorrupted(value: string): boolean {
+    return value.includes("\u0000");
+}
+
 // LabelStruct wire entries are field-tag keyed: "0" Label (category, e.g. "room"), "1" Value.
 function decodeLabelListValues(raw: unknown): string[] {
     return attributeArray(raw)
         .map(entry => (isRecord(entry) ? entry["1"] : undefined))
-        .filter((value): value is string => typeof value === "string")
+        .filter((value): value is string => typeof value === "string" && !isNulCorrupted(value))
         .map(value => value.trim())
         .filter(value => value.length > 0);
 }
@@ -42,7 +49,7 @@ export function getEndpointLabel(node: MatterNode, endpoint: number): string | u
         node.attributes[
             `${endpoint}/${BRIDGED_DEVICE_BASIC_INFORMATION_CLUSTER_ID}/${BRIDGED_NODE_LABEL_ATTRIBUTE_ID}`
         ];
-    if (typeof bridgedNodeLabel === "string" && !bridgedNodeLabel.includes("\u0000\u0000")) {
+    if (typeof bridgedNodeLabel === "string" && !isNulCorrupted(bridgedNodeLabel)) {
         const normalizedLabel = bridgedNodeLabel.trim();
         if (normalizedLabel.length > 0) return normalizedLabel;
     }

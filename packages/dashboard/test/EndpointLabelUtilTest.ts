@@ -75,5 +75,28 @@ describe("endpoint-label util", () => {
             const n = node({ "1/65/0": [{ "0": "room", "1": "Kitchen" }] });
             expect(getEndpointLabel(n, 2)).to.equal(undefined);
         });
+
+        it("rejects a NUL-corrupted BridgedDeviceBasicInformation NodeLabel and falls back to UserLabel", () => {
+            const n = node({
+                "1/57/5": "Kitchen Plug\u0000",
+                "1/65/0": [{ "0": "room", "1": "Kitchen" }],
+            });
+            expect(getEndpointLabel(n, 1)).to.equal("Kitchen");
+        });
+
+        it("rejects a BridgedDeviceBasicInformation NodeLabel with a single interior NUL", () => {
+            const n = node({ "1/57/5": "Kit\u0000chen Plug" });
+            expect(getEndpointLabel(n, 1)).to.equal(undefined);
+        });
+
+        it("skips a NUL-corrupted LabelStruct value", () => {
+            const n = node({
+                "1/65/0": [
+                    { "0": "room", "1": "Kitchen\u0000" },
+                    { "0": "zone", "1": "Garden" },
+                ],
+            });
+            expect(getEndpointLabel(n, 1)).to.equal("Garden");
+        });
     });
 });
