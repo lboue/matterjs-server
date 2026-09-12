@@ -39,6 +39,8 @@ import {
 import { BaseClusterCommands } from "../base-cluster-commands.js";
 import { registerClusterCommands } from "../registry.js";
 
+const DEFAULT_MIN_CHARGE_CURRENT_A = 6;
+const DEFAULT_MAX_CURRENT_A = 16;
 const MAX_SCHEDULES = 7;
 const MAX_TARGETS_PER_SCHEDULE = 10;
 
@@ -70,12 +72,12 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
 
     @state() private _chargeNoExpiry = true;
     @state() private _chargeUntil = "";
-    @state() private _minChargeCurrentA = 6;
-    @state() private _maxChargeCurrentA = 16;
+    @state() private _minChargeCurrentA = DEFAULT_MIN_CHARGE_CURRENT_A;
+    @state() private _maxChargeCurrentA = DEFAULT_MAX_CURRENT_A;
 
     @state() private _dischargeNoExpiry = true;
     @state() private _dischargeUntil = "";
-    @state() private _maxDischargeCurrentA = 16;
+    @state() private _maxDischargeCurrentA = DEFAULT_MAX_CURRENT_A;
 
     @state() private _schedules?: EditableChargingSchedule[];
     @state() private _scheduleBusy = false;
@@ -104,9 +106,10 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
         this._scheduleError = undefined;
 
         const info = energyEvseInfo(this.node.attributes, this.endpoint);
-        this._minChargeCurrentA = info.minimumChargeCurrentA ?? this._minChargeCurrentA;
-        this._maxChargeCurrentA = info.maximumChargeCurrentA ?? this._maxChargeCurrentA;
-        this._maxDischargeCurrentA = info.maximumDischargeCurrentA ?? this._maxDischargeCurrentA;
+        // Falling back to the current field values would prefill the new EVSE with the old one's limits.
+        this._minChargeCurrentA = info.minimumChargeCurrentA ?? DEFAULT_MIN_CHARGE_CURRENT_A;
+        this._maxChargeCurrentA = info.maximumChargeCurrentA ?? DEFAULT_MAX_CURRENT_A;
+        this._maxDischargeCurrentA = info.maximumDischargeCurrentA ?? DEFAULT_MAX_CURRENT_A;
     }
 
     override render() {
