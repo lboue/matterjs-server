@@ -34,7 +34,6 @@ export const reducedMotionStyles = css`
     }
 `;
 
-/** Standalone `.chip-list`/`.chip` styling, reused anywhere a compact tag/label needs the same pill look. */
 export const chipListStyles = css`
     .chip-list {
         list-style: none;
