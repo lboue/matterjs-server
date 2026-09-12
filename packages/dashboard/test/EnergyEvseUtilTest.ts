@@ -203,11 +203,12 @@ describe("energy evse commands", () => {
 });
 
 describe("charging target schedule decoding", () => {
+    // TargetDayOfWeekBitmap reaches the dashboard as an integer: bit 0 Sunday .. bit 6 Saturday.
     it("decodes a GetTargetsResponse, keeping only the selected days", () => {
         const schedules = decodeChargingTargetSchedules({
             chargingTargetSchedules: [
                 {
-                    dayOfWeekForSequence: { monday: true, wednesday: true, sunday: false },
+                    dayOfWeekForSequence: 0b0001010,
                     chargingTargets: [
                         { targetTimeMinutesPastMidnight: 360, targetSoC: 80 },
                         { targetTimeMinutesPastMidnight: 1200, addedEnergy: 10_000_000 },
@@ -228,7 +229,45 @@ describe("charging target schedule decoding", () => {
         expect(decodeChargingTargetSchedules(null)).to.deep.equal([]);
     });
 
-    it("round-trips through setChargingTargets as named boolean days and scaled energy", async () => {
+    it("reads no day from a bitmap of 0", () => {
+        const schedules = decodeChargingTargetSchedules({
+            chargingTargetSchedules: [
+                { dayOfWeekForSequence: 0, chargingTargets: [{ targetTimeMinutesPastMidnight: 60 }] },
+            ],
+        });
+        expect(schedules[0]?.days).to.deep.equal({});
+    });
+
+    it("reads every day from a full bitmap", () => {
+        const schedules = decodeChargingTargetSchedules({
+            chargingTargetSchedules: [
+                { dayOfWeekForSequence: 0b1111111, chargingTargets: [{ targetTimeMinutesPastMidnight: 60 }] },
+            ],
+        });
+        expect(schedules[0]?.days).to.deep.equal({
+            sunday: true,
+            monday: true,
+            tuesday: true,
+            wednesday: true,
+            thursday: true,
+            friday: true,
+            saturday: true,
+        });
+    });
+
+    it("reads an addedEnergy that arrives as an int64 bigint", () => {
+        const schedules = decodeChargingTargetSchedules({
+            chargingTargetSchedules: [
+                {
+                    dayOfWeekForSequence: 2,
+                    chargingTargets: [{ targetTimeMinutesPastMidnight: 60, addedEnergy: 10_000_000n }],
+                },
+            ],
+        });
+        expect(schedules[0]?.targets[0]?.addedEnergyKWh).to.equal(10);
+    });
+
+    it("round-trips through setChargingTargets as a day bitmap and scaled energy", async () => {
         const { client, calls } = fakeCommandClient();
         const schedules: EditableChargingSchedule[] = [
             {
@@ -240,18 +279,30 @@ describe("charging target schedule decoding", () => {
         expect(calls[0]?.payload).to.deep.equal({
             chargingTargetSchedules: [
                 {
-                    dayOfWeekForSequence: { saturday: true, sunday: true },
+                    dayOfWeekForSequence: 0b1000001,
                     chargingTargets: [{ targetTimeMinutesPastMidnight: 480, addedEnergy: 12_500_000 }],
                 },
             ],
         });
     });
 
+    it("round-trips a decoded schedule back to the bitmap it came from", async () => {
+        const decoded = decodeChargingTargetSchedules({
+            chargingTargetSchedules: [
+                { dayOfWeekForSequence: 0b0101010, chargingTargets: [{ targetTimeMinutesPastMidnight: 480 }] },
+            ],
+        });
+        const { client, calls } = fakeCommandClient();
+        await setChargingTargets(client, 1, 1, decoded);
+        const sent = calls[0]?.payload as { chargingTargetSchedules: { dayOfWeekForSequence: number }[] };
+        expect(sent.chargingTargetSchedules[0]?.dayOfWeekForSequence).to.equal(0b0101010);
+    });
+
     it("fetches and decodes through getChargingTargets", async () => {
         const { client, setResponse } = fakeCommandClient();
         setResponse({
             chargingTargetSchedules: [
-                { dayOfWeekForSequence: { friday: true }, chargingTargets: [{ targetTimeMinutesPastMidnight: 60 }] },
+                { dayOfWeekForSequence: 1 << 5, chargingTargets: [{ targetTimeMinutesPastMidnight: 60 }] },
             ],
         });
         const schedules = await getChargingTargets(client, 1, 1);
@@ -262,6 +313,12 @@ describe("charging target schedule decoding", () => {
 });
 
 describe("local datetime-local <-> Matter epoch-s conversion", () => {
+    it("rejects a date the uint32 epoch-s field cannot carry", () => {
+        expect(fromLocalDateTimeInputValue("1999-12-31T23:59")).to.equal(undefined);
+        expect(fromLocalDateTimeInputValue("2137-01-01T00:00")).to.equal(undefined);
+        expect(fromLocalDateTimeInputValue("2000-01-01T12:00")).to.not.equal(undefined);
+    });
+
     it("round-trips a local datetime-local value through the Matter epoch", () => {
         const input = "2027-03-15T08:30";
         const epoch = fromLocalDateTimeInputValue(input);

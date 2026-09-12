@@ -5,9 +5,12 @@
  */
 
 import type { MatterClient } from "@matter-server/ws-client";
-import { asObject, pickArray, pickBoolean, pickNumber, toNumber, toText } from "./attribute-shapes.js";
+import { asObject, pickArray, pickNumber, toNumber, toText } from "./attribute-shapes.js";
 
 export const ENERGY_EVSE_CLUSTER_ID = 153; // 0x99
+
+const ATTR_ACCEPTED_COMMAND_LIST = 0xfff9;
+const COMMAND_START_DIAGNOSTICS = 0x04;
 
 const ATTR_STATE = 0x00;
 const ATTR_SUPPLY_STATE = 0x01;
@@ -98,6 +101,8 @@ export interface EnergyEvseInfo {
     diagnosticsActive: boolean;
     /** Whether StartDiagnostics is expected to succeed right now (the device only accepts it while fully disabled). */
     canStartDiagnostics: boolean;
+    /** StartDiagnostics is an optional command, so it only exists where AcceptedCommandList lists it. */
+    startDiagnosticsSupported: boolean;
     faultState?: string;
     faultActive: boolean;
     /** undefined: not reported. null: no expiry, i.e. charging stays enabled until disabled explicitly. */
@@ -174,6 +179,11 @@ function decodeSession(attributes: Record<string, unknown>, endpoint: number): S
     };
 }
 
+function acceptsCommand(attributes: Record<string, unknown>, endpoint: number, commandId: number): boolean {
+    const accepted = attr(attributes, endpoint, ATTR_ACCEPTED_COMMAND_LIST);
+    return Array.isArray(accepted) && accepted.some(value => Number(value) === commandId);
+}
+
 export function energyEvseInfo(attributes: Record<string, unknown>, endpoint: number): EnergyEvseInfo {
     const featureMap = toNumber(attr(attributes, endpoint, ATTR_FEATURE_MAP));
     const faultStateRaw = toNumber(attr(attributes, endpoint, ATTR_FAULT_STATE));
@@ -185,6 +195,7 @@ export function energyEvseInfo(attributes: Record<string, unknown>, endpoint: nu
         supplyState: enumName(supplyStateRaw, SUPPLY_STATE_NAMES),
         diagnosticsActive: supplyStateRaw === SUPPLY_STATE_DISABLED_DIAGNOSTICS,
         canStartDiagnostics: supplyStateRaw === undefined || supplyStateRaw === SUPPLY_STATE_DISABLED,
+        startDiagnosticsSupported: acceptsCommand(attributes, endpoint, COMMAND_START_DIAGNOSTICS),
         faultState: enumName(faultStateRaw, FAULT_STATE_NAMES),
         faultActive: faultStateRaw !== undefined && faultStateRaw !== 0,
         chargingEnabledUntil: nullableNumber(attr(attributes, endpoint, ATTR_CHARGING_ENABLED_UNTIL)),
@@ -269,16 +280,33 @@ export async function enableDischarging(
 
 export type EvseWeekday = "sunday" | "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday";
 
-/** TargetDayOfWeekBitmap fields per Matter 1.6 §9.3.7.1, in calendar (Monday-first) display order. */
-export const EVSE_WEEKDAYS: { key: EvseWeekday; label: string }[] = [
-    { key: "monday", label: "Mon" },
-    { key: "tuesday", label: "Tue" },
-    { key: "wednesday", label: "Wed" },
-    { key: "thursday", label: "Thu" },
-    { key: "friday", label: "Fri" },
-    { key: "saturday", label: "Sat" },
-    { key: "sunday", label: "Sun" },
+/**
+ * TargetDayOfWeekBitmap, listed in calendar (Monday-first) display order. `bit` is the bitmap
+ * position the cluster assigns, which starts at Sunday.
+ */
+export const EVSE_WEEKDAYS: { key: EvseWeekday; label: string; bit: number }[] = [
+    { key: "monday", label: "Mon", bit: 1 },
+    { key: "tuesday", label: "Tue", bit: 2 },
+    { key: "wednesday", label: "Wed", bit: 3 },
+    { key: "thursday", label: "Thu", bit: 4 },
+    { key: "friday", label: "Fri", bit: 5 },
+    { key: "saturday", label: "Sat", bit: 6 },
+    { key: "sunday", label: "Sun", bit: 0 },
 ];
+
+/** Bitmaps reach the dashboard as an integer, never as an object of booleans (see Converters.ts). */
+export function decodeWeekdayBitmap(value: unknown): Partial<Record<EvseWeekday, boolean>> {
+    const bitmap = toNumber(value) ?? 0;
+    const days: Partial<Record<EvseWeekday, boolean>> = {};
+    for (const { key, bit } of EVSE_WEEKDAYS) {
+        if ((bitmap & (1 << bit)) !== 0) days[key] = true;
+    }
+    return days;
+}
+
+export function encodeWeekdayBitmap(days: Partial<Record<EvseWeekday, boolean>>): number {
+    return EVSE_WEEKDAYS.reduce((bitmap, { key, bit }) => (days[key] === true ? bitmap | (1 << bit) : bitmap), 0);
+}
 
 export interface EditableChargingTarget {
     /** Minutes since local midnight, 0-1439. */
@@ -310,11 +338,7 @@ function decodeChargingTarget(value: unknown): EditableChargingTarget | undefine
 function decodeChargingTargetSchedule(value: unknown): EditableChargingSchedule | undefined {
     const obj = asObject(value);
     if (obj === null) return undefined;
-    const daysObj = asObject(obj.dayOfWeekForSequence) ?? {};
-    const days: Partial<Record<EvseWeekday, boolean>> = {};
-    for (const { key } of EVSE_WEEKDAYS) {
-        if (pickBoolean(daysObj, key) === true) days[key] = true;
-    }
+    const days = decodeWeekdayBitmap(obj.dayOfWeekForSequence);
     const targets = pickArray(obj, "chargingTargets")
         .map(decodeChargingTarget)
         .filter((target): target is EditableChargingTarget => target !== undefined);
@@ -347,9 +371,7 @@ export async function setChargingTargets(
 ): Promise<void> {
     await client.deviceCommand(nodeId, endpoint, ENERGY_EVSE_CLUSTER_ID, "SetTargets", {
         chargingTargetSchedules: schedules.map(schedule => ({
-            dayOfWeekForSequence: Object.fromEntries(
-                EVSE_WEEKDAYS.filter(({ key }) => schedule.days[key] === true).map(({ key }) => [key, true]),
-            ),
+            dayOfWeekForSequence: encodeWeekdayBitmap(schedule.days),
             chargingTargets: schedule.targets.map(target => ({
                 targetTimeMinutesPastMidnight: target.timeMinutes,
                 ...(target.targetSoC !== undefined ? { targetSoC: target.targetSoC } : {}),

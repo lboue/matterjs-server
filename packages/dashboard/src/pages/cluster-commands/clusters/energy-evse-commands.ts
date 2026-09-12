@@ -28,8 +28,14 @@ import {
     type EvseWeekday,
     type SessionInfo,
 } from "../../../util/energy-evse.js";
+import type { EnergyEvseInfo } from "../../../util/energy-evse.js";
 import { errorText } from "../../../util/error-text.js";
-import { formatEpochTime, fromLocalDateTimeInputValue } from "../../../util/time.js";
+import {
+    formatEpochTime,
+    fromLocalDateTimeInputValue,
+    MATTER_EPOCH_MAX_INPUT_VALUE,
+    MATTER_EPOCH_MIN_INPUT_VALUE,
+} from "../../../util/time.js";
 import { BaseClusterCommands } from "../base-cluster-commands.js";
 import { registerClusterCommands } from "../registry.js";
 
@@ -107,6 +113,9 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
         if (!this.node || this.cluster !== ENERGY_EVSE_CLUSTER_ID) return nothing;
         const info = energyEvseInfo(this.node.attributes, this.endpoint);
         if (!info.supported) return nothing;
+        // The panel stays mounted while the node is unreachable so its cached decoding survives, but
+        // nothing it could send would reach the device.
+        const offline = this.node.available !== true;
 
         return html`
             <details class="command-panel" open>
@@ -175,7 +184,7 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                         }
                     </dl>
 
-                    ${this._renderChargingActions(info.diagnosticsActive, info.canStartDiagnostics)}
+                    ${this._renderChargingActions(info, offline)}
                     ${this._renderSession(info.session, info.v2xSupported)}
                     ${
                         info.v2xSupported
@@ -183,12 +192,13 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                                   info.dischargingEnabledUntil,
                                   info.maximumDischargeCurrentA,
                                   info.diagnosticsActive,
+                                  offline,
                               )
                             : nothing
                     }
                     ${
                         info.chargingPreferencesSupported
-                            ? this._renderChargingPreferences(info, info.soCReportingSupported)
+                            ? this._renderChargingPreferences(info, info.soCReportingSupported, offline)
                             : nothing
                     }
                     ${
@@ -265,20 +275,29 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
         `;
     }
 
-    private _renderChargingActions(diagnosticsActive: boolean, canStartDiagnostics: boolean): TemplateResult {
+    private _renderChargingActions(info: EnergyEvseInfo, offline: boolean): TemplateResult {
+        const diagnosticsActive = info.diagnosticsActive;
+        const canStartDiagnostics = info.canStartDiagnostics;
         return html`
             <h4>Charging control</h4>
             <div class="command-row">
-                <md-outlined-button @click=${handleAsync(() => this._handleDisable())} ?disabled=${this._busy}>
+                <md-outlined-button
+                    @click=${handleAsync(() => this._handleDisable())}
+                    ?disabled=${this._busy || offline}
+                >
                     Disable
                 </md-outlined-button>
-                <md-outlined-button
-                    @click=${handleAsync(() => this._handleStartDiagnostics())}
-                    ?disabled=${this._busy || !canStartDiagnostics}
-                    title=${canStartDiagnostics ? nothing : "Only available while charging is disabled"}
-                >
-                    Start Diagnostics
-                </md-outlined-button>
+                ${
+                    info.startDiagnosticsSupported
+                        ? html`<md-outlined-button
+                              @click=${handleAsync(() => this._handleStartDiagnostics())}
+                              ?disabled=${this._busy || offline || !canStartDiagnostics}
+                              title=${canStartDiagnostics ? nothing : "Only available while charging is disabled"}
+                          >
+                              Start Diagnostics
+                          </md-outlined-button>`
+                        : nothing
+                }
             </div>
             <div class="action-form">
                 <label class="checkbox-row">
@@ -291,11 +310,16 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                 </label>
                 ${
                     !this._chargeNoExpiry
-                        ? html`<input
-                              type="datetime-local"
-                              .value=${this._chargeUntil}
-                              @input=${(e: Event) => (this._chargeUntil = (e.target as HTMLInputElement).value)}
-                          />`
+                        ? html`<label>
+                              Charge until
+                              <input
+                                  type="datetime-local"
+                                  min=${MATTER_EPOCH_MIN_INPUT_VALUE}
+                                  max=${MATTER_EPOCH_MAX_INPUT_VALUE}
+                                  .value=${this._chargeUntil}
+                                  @input=${(e: Event) => (this._chargeUntil = (e.target as HTMLInputElement).value)}
+                              />
+                          </label>`
                         : nothing
                 }
                 <label>
@@ -322,7 +346,7 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                 </label>
                 <md-filled-button
                     @click=${handleAsync(() => this._handleEnableCharging())}
-                    ?disabled=${this._busy || diagnosticsActive}
+                    ?disabled=${this._busy || offline || diagnosticsActive}
                     title=${diagnosticsActive ? "Not available while self-diagnostics are active — click Disable first" : nothing}
                 >
                     Enable Charging
@@ -336,6 +360,7 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
         dischargingEnabledUntil: number | null | undefined,
         maximumDischargeCurrentA: number | undefined,
         diagnosticsActive: boolean,
+        offline: boolean,
     ): TemplateResult {
         return html`
             <h4>Bidirectional charging (V2X)</h4>
@@ -366,11 +391,16 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                 </label>
                 ${
                     !this._dischargeNoExpiry
-                        ? html`<input
-                              type="datetime-local"
-                              .value=${this._dischargeUntil}
-                              @input=${(e: Event) => (this._dischargeUntil = (e.target as HTMLInputElement).value)}
-                          />`
+                        ? html`<label>
+                              Discharge until
+                              <input
+                                  type="datetime-local"
+                                  min=${MATTER_EPOCH_MIN_INPUT_VALUE}
+                                  max=${MATTER_EPOCH_MAX_INPUT_VALUE}
+                                  .value=${this._dischargeUntil}
+                                  @input=${(e: Event) => (this._dischargeUntil = (e.target as HTMLInputElement).value)}
+                              />
+                          </label>`
                         : nothing
                 }
                 <label>
@@ -387,7 +417,7 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                 </label>
                 <md-filled-button
                     @click=${handleAsync(() => this._handleEnableDischarging())}
-                    ?disabled=${this._busy || diagnosticsActive}
+                    ?disabled=${this._busy || offline || diagnosticsActive}
                     title=${diagnosticsActive ? "Not available while self-diagnostics are active — click Disable first" : nothing}
                 >
                     Enable Discharging
@@ -405,6 +435,7 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
             approximateEvEfficiencyKmPerKWh?: number | null;
         },
         soCSupported: boolean,
+        offline: boolean,
     ): TemplateResult {
         return html`
             <h4>Charging preferences</h4>
@@ -461,13 +492,13 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                 <div class="command-row">
                     <md-outlined-button
                         @click=${handleAsync(() => this._handleLoadSchedule())}
-                        ?disabled=${this._scheduleBusy}
+                        ?disabled=${this._scheduleBusy || offline}
                     >
                         Load current
                     </md-outlined-button>
                     <md-outlined-button
                         @click=${handleAsync(() => this._handleClearSchedule())}
-                        ?disabled=${this._scheduleBusy}
+                        ?disabled=${this._scheduleBusy || offline}
                     >
                         Clear all
                     </md-outlined-button>
@@ -489,7 +520,7 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                     </md-text-button>
                     <md-filled-button
                         @click=${handleAsync(() => this._handleSaveSchedule())}
-                        ?disabled=${this._scheduleBusy || !this._schedules || this._schedules.length === 0}
+                        ?disabled=${this._scheduleBusy || offline || !this._schedules || this._schedules.length === 0}
                     >
                         Save schedule
                     </md-filled-button>
@@ -542,11 +573,14 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
     ): TemplateResult {
         return html`
             <div class="target-row">
-                <input
-                    type="time"
-                    .value=${minutesToTimeInputValue(target.timeMinutes)}
-                    @change=${(e: Event) => this._handleTargetTimeChange(scheduleIndex, targetIndex, e)}
-                />
+                <label>
+                    Charged by
+                    <input
+                        type="time"
+                        .value=${minutesToTimeInputValue(target.timeMinutes)}
+                        @change=${(e: Event) => this._handleTargetTimeChange(scheduleIndex, targetIndex, e)}
+                    />
+                </label>
                 ${
                     soCSupported
                         ? html`<label>
@@ -559,17 +593,18 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                               />
                               % SoC
                           </label>`
-                        : html`<label>
-                              <input
-                                  type="number"
-                                  min="0"
-                                  step="0.1"
-                                  .value=${target.addedEnergyKWh !== undefined ? String(target.addedEnergyKWh) : ""}
-                                  @input=${(e: Event) => this._handleTargetEnergyChange(scheduleIndex, targetIndex, e)}
-                              />
-                              kWh
-                          </label>`
+                        : nothing
                 }
+                <label>
+                    <input
+                        type="number"
+                        min="0"
+                        step="0.1"
+                        .value=${target.addedEnergyKWh !== undefined ? String(target.addedEnergyKWh) : ""}
+                        @input=${(e: Event) => this._handleTargetEnergyChange(scheduleIndex, targetIndex, e)}
+                    />
+                    kWh
+                </label>
                 <md-text-button @click=${() => this._handleRemoveTarget(scheduleIndex, targetIndex)}
                     >Remove</md-text-button
                 >
@@ -577,9 +612,17 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
         `;
     }
 
+    /** An emptied field is "not entered", which `Number("")` would otherwise read as 0. */
+    #optionalNumber(e: Event): number | undefined {
+        const raw = (e.target as HTMLInputElement).value.trim();
+        if (raw === "") return undefined;
+        const value = Number(raw);
+        return Number.isFinite(value) ? value : undefined;
+    }
+
     #parsePositiveNumber(e: Event, previous: number): number {
-        const value = Number((e.target as HTMLInputElement).value);
-        return Number.isFinite(value) && value >= 0 ? value : previous;
+        const value = this.#optionalNumber(e);
+        return value !== undefined && value >= 0 ? value : previous;
     }
 
     private async _handleDisable() {
@@ -591,7 +634,7 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
         try {
             await disableEvse(this.client, node.node_id, endpoint);
         } catch (error) {
-            this.#reportFailure("Disable failed", error);
+            this.#reportFailure("Disable failed", error, undefined, busyGeneration);
         } finally {
             if (this.#busyGeneration === busyGeneration) this._busy = false;
         }
@@ -606,7 +649,7 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
         try {
             await startDiagnostics(this.client, node.node_id, endpoint);
         } catch (error) {
-            this.#reportFailure("Start diagnostics failed", error, DIAGNOSTICS_OR_ALREADY_ENABLED_HINT);
+            this.#reportFailure("Start diagnostics failed", error, DIAGNOSTICS_OR_ALREADY_ENABLED_HINT, busyGeneration);
         } finally {
             if (this.#busyGeneration === busyGeneration) this._busy = false;
         }
@@ -639,7 +682,7 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                 maximumChargeCurrentA: this._maxChargeCurrentA,
             });
         } catch (error) {
-            this.#reportFailure("Enable charging failed", error, DIAGNOSTICS_OR_ALREADY_ENABLED_HINT);
+            this.#reportFailure("Enable charging failed", error, DIAGNOSTICS_OR_ALREADY_ENABLED_HINT, busyGeneration);
         } finally {
             if (this.#busyGeneration === busyGeneration) this._busy = false;
         }
@@ -667,7 +710,12 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                 maximumDischargeCurrentA: this._maxDischargeCurrentA,
             });
         } catch (error) {
-            this.#reportFailure("Enable discharging failed", error, DIAGNOSTICS_OR_ALREADY_ENABLED_HINT);
+            this.#reportFailure(
+                "Enable discharging failed",
+                error,
+                DIAGNOSTICS_OR_ALREADY_ENABLED_HINT,
+                busyGeneration,
+            );
         } finally {
             if (this.#busyGeneration === busyGeneration) this._busy = false;
         }
@@ -677,7 +725,11 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
      * `hint` adds a line of general guidance below the raw failure: Matter only sends the controller a
      * status code (e.g. "Failure(1)"), never the descriptive reason the device logged locally.
      */
-    #reportFailure(title: string, error: unknown, hint?: string) {
+    #reportFailure(title: string, error: unknown, hint?: string, busyGeneration?: number) {
+        if (busyGeneration !== undefined && this.#busyGeneration !== busyGeneration) {
+            console.error(`${title} (panel already moved on):`, error);
+            return;
+        }
         const text = hint
             ? html`<p>${errorText(error)}</p>
                   <p>${hint}</p>`
@@ -713,6 +765,27 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
         }
         if (schedules.some(schedule => schedule.targets.length === 0)) {
             this._scheduleError = "Add at least one target time to every schedule.";
+            return;
+        }
+        // ChargingTargetSchedules: a weekday may appear in only one schedule.
+        const claimedDays = new Set<string>();
+        for (const schedule of schedules) {
+            for (const [day, selected] of Object.entries(schedule.days)) {
+                if (selected !== true) continue;
+                if (claimedDays.has(day)) {
+                    this._scheduleError = "Each day may be used by only one schedule.";
+                    return;
+                }
+                claimedDays.add(day);
+            }
+        }
+        // ChargingTargetStruct's O.a+ group: a target must carry a SoC or an added-energy goal.
+        if (
+            schedules.some(schedule =>
+                schedule.targets.some(target => target.targetSoC === undefined && target.addedEnergyKWh === undefined),
+            )
+        ) {
+            this._scheduleError = "Give every target a SoC or an added-energy goal.";
             return;
         }
         const node = this.node;
@@ -794,19 +867,21 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
     }
 
     private _handleTargetSoCChange(scheduleIndex: number, targetIndex: number, e: Event) {
-        const value = Number((e.target as HTMLInputElement).value);
-        const targetSoC = Number.isFinite(value) ? Math.min(100, Math.max(0, value)) : undefined;
+        const value = this.#optionalNumber(e);
+        const targetSoC = value === undefined ? undefined : Math.min(100, Math.max(0, value));
         this.#updateTarget(scheduleIndex, targetIndex, target => ({
             timeMinutes: target.timeMinutes,
             targetSoC,
+            addedEnergyKWh: targetSoC === undefined ? target.addedEnergyKWh : undefined,
         }));
     }
 
     private _handleTargetEnergyChange(scheduleIndex: number, targetIndex: number, e: Event) {
-        const value = Number((e.target as HTMLInputElement).value);
-        const addedEnergyKWh = Number.isFinite(value) && value >= 0 ? value : undefined;
+        const value = this.#optionalNumber(e);
+        const addedEnergyKWh = value === undefined || value < 0 ? undefined : value;
         this.#updateTarget(scheduleIndex, targetIndex, target => ({
             timeMinutes: target.timeMinutes,
+            targetSoC: addedEnergyKWh === undefined ? target.targetSoC : undefined,
             addedEnergyKWh,
         }));
     }
@@ -902,7 +977,7 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                 margin-top: 10px;
                 padding: 10px;
                 border-radius: 8px;
-                background: var(--md-sys-color-surface-container-high);
+                background: var(--md-sys-color-surface-container-highest);
             }
             .schedule-days {
                 display: flex;

@@ -34,12 +34,18 @@ export function toLocalDateTimeInputValue(matterEpochSeconds: number): string {
 
 /**
  * Reads an `<input type="datetime-local">` value back as a Matter epoch-s instant, or undefined when it
- * is empty or unparsable. The browser reports such values with no time zone, so `new Date(value)` reads
- * it as the viewer's own local time, the same zone `toLocalDateTimeInputValue` formatted it in.
+ * is empty, unparsable, or outside the uint32 wire field. The browser reports such values with no time
+ * zone, so `new Date(value)` reads it as the viewer's own local time, the same zone
+ * `toLocalDateTimeInputValue` formatted it in.
  */
 export function fromLocalDateTimeInputValue(value: string): number | undefined {
     if (value.trim() === "") return undefined;
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return undefined;
-    return Math.floor(date.getTime() / 1000) - MATTER_EPOCH_OFFSET_SECONDS;
+    const seconds = Math.floor(date.getTime() / 1000) - MATTER_EPOCH_OFFSET_SECONDS;
+    return seconds < 0 || seconds > MATTER_EPOCH_MAX_SECONDS ? undefined : seconds;
 }
+
+/** `min`/`max` for an `<input type="datetime-local">` bound to a Matter epoch-s field. */
+export const MATTER_EPOCH_MIN_INPUT_VALUE = "2000-01-01T00:00";
+export const MATTER_EPOCH_MAX_INPUT_VALUE = "2136-02-07T06:28";
