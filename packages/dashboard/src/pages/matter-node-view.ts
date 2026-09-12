@@ -220,7 +220,7 @@ class MatterNodeView extends LitElement {
             }
 
             .endpoint-label {
-                color: var(--md-sys-color-on-surface-variant, #666);
+color: var(--md-sys-color-on-surface-variant);
                 font-weight: 400;
             }
 
