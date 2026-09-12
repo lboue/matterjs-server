@@ -145,6 +145,11 @@ export class DeviceEnergyManagementClusterCommands extends BaseClusterCommands {
                     </div>
                     <div class="slot-sub">${this._slotDetail(slot)}</div>
                     ${
+                        this._slotAdjustment(slot) !== undefined
+                            ? html`<div class="slot-sub">${this._slotAdjustment(slot)}</div>`
+                            : nothing
+                    }
+                    ${
                         slot.costs.length > 0
                             ? html`<div class="slot-sub">
                                   ${slot.costs
@@ -162,19 +167,35 @@ export class DeviceEnergyManagementClusterCommands extends BaseClusterCommands {
     /** Duration and energy for the slot; the running one shows its live clock instead of the plan. */
     private _slotDetail(slot: ForecastSlotInfo): string {
         const parts = new Array<string>();
+        parts.push(STATUS_LABELS[slot.status]);
         if (slot.status === "active" && slot.elapsedSeconds !== undefined && slot.remainingSeconds !== undefined) {
             parts.push(
                 `${formatDuration(slot.elapsedSeconds)} elapsed`,
                 `${formatDuration(slot.remainingSeconds)} left`,
             );
-        } else {
-            parts.push(STATUS_LABELS[slot.status]);
-            if (slot.durationSeconds !== undefined) parts.push(formatDuration(slot.durationSeconds));
+        } else if (slot.durationSeconds !== undefined) {
+            parts.push(formatDuration(slot.durationSeconds));
         }
         if (slot.energyWh !== undefined) {
             parts.push(`${formatEnergy(Math.abs(slot.energyWh))}${slot.energyEstimated ? " est." : ""}`);
         }
         return parts.join(" · ");
+    }
+
+    /** How far a shiftable load says this slot may be moved, under the ForecastAdjustment feature. */
+    private _slotAdjustment(slot: ForecastSlotInfo): string | undefined {
+        const parts = new Array<string>();
+        if (slot.minPowerAdjustmentW !== undefined && slot.maxPowerAdjustmentW !== undefined) {
+            parts.push(`power ${formatPower(slot.minPowerAdjustmentW)}–${formatPower(slot.maxPowerAdjustmentW)}`);
+        }
+        if (slot.minDurationAdjustmentSeconds !== undefined && slot.maxDurationAdjustmentSeconds !== undefined) {
+            parts.push(
+                `duration ${formatDuration(slot.minDurationAdjustmentSeconds)}–${formatDuration(
+                    slot.maxDurationAdjustmentSeconds,
+                )}`,
+            );
+        }
+        return parts.length > 0 ? `Adjustable: ${parts.join(" · ")}` : undefined;
     }
 
     /** Nominal draw when the device commits to one, otherwise the band it stays inside. */
@@ -207,7 +228,7 @@ export class DeviceEnergyManagementClusterCommands extends BaseClusterCommands {
                 ${
                     consumedEnergyWh > 0
                         ? html`<div class="total-row">
-                              <span>Forecast consumption${forecast.energyEstimated ? " (est.)" : ""}</span>
+                              <span>Forecast consumption${forecast.consumedEnergyEstimated ? " (est.)" : ""}</span>
                               <b>${formatEnergy(consumedEnergyWh)}</b>
                           </div>`
                         : nothing
@@ -215,7 +236,7 @@ export class DeviceEnergyManagementClusterCommands extends BaseClusterCommands {
                 ${
                     generatedEnergyWh > 0
                         ? html`<div class="total-row">
-                              <span>Forecast generation${forecast.energyEstimated ? " (est.)" : ""}</span>
+                              <span>Forecast generation${forecast.generatedEnergyEstimated ? " (est.)" : ""}</span>
                               <b class="generating">${formatEnergy(generatedEnergyWh)}</b>
                           </div>`
                         : nothing
@@ -350,8 +371,8 @@ export class DeviceEnergyManagementClusterCommands extends BaseClusterCommands {
                 font-size: 12px;
                 padding: 1px 6px;
                 border-radius: 8px;
-                background: var(--md-sys-color-surface-container-high);
-                color: var(--md-sys-color-on-surface-variant);
+                background: var(--md-sys-color-secondary-container);
+                color: var(--md-sys-color-on-secondary-container);
             }
             .slot-power {
                 text-align: right;

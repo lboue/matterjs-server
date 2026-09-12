@@ -181,10 +181,37 @@ describe("device energy management util", () => {
         const forecast = deviceEnergyManagementInfo(DISHWASHER_ATTRS, 1).forecast!;
         expect(forecast.consumedEnergyWh).to.be.closeTo(1714.67, 0.01);
         expect(forecast.generatedEnergyWh).to.equal(0);
-        expect(forecast.energyEstimated).to.equal(true);
+        expect(forecast.consumedEnergyEstimated).to.equal(true);
+        expect(forecast.generatedEnergyEstimated).to.equal(false);
         expect(forecast.durationSeconds).to.equal(4980);
         expect(forecast.updateReason).to.equal("Local optimization");
         expect(forecast.isPausable).to.equal(true);
+    });
+
+    it("tracks the estimated flag per direction on a mixed forecast", () => {
+        const forecast = {
+            "2": FORECAST_START,
+            // Slot 0 consumes and reports NominalEnergy; slot 1 generates and only reports NominalPower.
+            "7": [
+                { "2": 3600, "9": 1000, "12": 1000 },
+                { "2": 3600, "9": -2000 },
+            ],
+        };
+        const info = deviceEnergyManagementInfo({ ...DISHWASHER_ATTRS, "1/152/6": forecast }, 1).forecast!;
+        expect(info.consumedEnergyEstimated).to.equal(false);
+        expect(info.generatedEnergyEstimated).to.equal(true);
+    });
+
+    it("times the running slot by its own clock even when the device drifts from its plan", () => {
+        const forecast = {
+            "1": 0,
+            "2": FORECAST_START,
+            // DefaultDuration says 600 s, but the device reports 900 s elapsed plus 300 s left.
+            "7": [{ "2": 600, "3": 900, "4": 300 }, { "2": 600 }],
+        };
+        const slots = deviceEnergyManagementInfo({ ...DISHWASHER_ATTRS, "1/152/6": forecast }, 1).forecast!.slots;
+        expect(slots[0].durationSeconds).to.equal(1200);
+        expect(slots[1].startTime).to.equal(FORECAST_START + 1200);
     });
 
     it("counts a solar forecast's negative power as generation", () => {

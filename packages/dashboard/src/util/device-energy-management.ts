@@ -42,7 +42,6 @@ const ESA_TYPE_NAMES: Record<number, string> = {
     11: "Home water pump",
     12: "Irrigation water pump",
     13: "Pool pump",
-    14: "Water pump",
     255: "Other",
 };
 
@@ -140,8 +139,10 @@ export interface ForecastInfo {
     durationSeconds?: number;
     consumedEnergyWh: number;
     generatedEnergyWh: number;
-    /** Any slot's energy was derived from its nominal power rather than reported. */
-    energyEstimated: boolean;
+    /** A consuming slot's energy was derived from its nominal power rather than reported. */
+    consumedEnergyEstimated: boolean;
+    /** A generating slot's energy was derived from its nominal power rather than reported. */
+    generatedEnergyEstimated: boolean;
 }
 
 export interface DeviceEnergyManagementInfo {
@@ -335,7 +336,8 @@ function decodeForecast(value: unknown): ForecastInfo | undefined {
                   : undefined,
         consumedEnergyWh: energies.filter(wh => wh > 0).reduce((total, wh) => total + wh, 0),
         generatedEnergyWh: energies.filter(wh => wh < 0).reduce((total, wh) => total - wh, 0),
-        energyEstimated: slots.some(slot => slot.energyEstimated),
+        consumedEnergyEstimated: slots.some(slot => slot.energyEstimated && (slot.energyWh ?? 0) > 0),
+        generatedEnergyEstimated: slots.some(slot => slot.energyEstimated && (slot.energyWh ?? 0) < 0),
     };
 }
 
