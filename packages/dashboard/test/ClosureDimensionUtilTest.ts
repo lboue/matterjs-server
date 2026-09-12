@@ -7,7 +7,10 @@
 import { MatterNode, type MatterClient, type MatterNodeData } from "@matter-server/ws-client";
 import {
     formatPercent100ths,
+    MAX_NUMBER_OF_STEPS,
     parseClosureDimensionFeatures,
+    parseNumberOfSteps,
+    parseTargetPositionPercent,
     readCurrentState,
     readFeatures,
     readLatchControlModes,
@@ -184,6 +187,49 @@ describe("closure-dimension util", () => {
             const { client, calls } = fakeClient();
             await step(client, 1, 6, { direction: 0, numberOfSteps: 1, speed: 2 });
             expect(calls).to.deep.equal([{ command: "Step", payload: { direction: 0, numberOfSteps: 1, speed: 2 } }]);
+        });
+    });
+
+    describe("form validation", () => {
+        it("parseTargetPositionPercent() scales percent to percent100ths", () => {
+            expect(parseTargetPositionPercent("50", null)).to.equal(5000);
+            expect(parseTargetPositionPercent("12.34", null)).to.equal(1234);
+            expect(parseTargetPositionPercent(" 0 ", null)).to.equal(0);
+        });
+
+        it("parseTargetPositionPercent() rejects a blank or non-numeric field", () => {
+            expect(parseTargetPositionPercent("", null)).to.equal(null);
+            expect(parseTargetPositionPercent("   ", null)).to.equal(null);
+            expect(parseTargetPositionPercent("abc", null)).to.equal(null);
+        });
+
+        it("parseTargetPositionPercent() rejects values outside 0-100% without a limit range", () => {
+            expect(parseTargetPositionPercent("-1", null)).to.equal(null);
+            expect(parseTargetPositionPercent("100.01", null)).to.equal(null);
+            expect(parseTargetPositionPercent("100", null)).to.equal(10000);
+        });
+
+        it("parseTargetPositionPercent() narrows the accepted band to the limit range", () => {
+            const limitRange = { min: 1000, max: 8000 };
+            expect(parseTargetPositionPercent("100", limitRange)).to.equal(null);
+            expect(parseTargetPositionPercent("5", limitRange)).to.equal(null);
+            expect(parseTargetPositionPercent("80", limitRange)).to.equal(8000);
+            expect(parseTargetPositionPercent("10", limitRange)).to.equal(1000);
+        });
+
+        it("parseNumberOfSteps() accepts the uint16 range only", () => {
+            expect(parseNumberOfSteps("1")).to.equal(1);
+            expect(parseNumberOfSteps(String(MAX_NUMBER_OF_STEPS))).to.equal(MAX_NUMBER_OF_STEPS);
+            expect(parseNumberOfSteps(String(MAX_NUMBER_OF_STEPS + 1))).to.equal(null);
+            expect(parseNumberOfSteps("0")).to.equal(null);
+            expect(parseNumberOfSteps("-3")).to.equal(null);
+        });
+
+        it("parseNumberOfSteps() rejects a blank, fractional or non-numeric field", () => {
+            expect(parseNumberOfSteps("")).to.equal(null);
+            expect(parseNumberOfSteps("2.5")).to.equal(null);
+            expect(parseNumberOfSteps("1e5")).to.equal(null);
+            expect(parseNumberOfSteps("abc")).to.equal(null);
         });
     });
 });

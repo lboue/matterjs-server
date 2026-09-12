@@ -11,12 +11,14 @@ import "@material/web/select/select-option";
 import "@material/web/textfield/outlined-text-field";
 import { css, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
+import { showAlertDialog } from "../../../components/dialog-box/show-dialog-box.js";
 import { handleAsync } from "../../../util/async-handler.js";
 import {
     CLOSURE_DIMENSION_CLUSTER_ID,
     CLOSURE_UNIT_LABELS,
     type ClosureDimensionFeatures,
     type DimensionState,
+    MAX_NUMBER_OF_STEPS,
     MODULATION_TYPE_LABELS,
     OVERFLOW_LABELS,
     ROTATION_AXIS_LABELS,
@@ -24,6 +26,8 @@ import {
     STEP_DIRECTION_LABELS,
     TRANSLATION_DIRECTION_LABELS,
     formatPercent100ths,
+    parseNumberOfSteps,
+    parseTargetPositionPercent,
     readCurrentState,
     readFeatures,
     readLatchControlModes,
@@ -49,7 +53,7 @@ class ClosureDimensionClusterCommands extends BaseClusterCommands {
     @state() private _setTargetLatch = "";
     @state() private _setTargetSpeed = "";
     @state() private _stepDirection = "1";
-    @state() private _stepCount = 1;
+    @state() private _stepCount = "1";
     @state() private _stepSpeed = "";
     private _unsubscribeNodes?: () => void;
     private _formContext?: string;
@@ -63,7 +67,7 @@ class ClosureDimensionClusterCommands extends BaseClusterCommands {
             this._setTargetLatch = "";
             this._setTargetSpeed = "";
             this._stepDirection = "1";
-            this._stepCount = 1;
+            this._stepCount = "1";
             this._stepSpeed = "";
         }
         this._formContext = context;
@@ -90,10 +94,13 @@ class ClosureDimensionClusterCommands extends BaseClusterCommands {
         const current = readCurrentState(this.node, this.endpoint);
         const target = readTargetState(this.node, this.endpoint);
         const latchControlModes = readLatchControlModes(this.node, this.endpoint);
-        const targetPositionValue = this._setTargetPosition !== "" ? Number(this._setTargetPosition) : null;
-        const isTargetPositionInvalid =
-            targetPositionValue !== null &&
-            (Number.isNaN(targetPositionValue) || targetPositionValue < 0 || targetPositionValue > 100);
+        const limitRange = this._limitRange();
+        const targetPosition = parseTargetPositionPercent(this._setTargetPosition, limitRange);
+        const isTargetPositionInvalid = this._setTargetPosition.trim() !== "" && targetPosition === null;
+        const stepCount = parseNumberOfSteps(this._stepCount);
+        const canLatchRemotely =
+            features.motionLatching && (latchControlModes.remoteLatching || latchControlModes.remoteUnlatching);
+        const canSetTarget = features.positioning || canLatchRemotely || features.speed;
 
         return html`
             <details class="command-panel" open>
@@ -111,98 +118,108 @@ class ClosureDimensionClusterCommands extends BaseClusterCommands {
                     </div>
 
                     ${this._renderStaticInfo(features)}
-
-                    <div class="set-target">
-                        <div class="set-target-header">Set target</div>
-                        <div class="set-target-controls">
-                            ${
-                                features.positioning
-                                    ? html`
-                                          <md-outlined-text-field
-                                              type="number"
-                                              label="Position (%)"
-                                              min="0"
-                                              max="100"
-                                              step="0.01"
-                                              placeholder="(unchanged)"
-                                              .value=${this._setTargetPosition}
-                                              @input=${(e: Event) => {
-                                                  this._setTargetPosition = (e.target as HTMLInputElement).value;
-                                              }}
-                                          ></md-outlined-text-field>
-                                      `
-                                    : nothing
-                            }
-                            ${
-                                features.motionLatching &&
-                                (latchControlModes.remoteLatching || latchControlModes.remoteUnlatching)
-                                    ? html`
-                                          <md-outlined-select
-                                              label="Latch"
-                                              .value=${this._setTargetLatch}
-                                              @change=${(e: Event) => {
-                                                  this._setTargetLatch = (e.target as HTMLSelectElement).value;
-                                              }}
-                                          >
-                                              <md-select-option value="">
-                                                  <div slot="headline">(unchanged)</div>
-                                              </md-select-option>
-                                              ${
-                                                  latchControlModes.remoteLatching
-                                                      ? html`<md-select-option value="true">
-                                                            <div slot="headline">Latch</div>
-                                                        </md-select-option>`
-                                                      : nothing
-                                              }
-                                              ${
-                                                  latchControlModes.remoteUnlatching
-                                                      ? html`<md-select-option value="false">
-                                                            <div slot="headline">Unlatch</div>
-                                                        </md-select-option>`
-                                                      : nothing
-                                              }
-                                          </md-outlined-select>
-                                      `
-                                    : nothing
-                            }
-                            ${
-                                features.speed
-                                    ? html`
-                                          <md-outlined-select
-                                              label="Speed"
-                                              .value=${this._setTargetSpeed}
-                                              @change=${(e: Event) => {
-                                                  this._setTargetSpeed = (e.target as HTMLSelectElement).value;
-                                              }}
-                                          >
-                                              <md-select-option value="">
-                                                  <div slot="headline">(unchanged)</div>
-                                              </md-select-option>
-                                              ${Object.entries(SPEED_LABELS).map(
-                                                  ([id, label]) => html`
-                                                      <md-select-option value=${id}>
-                                                          <div slot="headline">${label}</div>
-                                                      </md-select-option>
-                                                  `,
-                                              )}
-                                          </md-outlined-select>
-                                      `
-                                    : nothing
-                            }
-                            <md-filled-button
-                                ?disabled=${
-                                    isTargetPositionInvalid ||
-                                    (this._setTargetPosition === "" &&
-                                        this._setTargetLatch === "" &&
-                                        this._setTargetSpeed === "")
-                                }
-                                @click=${handleAsync(() => this._handleSetTarget())}
-                            >
-                                Set
-                            </md-filled-button>
-                        </div>
-                    </div>
-
+                    ${
+                        canSetTarget
+                            ? html`<div class="set-target">
+                                  <div class="set-target-header">Set target</div>
+                                  <div class="set-target-controls">
+                                      ${
+                                          features.positioning
+                                              ? html`
+                                                    <md-outlined-text-field
+                                                        type="number"
+                                                        label="Position (%)"
+                                                        min=${(limitRange?.min ?? 0) / 100}
+                                                        max=${(limitRange?.max ?? 10000) / 100}
+                                                        step="0.01"
+                                                        placeholder="(unchanged)"
+                                                        .value=${this._setTargetPosition}
+                                                        @input=${(e: Event) => {
+                                                            this._setTargetPosition = (
+                                                                e.target as HTMLInputElement
+                                                            ).value;
+                                                        }}
+                                                    ></md-outlined-text-field>
+                                                `
+                                              : nothing
+                                      }
+                                      ${
+                                          canLatchRemotely
+                                              ? html`
+                                                    <md-outlined-select
+                                                        label="Latch"
+                                                        .value=${this._setTargetLatch}
+                                                        @change=${(e: Event) => {
+                                                            this._setTargetLatch = (
+                                                                e.target as HTMLSelectElement
+                                                            ).value;
+                                                        }}
+                                                    >
+                                                        <md-select-option value="">
+                                                            <div slot="headline">(unchanged)</div>
+                                                        </md-select-option>
+                                                        ${
+                                                            latchControlModes.remoteLatching
+                                                                ? html`<md-select-option value="true">
+                                                                      <div slot="headline">Latch</div>
+                                                                  </md-select-option>`
+                                                                : nothing
+                                                        }
+                                                        ${
+                                                            latchControlModes.remoteUnlatching
+                                                                ? html`<md-select-option value="false">
+                                                                      <div slot="headline">Unlatch</div>
+                                                                  </md-select-option>`
+                                                                : nothing
+                                                        }
+                                                    </md-outlined-select>
+                                                `
+                                              : nothing
+                                      }
+                                      ${
+                                          features.speed
+                                              ? html`
+                                                    <md-outlined-select
+                                                        label="Speed"
+                                                        .value=${this._setTargetSpeed}
+                                                        @change=${(e: Event) => {
+                                                            this._setTargetSpeed = (
+                                                                e.target as HTMLSelectElement
+                                                            ).value;
+                                                        }}
+                                                    >
+                                                        <md-select-option value="">
+                                                            <div slot="headline">(unchanged)</div>
+                                                        </md-select-option>
+                                                        ${Object.entries(SPEED_LABELS).map(
+                                                            ([id, label]) => html`
+                                                                <md-select-option value=${id}>
+                                                                    <div slot="headline">${label}</div>
+                                                                </md-select-option>
+                                                            `,
+                                                        )}
+                                                    </md-outlined-select>
+                                                `
+                                              : nothing
+                                      }
+                                      <md-filled-button
+                                          ?disabled=${
+                                              isTargetPositionInvalid ||
+                                              (this._setTargetPosition === "" &&
+                                                  this._setTargetLatch === "" &&
+                                                  this._setTargetSpeed === "")
+                                          }
+                                          @click=${handleAsync(
+                                              () => this._handleSetTarget(),
+                                              err => this._reportCommandFailure("SetTarget", err),
+                                          )}
+                                      >
+                                          Set
+                                      </md-filled-button>
+                                  </div>
+                              </div>`
+                            : nothing
+                    }
                     ${
                         features.positioning
                             ? html`
@@ -228,10 +245,11 @@ class ClosureDimensionClusterCommands extends BaseClusterCommands {
                                               type="number"
                                               label="Steps"
                                               min="1"
-                                              .value=${String(this._stepCount)}
+                                              max=${MAX_NUMBER_OF_STEPS}
+                                              step="1"
+                                              .value=${this._stepCount}
                                               @input=${(e: Event) => {
-                                                  const value = parseInt((e.target as HTMLInputElement).value, 10);
-                                                  this._stepCount = Number.isFinite(value) && value > 0 ? value : 1;
+                                                  this._stepCount = (e.target as HTMLInputElement).value;
                                               }}
                                           ></md-outlined-text-field>
                                           ${
@@ -258,7 +276,13 @@ class ClosureDimensionClusterCommands extends BaseClusterCommands {
                                                     `
                                                   : nothing
                                           }
-                                          <md-outlined-button @click=${handleAsync(() => this._handleStep())}>
+                                          <md-outlined-button
+                                              ?disabled=${stepCount === null}
+                                              @click=${handleAsync(
+                                                  () => this._handleStep(),
+                                                  err => this._reportCommandFailure("Step", err),
+                                              )}
+                                          >
                                               Step
                                           </md-outlined-button>
                                       </div>
@@ -356,20 +380,33 @@ class ClosureDimensionClusterCommands extends BaseClusterCommands {
         `;
     }
 
+    private _limitRange() {
+        return readFeatures(this.node, this.endpoint).limitation ? readLimitRange(this.node, this.endpoint) : null;
+    }
+
     private async _handleSetTarget() {
+        const position = parseTargetPositionPercent(this._setTargetPosition, this._limitRange());
         await setTarget(this.client, this.node.node_id, this.endpoint, {
-            position: this._setTargetPosition !== "" ? Math.round(Number(this._setTargetPosition) * 100) : undefined,
+            position: position ?? undefined,
             latch: this._setTargetLatch !== "" ? this._setTargetLatch === "true" : undefined,
             speed: this._setTargetSpeed !== "" ? Number(this._setTargetSpeed) : undefined,
         });
     }
 
     private async _handleStep() {
+        const numberOfSteps = parseNumberOfSteps(this._stepCount);
+        if (numberOfSteps === null) return;
         await sendStep(this.client, this.node.node_id, this.endpoint, {
             direction: Number(this._stepDirection),
-            numberOfSteps: this._stepCount,
+            numberOfSteps,
             speed: this._stepSpeed !== "" ? Number(this._stepSpeed) : undefined,
         });
+    }
+
+    private _reportCommandFailure(command: string, err: Error) {
+        showAlertDialog({ title: `${command} failed`, text: err.message }).catch(dialogErr =>
+            console.error("Failed to show the ClosureDimension command error", dialogErr),
+        );
     }
 
     static override styles = [

@@ -274,3 +274,31 @@ export async function step(
     if (params.speed !== undefined) payload.speed = params.speed;
     await client.deviceCommand(nodeId, endpoint, CLOSURE_DIMENSION_CLUSTER_ID, "Step", payload);
 }
+
+/** Maximum `Step.NumberOfSteps`, a uint16 with `min 1`. */
+export const MAX_NUMBER_OF_STEPS = 65535;
+
+/**
+ * The position the form would send, or null when the field holds no submittable value. `limitRange`
+ * narrows the accepted band to what the device advertises under the Limitation feature.
+ */
+export function parseTargetPositionPercent(value: string, limitRange: Range | null): number | null {
+    const trimmed = value.trim();
+    if (trimmed === "") return null;
+    const percent = Number(trimmed);
+    if (!Number.isFinite(percent)) return null;
+    const position = Math.round(percent * 100);
+    const min = limitRange?.min ?? 0;
+    const max = limitRange?.max ?? 10000;
+    if (position < min || position > max) return null;
+    return position;
+}
+
+/** The step count the form would send, or null when the field holds no submittable value. */
+export function parseNumberOfSteps(value: string): number | null {
+    const trimmed = value.trim();
+    if (trimmed === "") return null;
+    const steps = Number(trimmed);
+    if (!Number.isInteger(steps) || steps < 1 || steps > MAX_NUMBER_OF_STEPS) return null;
+    return steps;
+}
