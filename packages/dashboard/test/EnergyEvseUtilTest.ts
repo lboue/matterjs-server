@@ -57,19 +57,15 @@ describe("energy evse util", () => {
 
     it("gates StartDiagnostics and EnableCharging/Discharging on SupplyState", () => {
         const chargingEnabled = energyEvseInfo(BASE_ATTRS, 1); // SupplyState: ChargingEnabled (1)
-        expect(chargingEnabled.diagnosticsActive).to.equal(false);
         expect(chargingEnabled.canStartDiagnostics).to.equal(false);
 
         const disabled = energyEvseInfo({ ...BASE_ATTRS, "1/153/1": 0 }, 1);
-        expect(disabled.diagnosticsActive).to.equal(false);
         expect(disabled.canStartDiagnostics).to.equal(true);
 
         const diagnostics = energyEvseInfo({ ...BASE_ATTRS, "1/153/1": 4 }, 1);
-        expect(diagnostics.diagnosticsActive).to.equal(true);
         expect(diagnostics.canStartDiagnostics).to.equal(false);
 
         const unknown = energyEvseInfo({ ...BASE_ATTRS, "1/153/1": undefined }, 1);
-        expect(unknown.diagnosticsActive).to.equal(false);
         expect(unknown.canStartDiagnostics).to.equal(true);
     });
 

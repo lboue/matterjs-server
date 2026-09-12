@@ -191,12 +191,7 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                     ${this._renderSession(info.session, info.v2xSupported)}
                     ${
                         info.v2xSupported
-                            ? this._renderV2x(
-                                  info.dischargingEnabledUntil,
-                                  info.maximumDischargeCurrentA,
-                                  info.diagnosticsActive,
-                                  offline,
-                              )
+                            ? this._renderV2x(info.dischargingEnabledUntil, info.maximumDischargeCurrentA, offline)
                             : nothing
                     }
                     ${
@@ -279,7 +274,6 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
     }
 
     private _renderChargingActions(info: EnergyEvseInfo, offline: boolean): TemplateResult {
-        const diagnosticsActive = info.diagnosticsActive;
         const canStartDiagnostics = info.canStartDiagnostics;
         return html`
             <h4>Charging control</h4>
@@ -349,8 +343,7 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                 </label>
                 <md-filled-button
                     @click=${handleAsync(() => this._handleEnableCharging())}
-                    ?disabled=${this._busy || offline || diagnosticsActive}
-                    title=${diagnosticsActive ? "Not available while self-diagnostics are active — click Disable first" : nothing}
+                    ?disabled=${this._busy || offline}
                 >
                     Enable Charging
                 </md-filled-button>
@@ -362,7 +355,6 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
     private _renderV2x(
         dischargingEnabledUntil: number | null | undefined,
         maximumDischargeCurrentA: number | undefined,
-        diagnosticsActive: boolean,
         offline: boolean,
     ): TemplateResult {
         return html`
@@ -420,8 +412,7 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                 </label>
                 <md-filled-button
                     @click=${handleAsync(() => this._handleEnableDischarging())}
-                    ?disabled=${this._busy || offline || diagnosticsActive}
-                    title=${diagnosticsActive ? "Not available while self-diagnostics are active — click Disable first" : nothing}
+                    ?disabled=${this._busy || offline}
                 >
                     Enable Discharging
                 </md-filled-button>

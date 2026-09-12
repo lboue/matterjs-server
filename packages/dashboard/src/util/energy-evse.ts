@@ -45,7 +45,6 @@ const FEATURE_BIT_V2X = 0b10000;
 
 const SUPPLY_STATE_DISABLED = 0;
 /** Self-diagnostics mode: EnableCharging/EnableDischarging are rejected until Disable clears it. */
-const SUPPLY_STATE_DISABLED_DIAGNOSTICS = 4;
 
 const STATE_NAMES: Record<number, string> = {
     0: "Not plugged in",
@@ -97,8 +96,6 @@ export interface EnergyEvseInfo {
     supported: boolean;
     state?: string;
     supplyState?: string;
-    /** SupplyState is DisabledDiagnostics: EnableCharging/EnableDischarging are rejected until Disable clears it. */
-    diagnosticsActive: boolean;
     /** Whether StartDiagnostics is expected to succeed right now (the device only accepts it while fully disabled). */
     canStartDiagnostics: boolean;
     /** StartDiagnostics is an optional command, so it only exists where AcceptedCommandList lists it. */
@@ -193,7 +190,6 @@ export function energyEvseInfo(attributes: Record<string, unknown>, endpoint: nu
         supported: featureMap !== undefined,
         state: enumName(attr(attributes, endpoint, ATTR_STATE), STATE_NAMES),
         supplyState: enumName(supplyStateRaw, SUPPLY_STATE_NAMES),
-        diagnosticsActive: supplyStateRaw === SUPPLY_STATE_DISABLED_DIAGNOSTICS,
         canStartDiagnostics: supplyStateRaw === undefined || supplyStateRaw === SUPPLY_STATE_DISABLED,
         startDiagnosticsSupported: acceptsCommand(attributes, endpoint, COMMAND_START_DIAGNOSTICS),
         faultState: enumName(faultStateRaw, FAULT_STATE_NAMES),
