@@ -41,8 +41,8 @@ const ESA_TYPE_NAMES: Record<number, string> = {
     10: "Cooking",
     11: "Home water pump",
     12: "Irrigation water pump",
-    13: "Water pump",
-    14: "Pool pump",
+    13: "Pool pump",
+    14: "Water pump",
     255: "Other",
 };
 
