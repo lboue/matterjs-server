@@ -590,7 +590,7 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                     Charged by
                     <input
                         type="time"
-                        .value=${minutesToTimeInputValue(target.timeMinutes)}
+                        .value=${target.timeMinutes !== undefined ? minutesToTimeInputValue(target.timeMinutes) : ""}
                         ?disabled=${disabled}
                         @change=${(e: Event) => this._handleTargetTimeChange(scheduleIndex, targetIndex, e)}
                     />
@@ -866,8 +866,8 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
     }
 
     private _handleTargetTimeChange(scheduleIndex: number, targetIndex: number, e: Event) {
+        // Keeping the previous time on a cleared field would leave a blank control that still saves.
         const minutes = timeInputValueToMinutes((e.target as HTMLInputElement).value);
-        if (minutes === undefined) return;
         this.#updateTarget(scheduleIndex, targetIndex, target => ({ ...target, timeMinutes: minutes }));
     }
 

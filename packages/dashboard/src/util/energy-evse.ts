@@ -44,7 +44,7 @@ const FEATURE_BIT_PLUG_AND_CHARGE = 0b100;
 const FEATURE_BIT_V2X = 0b10000;
 
 const SUPPLY_STATE_DISABLED = 0;
-/** Self-diagnostics mode: EnableCharging/EnableDischarging are rejected until Disable clears it. */
+/** Self-diagnostics mode: the device leaves it by finishing, and refuses Disable meanwhile. */
 const SUPPLY_STATE_DISABLED_DIAGNOSTICS = 4;
 
 const STATE_NAMES: Record<number, string> = {
@@ -97,7 +97,7 @@ export interface EnergyEvseInfo {
     supported: boolean;
     state?: string;
     supplyState?: string;
-    /** SupplyState is DisabledDiagnostics: EnableCharging/EnableDischarging are rejected until Disable clears it. */
+    /** SupplyState is DisabledDiagnostics; see supplyCommandsBlockedReason for what that refuses. */
     diagnosticsActive: boolean;
     /**
      * Whether StartDiagnostics is expected to succeed right now. The device only accepts it while fully
@@ -345,7 +345,7 @@ export const MAX_CHARGING_TARGETS_PER_SCHEDULE = 10;
  */
 export function chargingScheduleError(schedules: EditableChargingSchedule[], soCSupported: boolean): string | null {
     if (schedules.length > MAX_CHARGING_SCHEDULES) {
-        return `A lock stores at most ${MAX_CHARGING_SCHEDULES} schedules.`;
+        return `An EVSE stores at most ${MAX_CHARGING_SCHEDULES} schedules.`;
     }
     if (schedules.some(schedule => EVSE_WEEKDAYS.every(({ key }) => schedule.days[key] !== true))) {
         return "Select at least one day for every schedule.";
@@ -364,8 +364,13 @@ export function chargingScheduleError(schedules: EditableChargingSchedule[], soC
             return `A schedule holds at most ${MAX_CHARGING_TARGETS_PER_SCHEDULE} targets.`;
         }
         for (const target of schedule.targets) {
-            if (!Number.isInteger(target.timeMinutes) || target.timeMinutes < 0 || target.timeMinutes > 1439) {
+            const timeMinutes = target.timeMinutes;
+            if (timeMinutes === undefined || !Number.isInteger(timeMinutes) || timeMinutes < 0 || timeMinutes > 1439) {
                 return "Every target needs a time of day.";
+            }
+            if (target.targetSoC !== undefined && !Number.isInteger(target.targetSoC)) {
+                // TargetSoC is a `percent`, i.e. a whole-number uint8.
+                return "A target state of charge has to be a whole percentage.";
             }
             if (soCSupported) {
                 if (target.targetSoC === undefined) return "Give every target a target state of charge.";
@@ -378,11 +383,11 @@ export function chargingScheduleError(schedules: EditableChargingSchedule[], soC
 }
 
 export interface EditableChargingTarget {
-    /** Minutes since local midnight, 0-1439. */
-    timeMinutes: number;
-    /** Percent. Mutually exclusive with addedEnergyKWh: set at most one. */
+    /** Minutes since local midnight, 0-1439; undefined while the editor's time field is empty. */
+    timeMinutes: number | undefined;
+    /** Whole percent. Mandatory once the SOC feature is active; see chargingScheduleError(). */
     targetSoC?: number;
-    /** Mutually exclusive with targetSoC: set at most one. */
+    /** May accompany targetSoC, and replaces it only on a device without the SOC feature. */
     addedEnergyKWh?: number;
 }
 
@@ -432,6 +437,12 @@ export async function getChargingTargets(
     return decodeChargingTargetSchedules(response);
 }
 
+/** chargingScheduleError() gates every send, so an unset time here is a bug rather than user input. */
+function requireTargetTime(timeMinutes: number | undefined): number {
+    if (timeMinutes === undefined) throw new Error("A charging target has no time of day.");
+    return timeMinutes;
+}
+
 export async function setChargingTargets(
     client: MatterClient,
     nodeId: number | bigint,
@@ -442,7 +453,7 @@ export async function setChargingTargets(
         chargingTargetSchedules: schedules.map(schedule => ({
             dayOfWeekForSequence: encodeWeekdayBitmap(schedule.days),
             chargingTargets: schedule.targets.map(target => ({
-                targetTimeMinutesPastMidnight: target.timeMinutes,
+                targetTimeMinutesPastMidnight: requireTargetTime(target.timeMinutes),
                 ...(target.targetSoC !== undefined ? { targetSoC: target.targetSoC } : {}),
                 ...(target.addedEnergyKWh !== undefined
                     ? { addedEnergy: Math.round(target.addedEnergyKWh * 1_000_000) }

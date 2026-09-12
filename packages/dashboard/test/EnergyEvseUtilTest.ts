@@ -5,6 +5,9 @@
  */
 
 import type { MatterClient } from "@matter-server/ws-client";
+import { execFileSync } from "node:child_process";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
     chargingScheduleError,
     clearChargingTargets,
@@ -390,6 +393,16 @@ describe("chargingScheduleError", () => {
         expect(chargingScheduleError(many, true)).to.contain("at most");
     });
 
+    it("rejects a fractional state of charge, which the percent field cannot carry", () => {
+        const targets = [{ timeMinutes: 360, targetSoC: 50.5 }];
+        expect(chargingScheduleError([schedule({ monday: true }, targets)], true)).to.contain("whole percentage");
+    });
+
+    it("rejects a target whose time field was cleared", () => {
+        const targets = [{ timeMinutes: undefined, targetSoC: 50 }];
+        expect(chargingScheduleError([schedule({ monday: true }, targets)], true)).to.contain("time of day");
+    });
+
     it("rejects a target time outside the day", () => {
         const targets = [{ timeMinutes: 1440, targetSoC: 50 }];
         expect(chargingScheduleError([schedule({ monday: true }, targets)], true)).to.contain("time of day");
@@ -398,10 +411,25 @@ describe("chargingScheduleError", () => {
 
 describe("local datetime-local <-> Matter epoch-s conversion", () => {
     it("rejects a local time that does not exist because of a DST jump", () => {
-        // Only meaningful in a zone with a spring-forward gap; elsewhere the value round-trips and is kept.
-        const gap = "2027-03-14T02:30";
-        const parsed = fromLocalDateTimeInputValue(gap);
-        if (parsed !== undefined) expect(toLocalDateTimeInputValue(parsed)).to.equal(gap);
+        // The conversion reads the host's zone, so the gap is exercised in a child process pinned to one
+        // that has it. 2027-03-14T02:30 does not exist in America/New_York: the clock skips 02:00 to 03:00.
+        const timeModule = pathToFileURL(resolve("dist/esm/util/time.js")).href;
+        const script = `
+            const { fromLocalDateTimeInputValue } = await import(${JSON.stringify(timeModule)});
+            process.stdout.write(JSON.stringify({
+                gap: fromLocalDateTimeInputValue("2027-03-14T02:30") ?? null,
+                justBefore: fromLocalDateTimeInputValue("2027-03-14T01:30") ?? null,
+                justAfter: fromLocalDateTimeInputValue("2027-03-14T03:30") ?? null,
+            }));
+        `;
+        const out = execFileSync(process.execPath, ["--input-type=module", "-e", script], {
+            env: { ...process.env, TZ: "America/New_York" },
+            encoding: "utf8",
+        });
+        const result = JSON.parse(out) as { gap: number | null; justBefore: number | null; justAfter: number | null };
+        expect(result.gap).to.equal(null);
+        expect(result.justBefore).to.not.equal(null);
+        expect(result.justAfter).to.not.equal(null);
     });
 
     it("rejects a date the uint32 epoch-s field cannot carry", () => {
