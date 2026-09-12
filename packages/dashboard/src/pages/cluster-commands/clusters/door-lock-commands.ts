@@ -207,6 +207,8 @@ class DoorLockClusterCommands extends BaseClusterCommands {
     #freeIndexCapacity: number | null = null;
     /** Set once the operator edits the expiry field, so a device report cannot overwrite what they typed. */
     #expiringTimeoutDirty = false;
+    /** The value last written, still awaiting the report that confirms the lock took it. */
+    #expiringTimeoutAwaitingReport: number | null = null;
 
     override willUpdate(changedProperties: PropertyValues) {
         super.willUpdate(changedProperties);
@@ -243,6 +245,7 @@ class DoorLockClusterCommands extends BaseClusterCommands {
             this._userEditorError = undefined;
             this._expiringTimeoutInput = "";
             this.#expiringTimeoutDirty = false;
+            this.#expiringTimeoutAwaitingReport = null;
             this._showEmptyWeekDay = false;
             this._showEmptyYearDay = false;
             this._showEmptyHoliday = false;
@@ -261,9 +264,15 @@ class DoorLockClusterCommands extends BaseClusterCommands {
 
         // Tracks the device until the operator types something: another client (or the lock itself) can
         // change the timeout at any time, and saving a value read once at mount would undo that.
-        if (!this.#expiringTimeoutDirty) {
-            const expiringTimeout = readExpiringUserTimeout(this.node, this.endpoint);
-            if (expiringTimeout !== null) this._expiringTimeoutInput = String(expiringTimeout);
+        const expiringTimeout = readExpiringUserTimeout(this.node, this.endpoint);
+        // A write is only settled once the cache reports it back; clearing on the write's own resolution
+        // would let this render restore the pre-write value the cache still holds.
+        if (this.#expiringTimeoutAwaitingReport !== null && expiringTimeout === this.#expiringTimeoutAwaitingReport) {
+            this.#expiringTimeoutAwaitingReport = null;
+            this.#expiringTimeoutDirty = false;
+        }
+        if (!this.#expiringTimeoutDirty && expiringTimeout !== null) {
+            this._expiringTimeoutInput = String(expiringTimeout);
         }
 
         // The attribute cache fills in progressively: the feature bits can resolve before the numeric
@@ -609,8 +618,7 @@ class DoorLockClusterCommands extends BaseClusterCommands {
         this._busy = true;
         try {
             await writeExpiringUserTimeout(this.client, node.node_id, endpoint, minutes);
-            // The field matches the lock again, so let the next report track it.
-            if (this.isSameContext(node, endpoint)) this.#expiringTimeoutDirty = false;
+            if (this.isSameContext(node, endpoint)) this.#expiringTimeoutAwaitingReport = minutes;
         } catch (error) {
             this.#reportFailure("Set Temporary PIN expiry failed", error, node, endpoint);
         } finally {
