@@ -31,7 +31,8 @@ import "../../../components/ha-svg-icon.js";
 import { handleAsync } from "../../../util/async-handler.js";
 import {
     addUser,
-    attachPinCredential,
+    createExpiringPinUser,
+    type ExpiringPinUserFailure,
     buildDaySegments,
     clearHolidaySchedule,
     clearWeekDaySchedule,
@@ -93,7 +94,6 @@ import {
     unlockWithTimeout,
     userNameLengthError,
     USER_NAME_MAX_LENGTH,
-    USER_STATUS_OCCUPIED_ENABLED,
     USER_TYPE_EXPIRING,
     weekDayScheduleRangeError,
     writeExpiringUserTimeout,
@@ -803,36 +803,32 @@ class DoorLockClusterCommands extends BaseClusterCommands {
         const busyGeneration = this.#busyGeneration;
         this._busy = true;
         try {
-            await addUser(
-                this.client,
-                node.node_id,
-                endpoint,
-                userIndex,
-                userName,
-                expiring ? USER_TYPE_EXPIRING : null,
-                expiring ? USER_STATUS_OCCUPIED_ENABLED : null,
-            );
-            if (!this.isSameContext(node, endpoint)) return;
-            // The user record exists at this point regardless of what happens next, so a credential
-            // failure is reported without unwinding it — the reload below must still show it. The editor
-            // closes either way: leaving it open would let a retry recompute _freeUserIndex onto a new
-            // slot and create a duplicate user rather than retrying the credential for this one.
-            let credentialError: unknown;
+            let failure: ExpiringPinUserFailure | null = null;
             if (expiring) {
-                try {
-                    const capacity = readNumberOfPinUsersSupported(node, endpoint);
-                    if (capacity === null) {
-                        throw new Error("The lock's PIN credential capacity is no longer available.");
-                    }
-                    await attachPinCredential(this.client, node.node_id, endpoint, userIndex, pin, capacity);
-                } catch (error) {
-                    credentialError = error;
+                const capacity = readNumberOfPinUsersSupported(node, endpoint);
+                if (capacity === null) {
+                    this._userEditorError = "The lock's PIN credential capacity is no longer available.";
+                    return;
                 }
+                failure = await createExpiringPinUser(
+                    this.client,
+                    node.node_id,
+                    endpoint,
+                    userIndex,
+                    userName,
+                    pin,
+                    capacity,
+                );
+            } else {
+                await addUser(this.client, node.node_id, endpoint, userIndex, userName);
             }
             if (!this.isSameContext(node, endpoint)) {
-                if (credentialError !== undefined) {
-                    console.error("The PIN could not be set for the user that was just created", credentialError);
-                }
+                if (failure !== null) console.error("Creating the temporary PIN user failed", failure);
+                return;
+            }
+            if (failure?.outcome === "rolled-back") {
+                // The lock is unchanged, so the entered values stay in the editor for a retry.
+                this._userEditorError = `${failure.reason} The user was removed again; nothing was changed.`;
                 return;
             }
             this._addingUser = false;
@@ -845,8 +841,14 @@ class DoorLockClusterCommands extends BaseClusterCommands {
             this._weekDaySlots = undefined;
             this._yearDaySlots = undefined;
             await this.#loadUsers();
-            if (credentialError !== undefined) {
-                this.#reportFailure("User created, but the PIN could not be set", credentialError, node, endpoint);
+            if (failure !== null && this.isSameContext(node, endpoint)) {
+                showAlertDialog({
+                    title: "The temporary PIN could not be set",
+                    text:
+                        `${failure.reason} User ${userIndex} ("${userName}") was created on the lock but has no ` +
+                        `PIN, and removing it again also failed (${failure.rollbackReason}). It cannot open the ` +
+                        `door — delete it from the user list and try again.`,
+                }).catch(alertError => console.error("Failed to show the PIN failure dialog", alertError));
             }
         } catch (error) {
             if (!this.isSameContext(node, endpoint)) return;

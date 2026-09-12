@@ -992,6 +992,57 @@ export async function removeUser(
     await client.deviceCommand(nodeId, endpoint, DOOR_LOCK_CLUSTER_ID, "ClearUser", { userIndex });
 }
 
+/**
+ * Why a user is not usable after createExpiringPinUser() failed.
+ *
+ * - `rolled-back`: the user was removed again, so the lock is unchanged and a retry is safe.
+ * - `orphaned`: the user exists on the lock with no PIN and could not be removed; it cannot open the
+ *   door, so the operator has to delete it before retrying.
+ */
+export interface ExpiringPinUserFailure {
+    outcome: "rolled-back" | "orphaned";
+    /** Why the PIN could not be set. */
+    reason: string;
+    /** Why the created user could not be removed again; only set when `outcome` is `orphaned`. */
+    rollbackReason?: string;
+}
+
+/**
+ * Creates an ExpiringUser and attaches its PIN. SetUser and SetCredential are separate commands, so a
+ * PIN failure would otherwise leave a user that looks live in the list but can never open the door;
+ * the user is removed again when that happens.
+ *
+ * @returns null when the user and its PIN are both in place, otherwise what went wrong
+ * @throws when SetUser itself fails, i.e. before anything reaches the lock
+ */
+export async function createExpiringPinUser(
+    client: MatterClient,
+    nodeId: number | bigint,
+    endpoint: number,
+    userIndex: number,
+    userName: string,
+    pin: string,
+    pinCapacity: number,
+): Promise<ExpiringPinUserFailure | null> {
+    await addUser(client, nodeId, endpoint, userIndex, userName, USER_TYPE_EXPIRING, USER_STATUS_OCCUPIED_ENABLED);
+    try {
+        await attachPinCredential(client, nodeId, endpoint, userIndex, pin, pinCapacity);
+        return null;
+    } catch (credentialError) {
+        const reason = errorMessage(credentialError);
+        try {
+            await removeUser(client, nodeId, endpoint, userIndex);
+            return { outcome: "rolled-back", reason };
+        } catch (rollbackError) {
+            return { outcome: "orphaned", reason, rollbackReason: errorMessage(rollbackError) };
+        }
+    }
+}
+
+function errorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
 export async function lockDoor(
     client: MatterClient,
     nodeId: number | bigint,

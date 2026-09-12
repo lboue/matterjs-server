@@ -7,12 +7,15 @@
 import { MatterNode, type MatterClient, type MatterNodeData } from "@matter-server/ws-client";
 import {
     attachPinCredential,
+    createExpiringPinUser,
     buildDaySegments,
     decodeHolidayScheduleResponse,
     decodeUserResponse,
     decodeWeekDayScheduleResponse,
     decodeYearDayScheduleResponse,
     encodePinCode,
+    USER_STATUS_OCCUPIED_ENABLED,
+    USER_TYPE_EXPIRING,
     formatDaysMask,
     formatExpiringTimeoutHint,
     formatOperatingMode,
@@ -763,6 +766,92 @@ describe("door-lock util", () => {
         it("falls back to the generic status name and numeric code for other failures", async () => {
             const { client } = fakeCredentialClient({ occupiedChain: {}, setCredentialResponse: { status: 135 } });
             await expect(attachPinCredential(client, 1, 6, 3, "1234", 5)).to.be.rejectedWith("ConstraintError (135)");
+        });
+    });
+
+    describe("createExpiringPinUser", () => {
+        /** Records every command; `failCommands` makes the named commands reject. */
+        function fakeLockClient(options: { failCommands?: Record<string, string> } = {}) {
+            const commands = new Array<{ commandName: string; payload: Record<string, unknown> }>();
+            const client = {
+                deviceCommand: (
+                    _nodeId: number | bigint,
+                    _endpointId: number,
+                    _clusterId: number,
+                    commandName: string,
+                    payload: Record<string, unknown> = {},
+                ) => {
+                    commands.push({ commandName, payload });
+                    const failure = options.failCommands?.[commandName];
+                    if (failure !== undefined) return Promise.reject(new Error(failure));
+                    if (commandName === "GetCredentialStatus") {
+                        return Promise.resolve({ credentialExists: false, nextCredentialIndex: null });
+                    }
+                    return Promise.resolve({ status: 0, userIndex: null });
+                },
+            } as unknown as MatterClient;
+            return { client, commands };
+        }
+
+        it("creates the user as an ExpiringUser and attaches its PIN", async () => {
+            const { client, commands } = fakeLockClient();
+            expect(await createExpiringPinUser(client, 1, 6, 4, "Guest", "1234", 5)).to.equal(null);
+            const setUser = commands.find(c => c.commandName === "SetUser");
+            expect(setUser?.payload["userIndex"]).to.equal(4);
+            expect(setUser?.payload["userType"]).to.equal(USER_TYPE_EXPIRING);
+            expect(setUser?.payload["userStatus"]).to.equal(USER_STATUS_OCCUPIED_ENABLED);
+            expect(commands.some(c => c.commandName === "SetCredential")).to.equal(true);
+            expect(commands.some(c => c.commandName === "ClearUser")).to.equal(false);
+        });
+
+        it("removes the user again when its PIN cannot be set", async () => {
+            const { client, commands } = fakeLockClient({ failCommands: { SetCredential: "lock said no" } });
+            const failure = await createExpiringPinUser(client, 1, 6, 4, "Guest", "1234", 5);
+            expect(failure?.outcome).to.equal("rolled-back");
+            expect(failure?.reason).to.equal("lock said no");
+            expect(failure?.rollbackReason).to.equal(undefined);
+            expect(commands.filter(c => c.commandName === "ClearUser")).to.deep.equal([
+                { commandName: "ClearUser", payload: { userIndex: 4 } },
+            ]);
+        });
+
+        it("reports an orphaned user when the removal fails too", async () => {
+            const { client } = fakeLockClient({
+                failCommands: { SetCredential: "lock said no", ClearUser: "busy" },
+            });
+            const failure = await createExpiringPinUser(client, 1, 6, 4, "Guest", "1234", 5);
+            expect(failure?.outcome).to.equal("orphaned");
+            expect(failure?.reason).to.equal("lock said no");
+            expect(failure?.rollbackReason).to.equal("busy");
+        });
+
+        it("rolls back a device-side SetCredential rejection, not only a transport failure", async () => {
+            const commands = new Array<string>();
+            const client = {
+                deviceCommand: (
+                    _nodeId: number | bigint,
+                    _endpointId: number,
+                    _clusterId: number,
+                    commandName: string,
+                ) => {
+                    commands.push(commandName);
+                    if (commandName === "GetCredentialStatus") {
+                        return Promise.resolve({ credentialExists: false, nextCredentialIndex: null });
+                    }
+                    if (commandName === "SetCredential") return Promise.resolve({ status: 3, userIndex: null });
+                    return Promise.resolve({});
+                },
+            } as unknown as MatterClient;
+            const failure = await createExpiringPinUser(client, 1, 6, 4, "Guest", "1234", 5);
+            expect(failure?.outcome).to.equal("rolled-back");
+            expect(failure?.reason).to.contain("Occupied (3)");
+            expect(commands).to.contain("ClearUser");
+        });
+
+        it("propagates a SetUser failure without attempting a rollback", async () => {
+            const { client, commands } = fakeLockClient({ failCommands: { SetUser: "denied" } });
+            await expect(createExpiringPinUser(client, 1, 6, 4, "Guest", "1234", 5)).to.be.rejectedWith("denied");
+            expect(commands.map(c => c.commandName)).to.deep.equal(["SetUser"]);
         });
     });
 });
