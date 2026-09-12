@@ -287,7 +287,10 @@ export function parseTargetPositionPercent(value: string, limitRange: Range | nu
     if (trimmed === "") return null;
     const percent = Number(trimmed);
     if (!Number.isFinite(percent)) return null;
+    // Position is percent100ths, so a hundredth of a percent is the finest the command can carry;
+    // rounding a finer value would move the target the operator asked for.
     const position = Math.round(percent * 100);
+    if (Math.abs(percent * 100 - position) > Number.EPSILON * Math.abs(position)) return null;
     const min = limitRange?.min ?? 0;
     const max = limitRange?.max ?? 10000;
     if (position < min || position > max) return null;

@@ -197,6 +197,12 @@ describe("closure-dimension util", () => {
             expect(parseTargetPositionPercent(" 0 ", null)).to.equal(0);
         });
 
+        it("parseTargetPositionPercent() rejects a precision the command cannot carry", () => {
+            expect(parseTargetPositionPercent("12.34", null)).to.equal(1234);
+            expect(parseTargetPositionPercent("12.345", null)).to.equal(null);
+            expect(parseTargetPositionPercent("0.001", null)).to.equal(null);
+        });
+
         it("parseTargetPositionPercent() rejects a blank or non-numeric field", () => {
             expect(parseTargetPositionPercent("", null)).to.equal(null);
             expect(parseTargetPositionPercent("   ", null)).to.equal(null);
