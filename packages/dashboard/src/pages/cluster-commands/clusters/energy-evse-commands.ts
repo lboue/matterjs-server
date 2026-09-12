@@ -506,11 +506,13 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                           </p>`
                         : nothing
                 }
-                ${(this._schedules ?? []).map((schedule, index) => this._renderScheduleEditor(schedule, index, soCSupported))}
+                ${(this._schedules ?? []).map((schedule, index) =>
+                    this._renderScheduleEditor(schedule, index, soCSupported, this._scheduleBusy),
+                )}
                 <div class="command-row">
                     <md-text-button
                         @click=${() => this._handleAddSchedule()}
-                        ?disabled=${(this._schedules ?? []).length >= MAX_CHARGING_SCHEDULES}
+                        ?disabled=${this._scheduleBusy || (this._schedules ?? []).length >= MAX_CHARGING_SCHEDULES}
                     >
                         Add schedule
                     </md-text-button>
@@ -530,6 +532,7 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
         schedule: EditableChargingSchedule,
         scheduleIndex: number,
         soCSupported: boolean,
+        disabled: boolean,
     ): TemplateResult {
         return html`
             <div class="schedule-card">
@@ -540,20 +543,23 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                                 type="button"
                                 class="day-chip ${schedule.days[key] ? "selected" : ""}"
                                 aria-pressed=${schedule.days[key] ? "true" : "false"}
+                                ?disabled=${disabled}
                                 @click=${() => this._handleToggleDay(scheduleIndex, key)}
                             >
                                 ${label}
                             </button>
                         `,
                     )}
-                    <md-text-button @click=${() => this._handleRemoveSchedule(scheduleIndex)}>Remove</md-text-button>
+                    <md-text-button ?disabled=${disabled} @click=${() => this._handleRemoveSchedule(scheduleIndex)}>
+                        Remove
+                    </md-text-button>
                 </div>
                 ${schedule.targets.map((target, targetIndex) =>
-                    this._renderTargetEditor(scheduleIndex, targetIndex, target, soCSupported),
+                    this._renderTargetEditor(scheduleIndex, targetIndex, target, soCSupported, disabled),
                 )}
                 <md-text-button
                     @click=${() => this._handleAddTarget(scheduleIndex)}
-                    ?disabled=${schedule.targets.length >= MAX_CHARGING_TARGETS_PER_SCHEDULE}
+                    ?disabled=${disabled || schedule.targets.length >= MAX_CHARGING_TARGETS_PER_SCHEDULE}
                 >
                     Add target
                 </md-text-button>
@@ -566,6 +572,7 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
         targetIndex: number,
         target: EditableChargingTarget,
         soCSupported: boolean,
+        disabled: boolean,
     ): TemplateResult {
         return html`
             <div class="target-row">
@@ -574,6 +581,7 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                     <input
                         type="time"
                         .value=${minutesToTimeInputValue(target.timeMinutes)}
+                        ?disabled=${disabled}
                         @change=${(e: Event) => this._handleTargetTimeChange(scheduleIndex, targetIndex, e)}
                     />
                 </label>
@@ -585,6 +593,7 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                                   min="0"
                                   max="100"
                                   .value=${target.targetSoC !== undefined ? String(target.targetSoC) : ""}
+                                  ?disabled=${disabled}
                                   @input=${(e: Event) => this._handleTargetSoCChange(scheduleIndex, targetIndex, e)}
                               />
                               % SoC
@@ -597,13 +606,17 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                         min="0"
                         step="0.1"
                         .value=${target.addedEnergyKWh !== undefined ? String(target.addedEnergyKWh) : ""}
+                        ?disabled=${disabled}
                         @input=${(e: Event) => this._handleTargetEnergyChange(scheduleIndex, targetIndex, e)}
                     />
                     kWh
                 </label>
-                <md-text-button @click=${() => this._handleRemoveTarget(scheduleIndex, targetIndex)}
-                    >Remove</md-text-button
+                <md-text-button
+                    ?disabled=${disabled}
+                    @click=${() => this._handleRemoveTarget(scheduleIndex, targetIndex)}
                 >
+                    Remove
+                </md-text-button>
             </div>
         `;
     }
@@ -983,6 +996,10 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                 border-color: var(--md-sys-color-primary);
                 color: var(--md-sys-color-on-primary);
             }
+            .day-chip:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
+            }
             .target-row {
                 display: flex;
                 align-items: center;
@@ -998,6 +1015,9 @@ export class EnergyEvseClusterCommands extends BaseClusterCommands {
                 background: var(--md-sys-color-surface);
                 color: var(--md-sys-color-on-surface);
                 width: 90px;
+            }
+            .target-row input:disabled {
+                opacity: 0.5;
             }
             .hint {
                 color: var(--text-color, rgba(0, 0, 0, 0.6));
