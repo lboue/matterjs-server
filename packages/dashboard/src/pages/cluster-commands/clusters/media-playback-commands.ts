@@ -113,8 +113,9 @@ class MediaPlaybackClusterCommands extends BaseClusterCommands {
                         anyCommandAdvertised
                             ? nothing
                             : html`<div class="meta">
-                                  The device has not reported its AcceptedCommandList yet, so no transport control is
-                                  shown.
+                                  This device advertises none of the transport commands this panel offers. Its
+                                  AcceptedCommandList may not have been read yet, or it may support only commands
+                                  handled elsewhere, such as Seek or track selection.
                               </div>`
                     }
 
