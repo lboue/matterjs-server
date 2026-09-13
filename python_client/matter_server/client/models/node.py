@@ -74,7 +74,10 @@ class MatterEndpoint:
     @property
     def is_bridged_device(self) -> bool:
         """Return if this endpoint represents a Bridged device."""
-        return BridgedNode in self.device_types
+        return (
+            BridgedNode in self.device_types
+            or self.node.get_bridge_parent(self.endpoint_id) is not None
+        )
 
     @property
     def is_composed_device(self) -> bool:
@@ -90,12 +93,16 @@ class MatterEndpoint:
 
         If this endpoint represents a BridgedDevice, returns BridgedDeviceBasic.
         If this endpoint represents a ComposedDevice, returns the info of the compose device.
+        If this endpoint is bridged behind a nested Aggregator that has its own
+        BridgedDeviceBasicInformation, returns that Aggregator's info.
         Otherwise, returns BasicInformation from the Node itself (endpoint 0).
         """
-        if self.is_bridged_device:
-            return self.get_cluster(Clusters.BridgedDeviceBasicInformation)
+        if own_info := self.get_cluster(Clusters.BridgedDeviceBasicInformation):
+            return own_info
         if compose_parent := self.node.get_compose_parent(self.endpoint_id):
             return compose_parent.device_info
+        if bridge_parent := self.node.get_bridge_parent(self.endpoint_id):
+            return bridge_parent.device_info
         return self.node.device_info
 
     def has_cluster(self, cluster: type[_CLUSTER_T] | int) -> bool:
@@ -243,6 +250,9 @@ class MatterNode:
         # composed devices reference to other endpoints through the partsList attribute
         # create a mapping table
         self._composed_endpoints: dict[int, int] = {}
+        # an Aggregator endpoint's partsList enumerates the endpoints it bridges,
+        # each an independent device rather than a part of the aggregator itself
+        self._bridge_parents: dict[int, int] = {}
         self.update(node_data)
 
     @property
@@ -316,6 +326,12 @@ class MatterNode:
         """Return endpoint IDs of any child if the endpoint represents a Composed device."""
         return tuple(x for x, y in self._composed_endpoints.items() if y == endpoint_id)
 
+    def get_bridge_parent(self, endpoint_id: int) -> MatterEndpoint | None:
+        """Return the Aggregator endpoint that bridges the given endpoint, if any."""
+        if parent_id := self._bridge_parents.get(endpoint_id):
+            return self.endpoints[parent_id]
+        return None
+
     def update(self, node_data: MatterNodeData) -> None:
         """Update MatterNode from MatterNodeData."""
         self.node_data = node_data
@@ -339,10 +355,6 @@ class MatterNode:
             if RootNode in endpoint.device_types:
                 # ignore root endpoint
                 continue
-            if Aggregator in endpoint.device_types:
-                # ignore Bridge endpoint
-                # (as that will also use partsList to indicate its child's)
-                continue
             descriptor = endpoint.get_cluster(Clusters.Descriptor)
             if descriptor is None:
                 LOGGER.warning(
@@ -351,9 +363,17 @@ class MatterNode:
                     endpoint.endpoint_id,
                 )
                 continue
-            if descriptor.partsList:
+            if not descriptor.partsList:
+                continue
+            if Aggregator in endpoint.device_types:
+                # an Aggregator's partsList enumerates the (possibly nested)
+                # devices it bridges, each its own independent device, not a
+                # part of the aggregator itself
                 for endpoint_id in descriptor.partsList:
-                    self._composed_endpoints[endpoint_id] = endpoint.endpoint_id
+                    self._bridge_parents[endpoint_id] = endpoint.endpoint_id
+                continue
+            for endpoint_id in descriptor.partsList:
+                self._composed_endpoints[endpoint_id] = endpoint.endpoint_id
 
     def update_attribute(self, attribute_path: str, new_value: Any) -> None:
         """Handle Attribute value update."""
