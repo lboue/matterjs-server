@@ -12,6 +12,7 @@ This page shows a detailed overview of the changes between versions without the 
 - Enhancement: (lboue) Added a command panel for the DoorLock cluster to Dashboard
 - Enhancement: (lboue) Added Presets and Thermostat Suggestions (Thermostat cluster PRES/TSUGGEST features) panels to Dashboard
 - Fix: BLE proxy connections are pinged every 15 seconds and terminated after 45 to 60 seconds of silence, so a proxy client that loses power is detected instead of staying registered indefinitely
+- Fix: (lboue) Python client now recognizes a bridged device nested behind another Aggregator endpoint (an Aggregator that is itself a bridged device, with its own further bridged children) instead of silently dropping the relationship
 
 ## 1.4.0 (2026-08-07)
 
