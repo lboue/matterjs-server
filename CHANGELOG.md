@@ -9,9 +9,13 @@ This page shows a detailed overview of the changes between versions without the 
 
 ## **WORK IN PROGRESS**
 
-- Enhancement: (lboue) Added a Forecast panel for the DeviceEnergyManagement cluster to Dashboard, decoding per-slot power/energy, timing and adjustment limits
+- Enhancement: (lboue) Added a Forecast panel for the DeviceEnergyManagement cluster to the Dashboard
+- Enhancement: (lboue) Added a command panel for the MediaPlayback cluster to Dashboard
+- Enhancement: (lboue) Added a command panel for the ClosureDimension cluster to Dashboard
 - Enhancement: (lboue) Added a command panel for the DoorLock cluster to Dashboard
+- Enhancement: (lboue) Added creating temporary/expiring PIN users (UserType=ExpiringUser) and configuring the lock's ExpiringUserTimeout on the Dashboard DoorLock cluster panel
 - Enhancement: (lboue) Added Presets and Thermostat Suggestions (Thermostat cluster PRES/TSUGGEST features) panels to Dashboard
+- Fix: Door Lock PIN fields (`credentialData`, `pinCode`) are redacted from the debug logs
 - Fix: BLE proxy connections are pinged every 15 seconds and terminated after 45 to 60 seconds of silence, so a proxy client that loses power is detected instead of staying registered indefinitely
 
 ## 1.4.0 (2026-08-07)
