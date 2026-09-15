@@ -682,7 +682,8 @@ export class WebSocketControllerHandler implements WebServerHandler {
         try {
             // Parse before logging: an unparseable frame cannot be redacted and may carry a credential.
             const request = parseBigIntAwareJson(data) as { message_id: string; command: string; args: any };
-            logger.debug(`[${connId}] WebSocket request`, redactSensitiveCommandFields(request));
+            // Deferred: matter.js calls this only at DEBUG, keeping redaction off the hot path.
+            logger.debug(`[${connId}] WebSocket request`, () => redactSensitiveCommandFields(request));
             const { args } = request;
             messageId = request.message_id;
             command = request.command;
