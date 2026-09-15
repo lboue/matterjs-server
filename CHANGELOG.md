@@ -9,9 +9,18 @@ This page shows a detailed overview of the changes between versions without the 
 
 ## **WORK IN PROGRESS**
 
-- Enhancement: (lboue) Added a command panel for the DoorLock cluster to Dashboard
-- Enhancement: (lboue) Added Presets and Thermostat Suggestions (Thermostat cluster PRES/TSUGGEST features) panels to Dashboard
-- Enhancement: (lboue) Dashboard Endpoints list and endpoint's Clusters panel show each endpoint's resolved label (BridgedDeviceBasicInformation NodeLabel, UserLabel, or FixedLabel) and Descriptor semantic tags (TagList), so an endpoint can be identified without opening it
+- Enhancement: (lboue) Dashboard Endpoints list and endpoint's Clusters panel show each endpoint's resolved label and Descriptor semantic tags (TagList) to simplify identification
+- Enhancement: (lboue) Added a command panel for the DoorLock cluster to the Dashboard
+- Enhancement: (lboue) Added Presets and Thermostat Suggestions panels to Dashboard
+- Enhancement: (lboue) Added a command panel for the DeviceEnergyManagementMode cluster to the Dashboard
+- Enhancement: (lboue) Added a Forecast panel for the DeviceEnergyManagement cluster to the Dashboard
+- Enhancement: (lboue) Added a command panel for the MediaPlayback cluster to the Dashboard
+- Enhancement: (lboue) Added a command panel for the ClosureDimension cluster to the Dashboard
+- Enhancement: (lboue) Added a command panel for the DoorLock cluster to the Dashboard
+- Enhancement: (lboue) Added a decode and control panel for the EnergyEvse cluster to the Dashboard, including a weekly charging schedule editor
+- Enhancement: (lboue) Allows creating temporary/expiring PIN users (UserType=ExpiringUser) and configuring the lock's ExpiringUserTimeout to the Dashboard DoorLock cluster panel
+- Enhancement: (lboue) Added Presets and Thermostat Suggestions (Thermostat cluster PRES/TSUGGEST features) panels to the Dashboard
+- Fix: Door Lock PIN fields (`credentialData`, `pinCode`) are redacted from the debug logs
 - Fix: BLE proxy connections are pinged every 15 seconds and terminated after 45 to 60 seconds of silence, so a proxy client that loses power is detected instead of staying registered indefinitely
 
 ## 1.4.0 (2026-08-07)
