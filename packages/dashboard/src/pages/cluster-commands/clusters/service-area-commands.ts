@@ -114,8 +114,7 @@ class ServiceAreaClusterCommands extends BaseClusterCommands {
     private _renderArea(area: AreaInfo, info: ReturnType<typeof serviceAreaInfo>) {
         const isCurrent = info.currentArea === area.areaId;
         const progress = info.progress.find(p => p.areaId === area.areaId);
-        const canSkip =
-            info.features.progressReporting && progress?.status === "Operating" && progress !== undefined;
+        const canSkip = info.features.progressReporting && progress?.status === "Operating" && progress !== undefined;
 
         return html`
             <li class="area-row ${isCurrent ? "area-row-current" : ""}">
@@ -123,8 +122,7 @@ class ServiceAreaClusterCommands extends BaseClusterCommands {
                     <md-checkbox
                         ?checked=${this._selectedAreaIds.has(area.areaId)}
                         ?disabled=${this._busy || !this.node.available}
-                        @change=${(e: Event) =>
-                            this._toggleArea(area.areaId, (e.target as HTMLInputElement).checked)}
+                        @change=${(e: Event) => this._toggleArea(area.areaId, (e.target as HTMLInputElement).checked)}
                     ></md-checkbox>
                     <span>${areaLabel(area)}${isCurrent ? html` <strong>(current)</strong>` : nothing}</span>
                 </label>

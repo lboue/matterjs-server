@@ -124,7 +124,8 @@ function decodeProgress(entry: unknown): ProgressInfo | undefined {
     const areaId = toNumber(field(entry, 0));
     if (areaId === undefined) return undefined;
     const statusValue = toNumber(field(entry, 1));
-    const status = statusValue !== undefined ? (OPERATIONAL_STATUS_NAMES[statusValue] ?? `Unknown(${statusValue})`) : "Unknown";
+    const status =
+        statusValue !== undefined ? (OPERATIONAL_STATUS_NAMES[statusValue] ?? `Unknown(${statusValue})`) : "Unknown";
     return {
         areaId,
         status,
@@ -169,7 +170,11 @@ export function areaLabel(area: AreaInfo): string {
  * attributes above. A response carrying no Status says nothing about the outcome, so it must not
  * read as Success.
  */
-function decodeCommandResult(response: unknown, statusNames: Record<number, string>, commandLabel: string): CommandResult {
+function decodeCommandResult(
+    response: unknown,
+    statusNames: Record<number, string>,
+    commandLabel: string,
+): CommandResult {
     const obj = asObject(response);
     const status = obj === null ? null : pickNumber(obj, "status");
     if (status === null) {
