@@ -21,16 +21,14 @@ import {
     type MapInfo,
     type ProgressInfo,
 } from "../../../util/service-area.js";
+import { MATTER_EPOCH_OFFSET_SECONDS } from "../../../util/time.js";
 import { BaseClusterCommands } from "../base-cluster-commands.js";
 import { registerClusterCommands } from "../registry.js";
 
 const CLUSTER_ID = SERVICE_AREA_CLUSTER_ID;
 
-/** Countdown text for EstimatedEndTime (Matter epoch-s: seconds since 2000-01-01T00:00:00 UTC). */
-const MATTER_EPOCH_OFFSET_S = 946_684_800;
-
 function countdownLabel(estimatedEndTimeEpochS: number): string {
-    const endMs = (estimatedEndTimeEpochS + MATTER_EPOCH_OFFSET_S) * 1000;
+    const endMs = (estimatedEndTimeEpochS + MATTER_EPOCH_OFFSET_SECONDS) * 1000;
     const remainingS = Math.round((endMs - Date.now()) / 1000);
     if (remainingS <= 0) return "due now";
     const minutes = Math.floor(remainingS / 60);
@@ -114,7 +112,7 @@ class ServiceAreaClusterCommands extends BaseClusterCommands {
     private _renderArea(area: AreaInfo, info: ReturnType<typeof serviceAreaInfo>) {
         const isCurrent = info.currentArea === area.areaId;
         const progress = info.progress.find(p => p.areaId === area.areaId);
-        const canSkip = info.features.progressReporting && progress?.status === "Operating" && progress !== undefined;
+        const canSkip = info.features.progressReporting && progress?.status === "Operating";
 
         return html`
             <li class="area-row ${isCurrent ? "area-row-current" : ""}">
@@ -157,13 +155,17 @@ class ServiceAreaClusterCommands extends BaseClusterCommands {
         if (!this.node || this.cluster !== CLUSTER_ID) return nothing;
         const info = serviceAreaInfo(this.node.attributes, this.endpoint);
 
+        const knownMapIds = new Set(info.supportedMaps.map(map => map.mapId));
         const groups: { map: MapInfo | undefined; areas: AreaInfo[] }[] = info.features.maps
             ? [
                   ...info.supportedMaps.map(map => ({
                       map,
                       areas: info.supportedAreas.filter(a => a.mapId === map.mapId),
                   })),
-                  { map: undefined, areas: info.supportedAreas.filter(a => a.mapId === undefined) },
+                  {
+                      map: undefined,
+                      areas: info.supportedAreas.filter(a => a.mapId === undefined || !knownMapIds.has(a.mapId)),
+                  },
               ].filter(group => group.areas.length > 0)
             : [{ map: undefined, areas: info.supportedAreas }];
 
@@ -185,7 +187,7 @@ class ServiceAreaClusterCommands extends BaseClusterCommands {
                     }
                     <div class="command-row">
                         <md-outlined-button
-                            ?disabled=${this._busy || !this.node.available || this._selectedAreaIds.size === 0}
+                            ?disabled=${this._busy || !this.node.available}
                             @click=${handleAsync(() => this._selectAreas())}
                             >Select Areas (${this._selectedAreaIds.size})</md-outlined-button
                         >
