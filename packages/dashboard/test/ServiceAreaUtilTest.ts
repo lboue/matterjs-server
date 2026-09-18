@@ -23,9 +23,7 @@ const SERVICE_AREA_ATTRS: Record<string, unknown> = {
         { "0": 2, "1": 10, "2": { "0": { "0": "Living Room" } } },
         { "0": 3 },
     ],
-    "1/336/1": [
-        { "0": 10, "1": "Ground Floor" },
-    ],
+    "1/336/1": [{ "0": 10, "1": "Ground Floor" }],
     "1/336/3": 1,
     "1/336/4": 1234,
     "1/336/5": [
