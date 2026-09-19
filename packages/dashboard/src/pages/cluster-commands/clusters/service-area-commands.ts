@@ -5,36 +5,36 @@
  */
 
 import "@material/web/button/outlined-button";
-import "@material/web/checkbox/checkbox";
+import { MdCheckbox } from "@material/web/checkbox/checkbox.js";
 import { css, html, nothing, type CSSResultGroup } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { handleAsync } from "../../../util/async-handler.js";
+import { formatDuration } from "../../../util/duration.js";
 import { errorText } from "../../../util/error-text.js";
 import {
     SERVICE_AREA_CLUSTER_ID,
     areaLabel,
     decodeSelectAreasResult,
     decodeSkipAreaResult,
+    describeOperationalStatus,
+    isSkippable,
+    OperationalStatus,
+    remainingSeconds,
+    remainingTimeLabel,
     serviceAreaInfo,
     type AreaInfo,
     type CommandResult,
     type MapInfo,
     type ProgressInfo,
+    type ServiceAreaInfo,
 } from "../../../util/service-area.js";
-import { MATTER_EPOCH_OFFSET_SECONDS } from "../../../util/time.js";
+import { formatEpochTime } from "../../../util/time.js";
 import { BaseClusterCommands } from "../base-cluster-commands.js";
 import { registerClusterCommands } from "../registry.js";
 
 const CLUSTER_ID = SERVICE_AREA_CLUSTER_ID;
 
-function countdownLabel(estimatedEndTimeEpochS: number): string {
-    const endMs = (estimatedEndTimeEpochS + MATTER_EPOCH_OFFSET_SECONDS) * 1000;
-    const remainingS = Math.round((endMs - Date.now()) / 1000);
-    if (remainingS <= 0) return "due now";
-    const minutes = Math.floor(remainingS / 60);
-    const seconds = remainingS % 60;
-    return minutes > 0 ? `~${minutes}m ${seconds}s remaining` : `~${seconds}s remaining`;
-}
+const COUNTDOWN_INTERVAL_MS = 1000;
 
 @customElement("service-area-cluster-commands")
 class ServiceAreaClusterCommands extends BaseClusterCommands {
@@ -45,25 +45,89 @@ class ServiceAreaClusterCommands extends BaseClusterCommands {
     private _formContext?: string;
     /** An invoke started before a reset must not write its outcome into the panel that replaced it. */
     private _invokeGeneration = 0;
+    /** Until the user picks areas, the checkboxes follow the device's own SelectedAreas. */
+    private _selectionEdited = false;
+    private _info?: ServiceAreaInfo;
+    private _countdownTimer?: ReturnType<typeof setInterval>;
+
+    override connectedCallback() {
+        super.connectedCallback();
+        // A reconnected element gets no property change, so nothing else would restart the countdown.
+        if (this._info !== undefined) this._syncCountdown(this._info);
+    }
+
+    override disconnectedCallback() {
+        super.disconnectedCallback();
+        this._stopCountdown();
+    }
 
     override willUpdate(changedProperties: Map<string, unknown>) {
         super.willUpdate(changedProperties);
-        if (!this.node) return;
+        if (!this.node) {
+            this._stopCountdown();
+            return;
+        }
         const context = `${String(this.node.node_id)}/${this.endpoint}/${this.cluster}`;
         if (this._formContext !== undefined && this._formContext !== context) {
             this._selectedAreaIds = new Set();
+            this._selectionEdited = false;
             this._result = undefined;
             this._error = undefined;
             this._busy = false;
             this._invokeGeneration++;
         }
         this._formContext = context;
+
+        if (this.cluster !== CLUSTER_ID) {
+            this._info = undefined;
+            this._stopCountdown();
+            return;
+        }
+
+        const info = serviceAreaInfo(this.node.attributes, this.endpoint);
+        this._info = info;
+        this._syncSelection(info);
+        this._syncCountdown(info);
+    }
+
+    /**
+     * SelectAreas replaces the device's whole selection, so a panel that starts empty would cancel
+     * whatever is running the moment the user submits. An edited selection still drops areas the
+     * device no longer supports, which it would only reject as UnsupportedArea.
+     */
+    private _syncSelection(info: ServiceAreaInfo) {
+        const supported = new Set(info.supportedAreas.map(area => area.areaId));
+        const next = new Set(
+            (this._selectionEdited ? [...this._selectedAreaIds] : info.selectedAreas).filter(areaId =>
+                supported.has(areaId),
+            ),
+        );
+        if (next.size !== this._selectedAreaIds.size || [...next].some(id => !this._selectedAreaIds.has(id))) {
+            this._selectedAreaIds = next;
+        }
+    }
+
+    private _syncCountdown(info: ServiceAreaInfo) {
+        const needed = typeof info.estimatedEndTime === "number" && remainingSeconds(info.estimatedEndTime) > 0;
+        if (needed && this._countdownTimer === undefined) {
+            this._countdownTimer = setInterval(() => this.requestUpdate(), COUNTDOWN_INTERVAL_MS);
+        } else if (!needed) {
+            this._stopCountdown();
+        }
+    }
+
+    private _stopCountdown() {
+        if (this._countdownTimer !== undefined) {
+            clearInterval(this._countdownTimer);
+            this._countdownTimer = undefined;
+        }
     }
 
     private _toggleArea(areaId: number, checked: boolean) {
         const next = new Set(this._selectedAreaIds);
         if (checked) next.add(areaId);
         else next.delete(areaId);
+        this._selectionEdited = true;
         this._selectedAreaIds = next;
     }
 
@@ -80,7 +144,10 @@ class ServiceAreaClusterCommands extends BaseClusterCommands {
                 newAreas: [...this._selectedAreaIds],
             });
             if (!isCurrent()) return;
-            this._result = { command: "SelectAreas", result: decodeSelectAreasResult(response) };
+            const result = decodeSelectAreasResult(response);
+            this._result = { command: "SelectAreas", result };
+            // The device now owns the selection again, so let SelectedAreas drive the checkboxes.
+            if (result.success) this._selectionEdited = false;
         } catch (err) {
             if (isCurrent()) this._error = errorText(err);
         } finally {
@@ -109,24 +176,31 @@ class ServiceAreaClusterCommands extends BaseClusterCommands {
         }
     }
 
-    private _renderArea(area: AreaInfo, info: ReturnType<typeof serviceAreaInfo>) {
+    private _renderArea(area: AreaInfo, info: ServiceAreaInfo) {
         const isCurrent = info.currentArea === area.areaId;
-        const progress = info.progress.find(p => p.areaId === area.areaId);
-        const canSkip = info.features.progressReporting && progress?.status === "Operating";
+        const progress = info.progress.find(entry => entry.areaId === area.areaId);
 
         return html`
             <li class="area-row ${isCurrent ? "area-row-current" : ""}">
                 <label>
                     <md-checkbox
-                        ?checked=${this._selectedAreaIds.has(area.areaId)}
-                        ?disabled=${this._busy || !this.node.available}
-                        @change=${(e: Event) => this._toggleArea(area.areaId, (e.target as HTMLInputElement).checked)}
+                        .checked=${this._selectedAreaIds.has(area.areaId)}
+                        ?disabled=${this._busy || !this.node.available || !info.commands.selectAreas}
+                        @change=${(e: Event) => {
+                            if (e.target instanceof MdCheckbox) this._toggleArea(area.areaId, e.target.checked);
+                        }}
                     ></md-checkbox>
-                    <span>${areaLabel(area)}${isCurrent ? html` <strong>(current)</strong>` : nothing}</span>
+                    <span
+                        >${areaLabel(area)}${
+                            area.floorNumber !== undefined
+                                ? html` <span class="area-detail">floor ${area.floorNumber}</span>`
+                                : nothing
+                        }${isCurrent ? html` <strong>(current)</strong>` : nothing}</span
+                    >
                 </label>
                 ${progress ? this._renderProgressBadge(progress) : nothing}
                 ${
-                    canSkip
+                    isSkippable(info, area.areaId)
                         ? html`<md-outlined-button
                               ?disabled=${this._busy || !this.node.available}
                               @click=${handleAsync(() => this._skipArea(area.areaId))}
@@ -139,10 +213,19 @@ class ServiceAreaClusterCommands extends BaseClusterCommands {
     }
 
     private _renderProgressBadge(progress: ProgressInfo) {
-        return html`<span class="progress-badge progress-${progress.status.toLowerCase()}">${progress.status}</span>`;
+        const status = describeOperationalStatus(progress.status);
+        const times = new Array<string>();
+        if (progress.totalOperationalTime !== undefined) {
+            times.push(`ran ${formatDuration(progress.totalOperationalTime)}`);
+        }
+        if (progress.estimatedTime !== undefined) times.push(`~${formatDuration(progress.estimatedTime)} estimated`);
+
+        return html`<span class="progress-badge progress-${status.key}"
+            >${status.label}${times.length > 0 ? html` <span class="area-detail">${times.join(", ")}</span>` : nothing}</span
+        >`;
     }
 
-    private _renderMapGroup(map: MapInfo | undefined, areas: AreaInfo[], info: ReturnType<typeof serviceAreaInfo>) {
+    private _renderMapGroup(map: MapInfo | undefined, areas: AreaInfo[], info: ServiceAreaInfo) {
         return html`
             ${map ? html`<h4 class="map-name">${map.name}</h4>` : nothing}
             <ul class="area-list">
@@ -152,8 +235,8 @@ class ServiceAreaClusterCommands extends BaseClusterCommands {
     }
 
     override render() {
-        if (!this.node || this.cluster !== CLUSTER_ID) return nothing;
-        const info = serviceAreaInfo(this.node.attributes, this.endpoint);
+        const info = this._info;
+        if (!this.node || info === undefined) return nothing;
 
         const knownMapIds = new Set(info.supportedMaps.map(map => map.mapId));
         const groups: { map: MapInfo | undefined; areas: AreaInfo[] }[] = info.features.maps
@@ -169,14 +252,20 @@ class ServiceAreaClusterCommands extends BaseClusterCommands {
               ].filter(group => group.areas.length > 0)
             : [{ map: undefined, areas: info.supportedAreas }];
 
+        const running = info.progress.some(entry => entry.status === OperationalStatus.Operating);
+
         return html`
             <details class="command-panel">
                 <summary>Service Area</summary>
                 <div class="command-content">
                     ${
-                        info.estimatedEndTime !== undefined && info.estimatedEndTime !== null
+                        typeof info.estimatedEndTime === "number"
                             ? html`<div class="command-row">
-                                  <span>Estimated end: <strong>${countdownLabel(info.estimatedEndTime)}</strong></span>
+                                  <span
+                                      >Estimated end:
+                                      <strong>${formatEpochTime(info.estimatedEndTime)}</strong>
+                                      <span class="area-detail">${remainingTimeLabel(info.estimatedEndTime)}</span>
+                                  </span>
                               </div>`
                             : nothing
                     }
@@ -187,10 +276,17 @@ class ServiceAreaClusterCommands extends BaseClusterCommands {
                     }
                     <div class="command-row">
                         <md-outlined-button
-                            ?disabled=${this._busy || !this.node.available}
+                            ?disabled=${this._busy || !this.node.available || !info.commands.selectAreas}
                             @click=${handleAsync(() => this._selectAreas())}
                             >Select Areas (${this._selectedAreaIds.size})</md-outlined-button
                         >
+                        ${
+                            running && !info.features.selectWhileRunning
+                                ? html`<span class="area-detail"
+                                      >The device rejects a new selection while it is running.</span
+                                  >`
+                                : nothing
+                        }
                     </div>
                     ${
                         this._result
@@ -246,6 +342,10 @@ class ServiceAreaClusterCommands extends BaseClusterCommands {
             .area-row-current {
                 background-color: var(--md-sys-color-surface-container-high);
                 border-radius: 8px;
+            }
+            .area-detail {
+                font-size: 12px;
+                color: var(--md-sys-color-on-surface-variant);
             }
             .progress-badge {
                 font-size: 12px;
