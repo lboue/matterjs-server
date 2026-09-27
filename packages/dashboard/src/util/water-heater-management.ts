@@ -78,46 +78,55 @@ export function waterHeaterManagementInfo(
     attributes: Record<string, unknown>,
     endpoint: number,
 ): WaterHeaterManagementInfo {
-    const result: WaterHeaterManagementInfo = { supported: true };
+    const result: WaterHeaterManagementInfo = { supported: false };
+    let hasAnyAttribute = false;
 
     const heatingSetpoint = toNumber(attr(attributes, endpoint, ATTR_HEATING_SET_POINT));
     if (heatingSetpoint !== undefined) {
+        hasAnyAttribute = true;
         result.heatingSetpointC = celsiusFromMatterTemp(heatingSetpoint);
     }
 
     const maxHeatingSetpoint = toNumber(attr(attributes, endpoint, ATTR_MAX_HEAT_SET_POINT));
     if (maxHeatingSetpoint !== undefined) {
+        hasAnyAttribute = true;
         result.maxHeatingSetpointC = celsiusFromMatterTemp(maxHeatingSetpoint);
     }
 
     const minHeatingSetpoint = toNumber(attr(attributes, endpoint, ATTR_MIN_HEAT_SET_POINT));
     if (minHeatingSetpoint !== undefined) {
+        hasAnyAttribute = true;
         result.minHeatingSetpointC = celsiusFromMatterTemp(minHeatingSetpoint);
     }
 
     const reheatSetpoint = toNumber(attr(attributes, endpoint, ATTR_REHEAT_SET_POINT));
     if (reheatSetpoint !== undefined) {
+        hasAnyAttribute = true;
         result.reheatSetpointC = celsiusFromMatterTemp(reheatSetpoint);
     }
 
     const maxReheatSetpoint = toNumber(attr(attributes, endpoint, ATTR_MAX_REHEAT_SET_POINT));
     if (maxReheatSetpoint !== undefined) {
+        hasAnyAttribute = true;
         result.maxReheatSetpointC = celsiusFromMatterTemp(maxReheatSetpoint);
     }
 
     const minReheatSetpoint = toNumber(attr(attributes, endpoint, ATTR_MIN_REHEAT_SET_POINT));
     if (minReheatSetpoint !== undefined) {
+        hasAnyAttribute = true;
         result.minReheatSetpointC = celsiusFromMatterTemp(minReheatSetpoint);
     }
 
     const modeValue = toNumber(attr(attributes, endpoint, ATTR_WATER_HEATER_MODE));
     if (modeValue !== undefined) {
+        hasAnyAttribute = true;
         result.modeValue = modeValue;
         result.mode = MODE_NAMES[modeValue] ?? `Unknown (${modeValue})`;
     }
 
     const stateValue = toNumber(attr(attributes, endpoint, ATTR_WATER_HEATER_STATE));
     if (stateValue !== undefined) {
+        hasAnyAttribute = true;
         result.stateValue = stateValue;
         result.state = STATE_NAMES[stateValue] ?? `Unknown (${stateValue})`;
         result.boostActive = stateValue === 2;
@@ -125,10 +134,12 @@ export function waterHeaterManagementInfo(
 
     const featureMap = toNumber(attr(attributes, endpoint, ATTR_FEATURE_MAP));
     if (featureMap !== undefined) {
+        hasAnyAttribute = true;
         result.supportsBoost = (featureMap & FEATURE_BOOST) !== 0;
         result.supportsReheat = (featureMap & FEATURE_REHEAT) !== 0;
     }
 
+    result.supported = hasAnyAttribute;
     return result;
 }
 
