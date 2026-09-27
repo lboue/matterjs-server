@@ -4,8 +4,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { expect } from "chai";
-
 describe("RVC Operational State Cluster", () => {
     describe("Operational State Enum", () => {
         it("maps state value 0 to 'Stopped'", () => {
