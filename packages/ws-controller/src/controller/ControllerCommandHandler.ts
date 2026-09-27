@@ -164,6 +164,8 @@ export interface ControllerCommandHandlerOptions {
     threadDiagnosticsEnabled?: boolean;
     /** Interval between custom cluster polling cycles. Defaults to, and is floored at, 60 seconds. */
     customClusterPollInterval?: Duration;
+    /** Whether to accept test certificates. Defaults to false. */
+    trustTestCertificates?: boolean;
 }
 
 export class ControllerCommandHandler {
@@ -173,6 +175,7 @@ export class ControllerCommandHandler {
     readonly #bleEnabled: boolean;
     readonly #bleProxyEnabled: boolean;
     readonly #otaEnabled: boolean;
+    readonly #trustTestCertificates: boolean;
     /** Node management and attribute cache */
     #nodes = new Nodes();
     /** Cache of available updates keyed by nodeId */
@@ -221,11 +224,13 @@ export class ControllerCommandHandler {
             timeSyncEnabled = false,
             threadDiagnosticsEnabled = false,
             customClusterPollInterval,
+            trustTestCertificates = false,
         } = options;
 
         this.#controller = controllerInstance;
 
         this.#bleEnabled = bleEnabled;
+        this.#trustTestCertificates = trustTestCertificates;
         this.#bleProxyEnabled = bleProxyEnabled;
         logger.info(`BLE is ${bleEnabled ? "enabled" : "disabled"}${bleProxyEnabled ? " (proxy mode)" : ""}`);
         this.#otaEnabled = otaEnabled;
@@ -1214,8 +1219,10 @@ export class ControllerCommandHandler {
                     let hardError = false;
                     for (const f of findings) {
                         if (f.type === DeviceAttestationCheck.TrustedAsTestCertificate) {
-                            testCertReason =
-                                'This device uses a test/development certificate. To commission it, enable the "Test DCL" option in the settings — only do this if you trust the vendor.';
+                            if (!this.#trustTestCertificates) {
+                                testCertReason =
+                                    'This device uses a test/development certificate. To commission it, enable the "Test DCL" option in the settings — only do this if you trust the vendor.';
+                            }
                         } else if (f.level === "error") {
                             hardError = true;
                         }
@@ -1225,7 +1232,11 @@ export class ControllerCommandHandler {
                         logger.notice(`Attestation rejected: ${testCertReason}`);
                         return testCertReason;
                     }
-                    logger.info(`Attestation ${hardError ? "rejected" : "accepted"}`);
+                    if (this.#trustTestCertificates && !hardError) {
+                        logger.notice("Attestation accepted (test certificate allowed)");
+                    } else if (!hardError) {
+                        logger.info("Attestation accepted");
+                    }
                     return !hardError;
                 },
             },

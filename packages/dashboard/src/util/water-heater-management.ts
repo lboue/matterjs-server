@@ -7,71 +7,69 @@
 import type { MatterClient } from "@matter-server/ws-client";
 import { toNumber } from "./attribute-shapes.js";
 
-export const WATER_HEATER_MANAGEMENT_CLUSTER_ID = 0x009d; // 157
+export const WATER_HEATER_MANAGEMENT_CLUSTER_ID = 0x0094; // 148
 
-const ATTR_HEATING_SET_POINT = 0x00;
-const ATTR_MAX_HEAT_SET_POINT = 0x01;
-const ATTR_MIN_HEAT_SET_POINT = 0x02;
-const ATTR_REHEAT_SET_POINT = 0x03;
-const ATTR_MAX_REHEAT_SET_POINT = 0x04;
-const ATTR_MIN_REHEAT_SET_POINT = 0x05;
-const ATTR_WATER_HEATER_MODE = 0x06;
-const ATTR_WATER_HEATER_STATE = 0x07;
+const ATTR_HEATER_TYPES = 0x00;
+const ATTR_HEAT_DEMAND = 0x01;
+const ATTR_TANK_VOLUME = 0x02;
+const ATTR_ESTIMATED_HEAT_REQUIRED = 0x03;
+const ATTR_TANK_PERCENTAGE = 0x04;
+const ATTR_BOOST_STATE = 0x05;
 const ATTR_FEATURE_MAP = 0xfffc;
 
-const MODE_NAMES: Record<number, string> = {
-    0: "Off",
-    1: "Heat pump only",
-    2: "Resistive heating",
-    3: "Heat pump and resistive",
+const HEATER_TYPE_NAMES: Record<number, string> = {
+    0: "Immersion Element 1",
+    1: "Immersion Element 2",
+    2: "Heat Pump",
+    3: "Boiler",
+    4: "Other",
 };
 
-const STATE_NAMES: Record<number, string> = {
-    0: "Idle",
-    1: "Heating",
-    2: "Boost active",
-    3: "Fault",
+const BOOST_STATE_NAMES: Record<number, string> = {
+    0: "Inactive",
+    1: "Active",
 };
 
-const FEATURE_BOOST = 1 << 0;
-const FEATURE_REHEAT = 1 << 1;
+const FEATURE_ENERGY_MANAGEMENT = 1 << 0;
+const FEATURE_TANK_PERCENT = 1 << 1;
 
 function attr(attributes: Record<string, unknown>, endpoint: number, attributeId: number): unknown {
     return attributes[`${endpoint}/${WATER_HEATER_MANAGEMENT_CLUSTER_ID}/${attributeId}`];
 }
 
-function celsiusFromMatterTemp(temp: number): number {
-    return temp / 100;
-}
-
-function matterTempFromCelsius(temp: number): number {
-    return Math.round(temp * 100);
+function heaterTypesToNames(bitmap: number): string[] {
+    const names: string[] = [];
+    for (let bit = 0; bit < 5; bit++) {
+        if ((bitmap & (1 << bit)) !== 0) {
+            names.push(HEATER_TYPE_NAMES[bit] ?? `Unknown (${bit})`);
+        }
+    }
+    return names;
 }
 
 export interface BoostInfoStruct {
-    duration?: number;
+    duration: number; // seconds
     oneShot?: boolean;
     emergencyBoost?: boolean;
-    temporarySetpoint?: number;
-    targetPercentage?: number;
-    targetReheat?: number;
+    temporarySetpoint?: number; // Celsius
+    targetPercentage?: number; // 0-100%
+    targetReheat?: number; // 0-100%
 }
 
 export interface WaterHeaterManagementInfo {
     supported: boolean;
-    heatingSetpointC?: number;
-    maxHeatingSetpointC?: number;
-    minHeatingSetpointC?: number;
-    reheatSetpointC?: number;
-    maxReheatSetpointC?: number;
-    minReheatSetpointC?: number;
-    mode?: string;
-    modeValue?: number;
-    state?: string;
-    stateValue?: number;
-    boostActive?: boolean;
-    supportsBoost?: boolean;
-    supportsReheat?: boolean;
+    heaterTypes?: string[]; // Names of active heater types
+    heaterTypesBitmap?: number;
+    heatDemandTypes?: string[]; // Currently demanding heat
+    heatDemandBitmap?: number;
+    tankPercentage?: number; // 0-100
+    boostState?: string; // "Inactive" or "Active"
+    boostStateValue?: number;
+    boostActive?: boolean; // Convenience flag: boostStateValue === 1
+    tankVolumeL?: number; // Liters (if EM feature supported)
+    estimatedHeatRequiredMwh?: number; // if EM feature supported
+    supportsEnergyManagement?: boolean;
+    supportsTankPercent?: boolean;
 }
 
 export function waterHeaterManagementInfo(
@@ -81,62 +79,51 @@ export function waterHeaterManagementInfo(
     const result: WaterHeaterManagementInfo = { supported: false };
     let hasAnyAttribute = false;
 
-    const heatingSetpoint = toNumber(attr(attributes, endpoint, ATTR_HEATING_SET_POINT));
-    if (heatingSetpoint !== undefined) {
+    const heaterTypes = toNumber(attr(attributes, endpoint, ATTR_HEATER_TYPES));
+    if (heaterTypes !== undefined) {
         hasAnyAttribute = true;
-        result.heatingSetpointC = celsiusFromMatterTemp(heatingSetpoint);
+        result.heaterTypesBitmap = heaterTypes;
+        result.heaterTypes = heaterTypesToNames(heaterTypes);
     }
 
-    const maxHeatingSetpoint = toNumber(attr(attributes, endpoint, ATTR_MAX_HEAT_SET_POINT));
-    if (maxHeatingSetpoint !== undefined) {
+    const heatDemand = toNumber(attr(attributes, endpoint, ATTR_HEAT_DEMAND));
+    if (heatDemand !== undefined) {
         hasAnyAttribute = true;
-        result.maxHeatingSetpointC = celsiusFromMatterTemp(maxHeatingSetpoint);
+        result.heatDemandBitmap = heatDemand;
+        result.heatDemandTypes = heaterTypesToNames(heatDemand);
     }
 
-    const minHeatingSetpoint = toNumber(attr(attributes, endpoint, ATTR_MIN_HEAT_SET_POINT));
-    if (minHeatingSetpoint !== undefined) {
+    const tankVolume = toNumber(attr(attributes, endpoint, ATTR_TANK_VOLUME));
+    if (tankVolume !== undefined) {
         hasAnyAttribute = true;
-        result.minHeatingSetpointC = celsiusFromMatterTemp(minHeatingSetpoint);
+        result.tankVolumeL = tankVolume; // Already in liters
     }
 
-    const reheatSetpoint = toNumber(attr(attributes, endpoint, ATTR_REHEAT_SET_POINT));
-    if (reheatSetpoint !== undefined) {
+    const estimatedHeatRequired = toNumber(attr(attributes, endpoint, ATTR_ESTIMATED_HEAT_REQUIRED));
+    if (estimatedHeatRequired !== undefined) {
         hasAnyAttribute = true;
-        result.reheatSetpointC = celsiusFromMatterTemp(reheatSetpoint);
+        result.estimatedHeatRequiredMwh = estimatedHeatRequired;
     }
 
-    const maxReheatSetpoint = toNumber(attr(attributes, endpoint, ATTR_MAX_REHEAT_SET_POINT));
-    if (maxReheatSetpoint !== undefined) {
+    const tankPercentage = toNumber(attr(attributes, endpoint, ATTR_TANK_PERCENTAGE));
+    if (tankPercentage !== undefined) {
         hasAnyAttribute = true;
-        result.maxReheatSetpointC = celsiusFromMatterTemp(maxReheatSetpoint);
+        result.tankPercentage = tankPercentage;
     }
 
-    const minReheatSetpoint = toNumber(attr(attributes, endpoint, ATTR_MIN_REHEAT_SET_POINT));
-    if (minReheatSetpoint !== undefined) {
+    const boostStateValue = toNumber(attr(attributes, endpoint, ATTR_BOOST_STATE));
+    if (boostStateValue !== undefined) {
         hasAnyAttribute = true;
-        result.minReheatSetpointC = celsiusFromMatterTemp(minReheatSetpoint);
-    }
-
-    const modeValue = toNumber(attr(attributes, endpoint, ATTR_WATER_HEATER_MODE));
-    if (modeValue !== undefined) {
-        hasAnyAttribute = true;
-        result.modeValue = modeValue;
-        result.mode = MODE_NAMES[modeValue] ?? `Unknown (${modeValue})`;
-    }
-
-    const stateValue = toNumber(attr(attributes, endpoint, ATTR_WATER_HEATER_STATE));
-    if (stateValue !== undefined) {
-        hasAnyAttribute = true;
-        result.stateValue = stateValue;
-        result.state = STATE_NAMES[stateValue] ?? `Unknown (${stateValue})`;
-        result.boostActive = stateValue === 2;
+        result.boostStateValue = boostStateValue;
+        result.boostState = BOOST_STATE_NAMES[boostStateValue] ?? `Unknown (${boostStateValue})`;
+        result.boostActive = boostStateValue === 1;
     }
 
     const featureMap = toNumber(attr(attributes, endpoint, ATTR_FEATURE_MAP));
     if (featureMap !== undefined) {
         hasAnyAttribute = true;
-        result.supportsBoost = (featureMap & FEATURE_BOOST) !== 0;
-        result.supportsReheat = (featureMap & FEATURE_REHEAT) !== 0;
+        result.supportsEnergyManagement = (featureMap & FEATURE_ENERGY_MANAGEMENT) !== 0;
+        result.supportsTankPercent = (featureMap & FEATURE_TANK_PERCENT) !== 0;
     }
 
     result.supported = hasAnyAttribute;
@@ -150,13 +137,30 @@ export async function startBoost(
     params: BoostInfoStruct,
 ): Promise<boolean> {
     try {
-        await client.deviceCommand(
-            nodeId,
-            endpoint,
-            WATER_HEATER_MANAGEMENT_CLUSTER_ID,
-            "StartBoost",
-            params as Record<string, unknown>,
-        );
+        const boostInfo: Record<string, unknown> = {
+            duration: params.duration,
+        };
+
+        if (params.oneShot !== undefined) {
+            boostInfo.oneShot = params.oneShot;
+        }
+        if (params.emergencyBoost !== undefined) {
+            boostInfo.emergencyBoost = params.emergencyBoost;
+        }
+        if (params.temporarySetpoint !== undefined) {
+            // Convert Celsius to Matter temperature (in 0.01°C units)
+            boostInfo.temporarySetpoint = Math.round(params.temporarySetpoint * 100);
+        }
+        if (params.targetPercentage !== undefined) {
+            boostInfo.targetPercentage = params.targetPercentage;
+        }
+        if (params.targetReheat !== undefined) {
+            boostInfo.targetReheat = params.targetReheat;
+        }
+
+        await client.deviceCommand(nodeId, endpoint, WATER_HEATER_MANAGEMENT_CLUSTER_ID, "Boost", {
+            boostInfo,
+        });
         return true;
     } catch (err) {
         console.error("Failed to start boost:", err);
@@ -164,30 +168,12 @@ export async function startBoost(
     }
 }
 
-export async function stopBoost(client: MatterClient, nodeId: number | bigint, endpoint: number): Promise<boolean> {
+export async function cancelBoost(client: MatterClient, nodeId: number | bigint, endpoint: number): Promise<boolean> {
     try {
-        await client.deviceCommand(nodeId, endpoint, WATER_HEATER_MANAGEMENT_CLUSTER_ID, "StopBoost");
+        await client.deviceCommand(nodeId, endpoint, WATER_HEATER_MANAGEMENT_CLUSTER_ID, "CancelBoost");
         return true;
     } catch (err) {
-        console.error("Failed to stop boost:", err);
-        return false;
-    }
-}
-
-export async function setHeatingSetpoint(
-    client: MatterClient,
-    nodeId: number | bigint,
-    endpoint: number,
-    temperatureCelsius: number,
-): Promise<boolean> {
-    try {
-        const matterTemp = matterTempFromCelsius(temperatureCelsius);
-        await client.deviceCommand(nodeId, endpoint, WATER_HEATER_MANAGEMENT_CLUSTER_ID, "SetHeatingSetpoint", {
-            heatingSetpoint: matterTemp,
-        });
-        return true;
-    } catch (err) {
-        console.error("Failed to set heating setpoint:", err);
+        console.error("Failed to cancel boost:", err);
         return false;
     }
 }

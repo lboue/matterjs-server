@@ -431,6 +431,7 @@ export class MatterController {
                 timeSyncEnabled: this.#enableTimeSync,
                 threadDiagnosticsEnabled: !this.#threadDiagnosticsDisabled,
                 customClusterPollInterval: this.#customClusterPollInterval,
+                trustTestCertificates: this.#enableTestNetDcl,
             });
 
             this.#commandHandler.events.started.once(async () => {

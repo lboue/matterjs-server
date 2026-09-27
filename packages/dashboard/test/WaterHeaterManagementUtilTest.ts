@@ -7,15 +7,11 @@
 import { waterHeaterManagementInfo } from "../src/util/water-heater-management.js";
 
 const BASE_ATTRS: Record<string, unknown> = {
-    "1/157/0": 5000, // HeatingSetpoint: 50°C (in 0.01°C)
-    "1/157/1": 6500, // MaxHeatingSetpoint: 65°C
-    "1/157/2": 2000, // MinHeatingSetpoint: 20°C
-    "1/157/3": 4500, // ReheatSetpoint: 45°C
-    "1/157/4": 6000, // MaxReheatSetpoint: 60°C
-    "1/157/5": 3000, // MinReheatSetpoint: 30°C
-    "1/157/6": 1, // Mode: Heat pump only
-    "1/157/7": 1, // State: Heating
-    "1/157/65532": 0b11, // FeatureMap: Boost (bit 0) + Reheat (bit 1)
+    "1/148/0": 0b0001, // HeaterTypes: Immersion Element 1
+    "1/148/1": 0b0000, // HeatDemand: None currently
+    "1/148/4": 85, // TankPercentage: 85%
+    "1/148/5": 0, // BoostState: Inactive
+    "1/148/65532": 0b11, // FeatureMap: EnergyManagement (bit 0) + TankPercent (bit 1)
 };
 
 describe("water heater management util", () => {
@@ -24,106 +20,92 @@ describe("water heater management util", () => {
         expect(info.supported).to.equal(false);
     });
 
-    it("decodes heating setpoint and temperature range", () => {
+    it("decodes heater types bitmap", () => {
         const info = waterHeaterManagementInfo(BASE_ATTRS, 1);
         expect(info.supported).to.equal(true);
-        expect(info.heatingSetpointC).to.equal(50);
-        expect(info.maxHeatingSetpointC).to.equal(65);
-        expect(info.minHeatingSetpointC).to.equal(20);
+        expect(info.heaterTypesBitmap).to.equal(0b0001);
+        expect(info.heaterTypes).to.deep.equal(["Immersion Element 1"]);
     });
 
-    it("decodes reheat setpoint and temperature range", () => {
+    it("decodes heat demand bitmap", () => {
         const info = waterHeaterManagementInfo(BASE_ATTRS, 1);
-        expect(info.reheatSetpointC).to.equal(45);
-        expect(info.maxReheatSetpointC).to.equal(60);
-        expect(info.minReheatSetpointC).to.equal(30);
+        expect(info.heatDemandBitmap).to.equal(0b0000);
+        expect(info.heatDemandTypes).to.deep.equal([]);
+
+        const withDemandAttrs = { ...BASE_ATTRS, "1/148/1": 0b0101 };
+        const demandInfo = waterHeaterManagementInfo(withDemandAttrs, 1);
+        expect(demandInfo.heatDemandTypes).to.deep.equal(["Immersion Element 1", "Heat Pump"]);
     });
 
-    it("decodes mode enum", () => {
+    it("decodes tank percentage", () => {
         const info = waterHeaterManagementInfo(BASE_ATTRS, 1);
-        expect(info.modeValue).to.equal(1);
-        expect(info.mode).to.equal("Heat pump only");
+        expect(info.tankPercentage).to.equal(85);
     });
 
-    it("handles unknown mode value", () => {
-        const attrs = { ...BASE_ATTRS, "1/157/6": 99 };
-        const info = waterHeaterManagementInfo(attrs, 1);
-        expect(info.mode).to.equal("Unknown (99)");
-    });
+    it("decodes boost state enum", () => {
+        const inactiveInfo = waterHeaterManagementInfo(BASE_ATTRS, 1);
+        expect(inactiveInfo.boostStateValue).to.equal(0);
+        expect(inactiveInfo.boostState).to.equal("Inactive");
+        expect(inactiveInfo.boostActive).to.equal(false);
 
-    it("decodes state enum and boost status", () => {
-        const info = waterHeaterManagementInfo(BASE_ATTRS, 1);
-        expect(info.stateValue).to.equal(1);
-        expect(info.state).to.equal("Heating");
-        expect(info.boostActive).to.equal(false);
-
-        const boostAttrs = { ...BASE_ATTRS, "1/157/7": 2 };
-        const boostInfo = waterHeaterManagementInfo(boostAttrs, 1);
-        expect(boostInfo.state).to.equal("Boost active");
-        expect(boostInfo.boostActive).to.equal(true);
+        const activeAttrs = { ...BASE_ATTRS, "1/148/5": 1 };
+        const activeInfo = waterHeaterManagementInfo(activeAttrs, 1);
+        expect(activeInfo.boostStateValue).to.equal(1);
+        expect(activeInfo.boostState).to.equal("Active");
+        expect(activeInfo.boostActive).to.equal(true);
     });
 
     it("detects supported features from FeatureMap", () => {
         const info = waterHeaterManagementInfo(BASE_ATTRS, 1);
-        expect(info.supportsBoost).to.equal(true);
-        expect(info.supportsReheat).to.equal(true);
+        expect(info.supportsEnergyManagement).to.equal(true);
+        expect(info.supportsTankPercent).to.equal(true);
 
-        const noFeaturesAttrs = { ...BASE_ATTRS, "1/157/65532": 0 };
+        const noFeaturesAttrs = { ...BASE_ATTRS, "1/148/65532": 0 };
         const noFeaturesInfo = waterHeaterManagementInfo(noFeaturesAttrs, 1);
-        expect(noFeaturesInfo.supportsBoost).to.equal(false);
-        expect(noFeaturesInfo.supportsReheat).to.equal(false);
+        expect(noFeaturesInfo.supportsEnergyManagement).to.equal(false);
+        expect(noFeaturesInfo.supportsTankPercent).to.equal(false);
     });
 
-    it("handles missing attributes gracefully", () => {
-        const sparseAttrs: Record<string, unknown> = {
-            "1/157/0": 5000, // Only heating setpoint
+    it("handles missing optional attributes gracefully", () => {
+        const minimalAttrs: Record<string, unknown> = {
+            "1/148/0": 0b0001, // Only heater types
         };
-        const info = waterHeaterManagementInfo(sparseAttrs, 1);
+        const info = waterHeaterManagementInfo(minimalAttrs, 1);
         expect(info.supported).to.equal(true);
-        expect(info.heatingSetpointC).to.equal(50);
-        expect(info.mode).to.equal(undefined);
-        expect(info.state).to.equal(undefined);
-        expect(info.supportsBoost).to.equal(undefined);
+        expect(info.heaterTypes).to.deep.equal(["Immersion Element 1"]);
+        expect(info.tankPercentage).to.equal(undefined);
+        expect(info.boostState).to.equal(undefined);
     });
 
-    it("handles all state values", () => {
-        const states = [
-            { value: 0, name: "Idle" },
-            { value: 1, name: "Heating" },
-            { value: 2, name: "Boost active" },
-            { value: 3, name: "Fault" },
+    it("handles all heater type bits", () => {
+        const heaterTypes = [
+            { value: 0b00001, name: "Immersion Element 1" },
+            { value: 0b00010, name: "Immersion Element 2" },
+            { value: 0b00100, name: "Heat Pump" },
+            { value: 0b01000, name: "Boiler" },
+            { value: 0b10000, name: "Other" },
         ];
 
-        states.forEach(({ value, name }) => {
-            const attrs = { ...BASE_ATTRS, "1/157/7": value };
+        heaterTypes.forEach(({ value, name }) => {
+            const attrs = { ...BASE_ATTRS, "1/148/0": value };
             const info = waterHeaterManagementInfo(attrs, 1);
-            expect(info.state).to.equal(name);
+            expect(info.heaterTypes).to.deep.equal([name]);
         });
     });
 
-    it("handles all mode values", () => {
-        const modes = [
-            { value: 0, name: "Off" },
-            { value: 1, name: "Heat pump only" },
-            { value: 2, name: "Resistive heating" },
-            { value: 3, name: "Heat pump and resistive" },
-        ];
-
-        modes.forEach(({ value, name }) => {
-            const attrs = { ...BASE_ATTRS, "1/157/6": value };
-            const info = waterHeaterManagementInfo(attrs, 1);
-            expect(info.mode).to.equal(name);
-        });
+    it("handles combined heater type bits", () => {
+        const attrs = { ...BASE_ATTRS, "1/148/0": 0b00101 }; // Immersion 1 + Heat Pump
+        const info = waterHeaterManagementInfo(attrs, 1);
+        expect(info.heaterTypes).to.deep.equal(["Immersion Element 1", "Heat Pump"]);
     });
 
     it("works with different endpoints", () => {
         const attrs2: Record<string, unknown> = {
-            "2/157/0": 4000, // Endpoint 2 instead of 1
-            "2/157/6": 1,
-            "2/157/7": 0,
+            "2/148/0": 0b0100, // Endpoint 2, Heat Pump
+            "2/148/5": 1, // Boost active
         };
         const info = waterHeaterManagementInfo(attrs2, 2);
-        expect(info.heatingSetpointC).to.equal(40);
-        expect(info.mode).to.equal("Heat pump only");
+        expect(info.heaterTypes).to.deep.equal(["Heat Pump"]);
+        expect(info.boostActive).to.equal(true);
     });
 });

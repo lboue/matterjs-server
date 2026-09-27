@@ -10,9 +10,8 @@ import { css, html, nothing, type CSSResultGroup, type TemplateResult } from "li
 import { customElement, state } from "lit/decorators.js";
 import { live } from "lit/directives/live.js";
 import {
-    setHeatingSetpoint,
+    cancelBoost,
     startBoost,
-    stopBoost,
     waterHeaterManagementInfo,
     WATER_HEATER_MANAGEMENT_CLUSTER_ID,
     type BoostInfoStruct,
@@ -24,14 +23,13 @@ import { registerClusterCommands } from "../registry.js";
 @customElement("water-heater-management-cluster-commands")
 export class WaterHeaterManagementClusterCommands extends BaseClusterCommands {
     @state() private _info?: WaterHeaterManagementInfo;
-    @state() private _tempInput = "";
     @state() private _boostDuration = 3600;
     @state() private _boostDurationInput = "3600";
     @state() private _boostEmergency = false;
     @state() private _boostOneShot = false;
     @state() private _boostTemporarySetpoint = "";
-    @state() private _isBosting = false;
-    @state() private _isSetting = false;
+    @state() private _boostTargetPercentage = "";
+    @state() private _isBootsting = false;
 
     override willUpdate(changedProperties: Map<string, unknown>) {
         super.willUpdate(changedProperties);
@@ -57,32 +55,27 @@ export class WaterHeaterManagementClusterCommands extends BaseClusterCommands {
             <details class="command-panel" open>
                 <summary>Water Heater Management</summary>
                 <div class="command-content">
-                    ${this._renderStatus()} ${this._info.supportsBoost ? this._renderBoost() : nothing}
-                    ${this._renderControls()}
+                    ${this._renderStatus()} ${this._renderBoost()} ${this._renderControls()}
                 </div>
             </details>
         `;
     }
 
     private _renderStatus(): TemplateResult {
-        const { heatingSetpointC, maxHeatingSetpointC, minHeatingSetpointC, mode, state, boostActive } = this._info!;
+        const { heaterTypes, heatDemandTypes, tankPercentage, boostState, boostActive } = this._info!;
 
         return html`
             <div class="status-section">
                 <h4>Status</h4>
                 <dl>
-                    <dt>Mode:</dt>
-                    <dd>${mode ?? "—"}</dd>
-                    <dt>State:</dt>
-                    <dd>${state ?? "—"} ${boostActive ? html`<span class="badge">Boost Active</span>` : nothing}</dd>
-                    <dt>Current Temperature:</dt>
-                    <dd>${heatingSetpointC !== undefined ? `${heatingSetpointC.toFixed(1)}°C` : "—"}</dd>
-                    ${
-                        minHeatingSetpointC !== undefined && maxHeatingSetpointC !== undefined
-                            ? html`<dt>Range:</dt>
-                                  <dd>${minHeatingSetpointC.toFixed(1)}°C – ${maxHeatingSetpointC.toFixed(1)}°C</dd>`
-                            : nothing
-                    }
+                    <dt>Heater Types:</dt>
+                    <dd>${heaterTypes?.length ? heaterTypes.join(", ") : "—"}</dd>
+                    <dt>Heat Demand:</dt>
+                    <dd>${heatDemandTypes?.length ? heatDemandTypes.join(", ") : "None"}</dd>
+                    <dt>Tank Level:</dt>
+                    <dd>${tankPercentage !== undefined ? `${tankPercentage}%` : "—"}</dd>
+                    <dt>Boost State:</dt>
+                    <dd>${boostState ?? "—"} ${boostActive ? html`<span class="badge">Active</span>` : nothing}</dd>
                 </dl>
             </div>
         `;
@@ -91,13 +84,13 @@ export class WaterHeaterManagementClusterCommands extends BaseClusterCommands {
     private _renderBoost(): TemplateResult {
         return html`
             <div class="boost-section">
-                <h4>Boost Mode</h4>
+                <h4>Boost Control</h4>
                 ${
                     this._info!.boostActive
                         ? html`
                               <p class="boost-active">Boost is currently active</p>
-                              <md-outlined-button @click=${() => this._handleStopBoost()}>
-                                  Stop Boost
+                              <md-outlined-button @click=${() => this._handleCancelBoost()}>
+                                  Cancel Boost
                               </md-outlined-button>
                           `
                         : html`
@@ -127,7 +120,7 @@ export class WaterHeaterManagementClusterCommands extends BaseClusterCommands {
                                                   this._boostOneShot = (e.target as HTMLInputElement).checked;
                                               }}
                                           />
-                                          One Shot (disable after boost)
+                                          One Shot
                                       </label>
                                   </div>
 
@@ -154,15 +147,31 @@ export class WaterHeaterManagementClusterCommands extends BaseClusterCommands {
                                           @change=${(e: Event) => {
                                               this._boostTemporarySetpoint = (e.target as HTMLInputElement).value;
                                           }}
-                                          placeholder="Leave empty for no temporary setpoint"
+                                          placeholder="Optional"
+                                      />
+                                  </div>
+
+                                  <div class="form-group">
+                                      <label for="boost-target">Target Tank % (optional)</label>
+                                      <input
+                                          id="boost-target"
+                                          type="number"
+                                          min="0"
+                                          max="100"
+                                          step="1"
+                                          .value=${live(this._boostTargetPercentage)}
+                                          @change=${(e: Event) => {
+                                              this._boostTargetPercentage = (e.target as HTMLInputElement).value;
+                                          }}
+                                          placeholder="Optional"
                                       />
                                   </div>
 
                                   <md-filled-button
-                                      ?disabled=${this._isBosting}
+                                      ?disabled=${this._isBootsting}
                                       @click=${() => this._handleStartBoost()}
                                   >
-                                      ${this._isBosting ? "Starting..." : "Start Boost"}
+                                      ${this._isBootsting ? "Starting..." : "Start Boost"}
                                   </md-filled-button>
                               </div>
                           `
@@ -171,87 +180,71 @@ export class WaterHeaterManagementClusterCommands extends BaseClusterCommands {
         `;
     }
 
-    private _renderControls(): TemplateResult {
-        const { heatingSetpointC, minHeatingSetpointC, maxHeatingSetpointC } = this._info!;
+    private _renderControls(): TemplateResult | typeof nothing {
+        const { supportsEnergyManagement, tankVolumeL, estimatedHeatRequiredMwh } = this._info!;
+
+        if (!supportsEnergyManagement) {
+            return nothing;
+        }
 
         return html`
             <div class="controls-section">
-                <h4>Set Temperature</h4>
-                <div class="temperature-control">
-                    <input
-                        type="number"
-                        step="0.5"
-                        .value=${live(this._tempInput || heatingSetpointC?.toFixed(1) || "")}
-                        @change=${(e: Event) => {
-                            this._tempInput = (e.target as HTMLInputElement).value;
-                        }}
-                        ?disabled=${this._isSetting}
-                        ${minHeatingSetpointC !== undefined ? `min="${minHeatingSetpointC}"` : ""}
-                        ${maxHeatingSetpointC !== undefined ? `max="${maxHeatingSetpointC}"` : ""}
-                    />
-                    <span class="unit">°C</span>
-                    <md-outlined-button
-                        ?disabled=${this._isSetting || !this._tempInput}
-                        @click=${() => this._handleSetTemperature()}
-                    >
-                        ${this._isSetting ? "Setting..." : "Set"}
-                    </md-outlined-button>
-                </div>
-                ${
-                    minHeatingSetpointC !== undefined && maxHeatingSetpointC !== undefined
-                        ? html`<p class="hint">
-                              Range: ${minHeatingSetpointC.toFixed(1)}°C – ${maxHeatingSetpointC.toFixed(1)}°C
-                          </p>`
-                        : nothing
-                }
+                <h4>Energy Management</h4>
+                <dl>
+                    ${
+                        tankVolumeL !== undefined
+                            ? html`<dt>Tank Volume:</dt>
+                                  <dd>${tankVolumeL} L</dd>`
+                            : nothing
+                    }
+                    ${
+                        estimatedHeatRequiredMwh !== undefined
+                            ? html`<dt>Estimated Heat Required:</dt>
+                                  <dd>${estimatedHeatRequiredMwh} MWh</dd>`
+                            : nothing
+                    }
+                </dl>
             </div>
         `;
     }
 
     private async _handleStartBoost() {
         if (!this.node) return;
-        this._isBosting = true;
+        this._isBootsting = true;
 
         const params: BoostInfoStruct = {
             duration: this._boostDuration,
-            oneShot: this._boostOneShot,
-            emergencyBoost: this._boostEmergency,
         };
 
+        if (this._boostOneShot) {
+            params.oneShot = this._boostOneShot;
+        }
+        if (this._boostEmergency) {
+            params.emergencyBoost = this._boostEmergency;
+        }
         if (this._boostTemporarySetpoint) {
-            params.temporarySetpoint = Math.round(parseFloat(this._boostTemporarySetpoint) * 100);
+            params.temporarySetpoint = parseFloat(this._boostTemporarySetpoint);
+        }
+        if (this._boostTargetPercentage) {
+            params.targetPercentage = parseFloat(this._boostTargetPercentage);
         }
 
         const success = await startBoost(this.client, this.node.node_id, this.endpoint, params);
 
-        this._isBosting = false;
+        this._isBootsting = false;
         if (success) {
             this._loadInfo();
         }
     }
 
-    private async _handleStopBoost() {
+    private async _handleCancelBoost() {
         if (!this.node) return;
-        this._isBosting = true;
+        this._isBootsting = true;
 
-        const success = await stopBoost(this.client, this.node.node_id, this.endpoint);
+        const success = await cancelBoost(this.client, this.node.node_id, this.endpoint);
 
-        this._isBosting = false;
+        this._isBootsting = false;
         if (success) {
-            this._loadInfo();
-        }
-    }
-
-    private async _handleSetTemperature() {
-        if (!this.node || !this._tempInput) return;
-        this._isSetting = true;
-
-        const temp = parseFloat(this._tempInput);
-        const success = await setHeatingSetpoint(this.client, this.node.node_id, this.endpoint, temp);
-
-        this._isSetting = false;
-        if (success) {
-            this._tempInput = "";
             this._loadInfo();
         }
     }
