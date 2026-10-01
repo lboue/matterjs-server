@@ -24,10 +24,8 @@ const OPERATIONAL_ERROR_ATTR = 5;
 @customElement("rvc-operational-state-cluster-commands")
 class RvcOperationalStateClusterCommands extends BaseClusterCommands {
     override render() {
-        const operationalStateRaw =
-            this.node?.attributes[`${this.endpoint}/${CLUSTER_ID}/${OPERATIONAL_STATE_ATTR}`];
-        const operationalErrorRaw =
-            this.node?.attributes[`${this.endpoint}/${CLUSTER_ID}/${OPERATIONAL_ERROR_ATTR}`];
+        const operationalStateRaw = this.node?.attributes[`${this.endpoint}/${CLUSTER_ID}/${OPERATIONAL_STATE_ATTR}`];
+        const operationalErrorRaw = this.node?.attributes[`${this.endpoint}/${CLUSTER_ID}/${OPERATIONAL_ERROR_ATTR}`];
 
         const operationalState = this._formatOperationalState(operationalStateRaw);
         const operationalError = this._formatOperationalError(operationalErrorRaw);
@@ -44,9 +42,7 @@ class RvcOperationalStateClusterCommands extends BaseClusterCommands {
                         <md-outlined-button @click=${handleAsync(() => this._handlePause())}>
                             Pause
                         </md-outlined-button>
-                        <md-outlined-button @click=${handleAsync(() => this._handleStop())}>
-                            Stop
-                        </md-outlined-button>
+                        <md-outlined-button @click=${handleAsync(() => this._handleStop())}> Stop </md-outlined-button>
                         <md-outlined-button @click=${handleAsync(() => this._handleResume())}>
                             Resume
                         </md-outlined-button>
@@ -147,9 +143,7 @@ class RvcOperationalStateClusterCommands extends BaseClusterCommands {
     }
 
     static override styles: CSSResultGroup = [
-        ...(Array.isArray(BaseClusterCommands.styles)
-            ? BaseClusterCommands.styles
-            : [BaseClusterCommands.styles]),
+        ...(Array.isArray(BaseClusterCommands.styles) ? BaseClusterCommands.styles : [BaseClusterCommands.styles]),
         css`
             .state-info {
                 display: flex;
