@@ -25,6 +25,10 @@ export enum OperationalState {
     SeekingCharger = 64,
     Charging = 65,
     Docked = 66,
+    EmptyingDustBin = 67,
+    CleaningMop = 68,
+    FillingWaterTank = 69,
+    UpdatingMaps = 70,
 }
 
 const OPERATIONAL_STATE_NAMES: Record<number, string> = {
@@ -35,6 +39,10 @@ const OPERATIONAL_STATE_NAMES: Record<number, string> = {
     [OperationalState.SeekingCharger]: "Seeking Charger",
     [OperationalState.Charging]: "Charging",
     [OperationalState.Docked]: "Docked",
+    [OperationalState.EmptyingDustBin]: "Emptying Dust Bin",
+    [OperationalState.CleaningMop]: "Cleaning Mop",
+    [OperationalState.FillingWaterTank]: "Filling Water Tank",
+    [OperationalState.UpdatingMaps]: "Updating Maps",
 };
 
 /** ErrorStateEnum, including the RVC-specific errors (spec § 7.4.4.2). */
