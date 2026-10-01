@@ -4,31 +4,60 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import "@material/web/button/filled-button";
 import "@material/web/button/outlined-button";
 import { css, type CSSResultGroup, html, nothing } from "lit";
-import { customElement } from "lit/decorators.js";
+import { customElement, state } from "lit/decorators.js";
 import { handleAsync } from "../../../util/async-handler.js";
+import { errorText } from "../../../util/error-text.js";
+import {
+    decodeOperationalCommandResponse,
+    decodeOperationalError,
+    describeOperationalState,
+    OPERATIONAL_ERROR_ATTR,
+    OPERATIONAL_STATE_ATTR,
+    RVC_OPERATIONAL_STATE_CLUSTER_ID,
+} from "../../../util/rvc-operational-state.js";
 import { BaseClusterCommands } from "../base-cluster-commands.js";
 import { registerClusterCommands } from "../registry.js";
 
-const CLUSTER_ID = 97; // RvcOperationalState cluster
-const OPERATIONAL_STATE_ATTR = 4;
-const OPERATIONAL_ERROR_ATTR = 5;
+const CLUSTER_ID = RVC_OPERATIONAL_STATE_CLUSTER_ID;
 
 /**
  * Command panel for RvcOperationalState cluster (ID: 97).
- * Provides Start, Pause, Stop, Resume, and GoHome commands.
- * Displays current operational state and error status.
+ * Exposes the cluster's Pause, Resume, and GoHome commands (Start/Stop belong to the base
+ * OperationalState cluster and are not part of the RVC derivation) and displays the current
+ * operational state and error status.
  */
 @customElement("rvc-operational-state-cluster-commands")
 class RvcOperationalStateClusterCommands extends BaseClusterCommands {
-    override render() {
-        const operationalStateRaw = this.node?.attributes[`${this.endpoint}/${CLUSTER_ID}/${OPERATIONAL_STATE_ATTR}`];
-        const operationalErrorRaw = this.node?.attributes[`${this.endpoint}/${CLUSTER_ID}/${OPERATIONAL_ERROR_ATTR}`];
+    @state() private _busy = false;
+    @state() private _result?: { command: string; label: string; isError: boolean; details?: string };
+    @state() private _error?: string;
+    private _formContext?: string;
+    private _invokeGeneration = 0;
 
-        const operationalState = this._formatOperationalState(operationalStateRaw);
-        const operationalError = this._formatOperationalError(operationalErrorRaw);
+    override willUpdate(changedProperties: Map<string, unknown>) {
+        super.willUpdate(changedProperties);
+        if (!this.node) return;
+        const context = `${String(this.node.node_id)}/${this.endpoint}/${this.cluster}`;
+        if (this._formContext !== undefined && this._formContext !== context) {
+            this._result = undefined;
+            this._error = undefined;
+            this._busy = false;
+            this._invokeGeneration++;
+        }
+        this._formContext = context;
+    }
+
+    override render() {
+        const operationalState = describeOperationalState(
+            this.node?.attributes[`${this.endpoint}/${CLUSTER_ID}/${OPERATIONAL_STATE_ATTR}`],
+        );
+        const operationalError = decodeOperationalError(
+            this.node?.attributes[`${this.endpoint}/${CLUSTER_ID}/${OPERATIONAL_ERROR_ATTR}`],
+        );
+
+        const disabled = this._busy || !this.node?.available;
 
         return html`
             <details class="command-panel">
@@ -36,26 +65,39 @@ class RvcOperationalStateClusterCommands extends BaseClusterCommands {
                 <div class="command-content">
                     ${this._renderStateInfo(operationalState, operationalError)}
                     <div class="command-row">
-                        <md-outlined-button @click=${handleAsync(() => this._handleStart())}>
-                            Start
-                        </md-outlined-button>
-                        <md-outlined-button @click=${handleAsync(() => this._handlePause())}>
+                        <md-outlined-button ?disabled=${disabled} @click=${handleAsync(() => this._invoke("Pause"))}>
                             Pause
                         </md-outlined-button>
-                        <md-outlined-button @click=${handleAsync(() => this._handleStop())}> Stop </md-outlined-button>
-                        <md-outlined-button @click=${handleAsync(() => this._handleResume())}>
+                        <md-outlined-button ?disabled=${disabled} @click=${handleAsync(() => this._invoke("Resume"))}>
                             Resume
                         </md-outlined-button>
-                        <md-outlined-button @click=${handleAsync(() => this._handleGoHome())}>
+                        <md-outlined-button ?disabled=${disabled} @click=${handleAsync(() => this._invoke("GoHome"))}>
                             Go Home
                         </md-outlined-button>
                     </div>
+                    ${
+                        this._result
+                            ? html`<div
+                                  class="result ${this._result.isError ? "result-error" : ""}"
+                                  role=${this._result.isError ? "alert" : "status"}
+                              >
+                                  ${this._result.command} →
+                                  ${this._result.label}${
+                                      this._result.details ? html`: ${this._result.details}` : nothing
+                                  }
+                              </div>`
+                            : nothing
+                    }
+                    ${this._error ? html`<div class="result result-error" role="alert">${this._error}</div>` : nothing}
                 </div>
             </details>
         `;
     }
 
-    private _renderStateInfo(operationalState: string | null, operationalError: string | null) {
+    private _renderStateInfo(
+        operationalState: string | null,
+        operationalError: ReturnType<typeof decodeOperationalError>,
+    ) {
         if (!operationalState && !operationalError) return nothing;
 
         return html`
@@ -73,9 +115,13 @@ class RvcOperationalStateClusterCommands extends BaseClusterCommands {
                 ${
                     operationalError
                         ? html`
-                              <div class="state-item error">
+                              <div class="state-item ${operationalError.isError ? "error" : ""}">
                                   <span class="label">Error:</span>
-                                  <span class="value">${operationalError}</span>
+                                  <span class="value"
+                                      >${operationalError.label}${
+                                          operationalError.details ? html` (${operationalError.details})` : nothing
+                                      }</span
+                                  >
                               </div>
                           `
                         : nothing
@@ -84,62 +130,26 @@ class RvcOperationalStateClusterCommands extends BaseClusterCommands {
         `;
     }
 
-    private _formatOperationalState(value: unknown): string | null {
-        if (value === undefined || value === null) return null;
-
-        const stateMap: Record<number, string> = {
-            0: "Stopped",
-            1: "Running",
-            2: "Paused",
-            3: "Error",
-            4: "Remote Control",
-            5: "Charging",
-        };
-
-        if (typeof value === "number") {
-            return stateMap[value] ?? `Unknown (${value})`;
+    private async _invoke(command: string) {
+        const node = this.node;
+        const endpoint = this.endpoint;
+        const generation = ++this._invokeGeneration;
+        const isCurrent = () => this._invokeGeneration === generation && this.isSameContext(node, endpoint);
+        this._busy = true;
+        this._error = undefined;
+        this._result = undefined;
+        try {
+            const response = await this.client.deviceCommand(node.node_id, endpoint, CLUSTER_ID, command, {});
+            if (!isCurrent()) return;
+            const outcome = decodeOperationalCommandResponse(response);
+            this._result = outcome
+                ? { command, label: outcome.label, isError: outcome.isError, details: outcome.details }
+                : { command, label: "Sent", isError: false };
+        } catch (err) {
+            if (isCurrent()) this._error = `${command}: ${errorText(err)}`;
+        } finally {
+            if (isCurrent()) this._busy = false;
         }
-        return null;
-    }
-
-    private _formatOperationalError(value: unknown): string | null {
-        if (value === undefined || value === null) return null;
-
-        if (typeof value === "object" && value !== null) {
-            const errorObj = value as Record<string, unknown>;
-            const state = errorObj.state ?? errorObj.operationalError ?? 0;
-
-            const errorStateMap: Record<number, string> = {
-                0: "No Error",
-                1: "Unable to Start",
-                2: "Unable to Stop",
-                3: "Unable to Pause",
-                4: "Unable to Resume",
-            };
-
-            return errorStateMap[state as number] ?? `Unknown (${state})`;
-        }
-        return null;
-    }
-
-    private async _handleStart() {
-        await this.sendCommand("Start");
-    }
-
-    private async _handlePause() {
-        await this.sendCommand("Pause");
-    }
-
-    private async _handleStop() {
-        await this.sendCommand("Stop");
-    }
-
-    private async _handleResume() {
-        await this.sendCommand("Resume");
-    }
-
-    private async _handleGoHome() {
-        await this.sendCommand("GoHome");
     }
 
     static override styles: CSSResultGroup = [
@@ -187,11 +197,25 @@ class RvcOperationalStateClusterCommands extends BaseClusterCommands {
                 background-color: color-mix(in srgb, var(--md-sys-color-error) 12%, transparent);
                 color: var(--md-sys-color-error);
             }
+
+            .result {
+                margin-top: 8px;
+                padding: 8px 10px;
+                border-radius: 6px;
+                background: color-mix(in srgb, var(--success-color) 18%, transparent);
+                color: var(--success-color);
+                border: 1px solid color-mix(in srgb, var(--success-color) 40%, transparent);
+            }
+
+            .result-error {
+                background: var(--md-sys-color-error-container);
+                color: var(--md-sys-color-on-error-container);
+                border: none;
+            }
         `,
     ];
 }
 
-// Register this component for cluster ID 97
 registerClusterCommands(CLUSTER_ID, "rvc-operational-state-cluster-commands");
 
 declare global {

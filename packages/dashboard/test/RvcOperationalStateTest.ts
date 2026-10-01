@@ -4,286 +4,108 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-describe("RVC Operational State Cluster", () => {
-    describe("Operational State Enum", () => {
-        it("maps state value 0 to 'Stopped'", () => {
-            const stateMap: Record<number, string> = {
-                0: "Stopped",
-                1: "Running",
-                2: "Paused",
-                3: "Error",
-                4: "Remote Control",
-                5: "Charging",
-            };
-            expect(stateMap[0]).to.equal("Stopped");
+import {
+    decodeOperationalCommandResponse,
+    decodeOperationalError,
+    describeOperationalState,
+    ErrorState,
+    errorStateLabel,
+    OperationalState,
+    operationalStateLabel,
+} from "../src/util/rvc-operational-state.js";
+
+describe("RVC Operational State", () => {
+    describe("describeOperationalState", () => {
+        it("maps the base and RVC-specific states to their spec labels", () => {
+            expect(describeOperationalState(OperationalState.Stopped)).to.equal("Stopped");
+            expect(describeOperationalState(OperationalState.Running)).to.equal("Running");
+            expect(describeOperationalState(OperationalState.Paused)).to.equal("Paused");
+            expect(describeOperationalState(OperationalState.Error)).to.equal("Error");
+            expect(describeOperationalState(OperationalState.SeekingCharger)).to.equal("Seeking Charger");
+            expect(describeOperationalState(OperationalState.Charging)).to.equal("Charging");
+            expect(describeOperationalState(OperationalState.Docked)).to.equal("Docked");
         });
 
-        it("maps state value 1 to 'Running'", () => {
-            const stateMap: Record<number, string> = {
-                0: "Stopped",
-                1: "Running",
-                2: "Paused",
-                3: "Error",
-                4: "Remote Control",
-                5: "Charging",
-            };
-            expect(stateMap[1]).to.equal("Running");
+        it("uses the RVC enum values 64/65/66 for the charging states", () => {
+            expect(operationalStateLabel(64)).to.equal("Seeking Charger");
+            expect(operationalStateLabel(65)).to.equal("Charging");
+            expect(operationalStateLabel(66)).to.equal("Docked");
         });
 
-        it("maps state value 2 to 'Paused'", () => {
-            const stateMap: Record<number, string> = {
-                0: "Stopped",
-                1: "Running",
-                2: "Paused",
-                3: "Error",
-                4: "Remote Control",
-                5: "Charging",
-            };
-            expect(stateMap[2]).to.equal("Paused");
+        it("returns null for an absent attribute", () => {
+            expect(describeOperationalState(undefined)).to.be.null;
+            expect(describeOperationalState(null)).to.be.null;
         });
 
-        it("maps state value 3 to 'Error'", () => {
-            const stateMap: Record<number, string> = {
-                0: "Stopped",
-                1: "Running",
-                2: "Paused",
-                3: "Error",
-                4: "Remote Control",
-                5: "Charging",
-            };
-            expect(stateMap[3]).to.equal("Error");
-        });
-
-        it("maps state value 4 to 'Remote Control'", () => {
-            const stateMap: Record<number, string> = {
-                0: "Stopped",
-                1: "Running",
-                2: "Paused",
-                3: "Error",
-                4: "Remote Control",
-                5: "Charging",
-            };
-            expect(stateMap[4]).to.equal("Remote Control");
-        });
-
-        it("maps state value 5 to 'Charging'", () => {
-            const stateMap: Record<number, string> = {
-                0: "Stopped",
-                1: "Running",
-                2: "Paused",
-                3: "Error",
-                4: "Remote Control",
-                5: "Charging",
-            };
-            expect(stateMap[5]).to.equal("Charging");
+        it("labels unknown numeric states instead of dropping them", () => {
+            expect(describeOperationalState(99)).to.equal("Unknown (99)");
         });
     });
 
-    describe("Error State Enum", () => {
-        it("maps error state 0 to 'No Error'", () => {
-            const errorStateMap: Record<number, string> = {
-                0: "No Error",
-                1: "Unable to Start",
-                2: "Unable to Stop",
-                3: "Unable to Pause",
-                4: "Unable to Resume",
-            };
-            expect(errorStateMap[0]).to.equal("No Error");
+    describe("errorStateLabel", () => {
+        it("maps the spec error ids to their labels", () => {
+            expect(errorStateLabel(ErrorState.NoError)).to.equal("No Error");
+            expect(errorStateLabel(ErrorState.UnableToStartOrResume)).to.equal("Unable to Start or Resume");
+            expect(errorStateLabel(ErrorState.UnableToCompleteOperation)).to.equal("Unable to Complete Operation");
+            expect(errorStateLabel(ErrorState.CommandInvalidInState)).to.equal("Command Invalid in Current State");
+            expect(errorStateLabel(ErrorState.Stuck)).to.equal("Stuck");
+            expect(errorStateLabel(ErrorState.DustBinFull)).to.equal("Dust Bin Full");
         });
 
-        it("maps error state 1 to 'Unable to Start'", () => {
-            const errorStateMap: Record<number, string> = {
-                0: "No Error",
-                1: "Unable to Start",
-                2: "Unable to Stop",
-                3: "Unable to Pause",
-                4: "Unable to Resume",
-            };
-            expect(errorStateMap[1]).to.equal("Unable to Start");
-        });
-
-        it("maps error state 2 to 'Unable to Stop'", () => {
-            const errorStateMap: Record<number, string> = {
-                0: "No Error",
-                1: "Unable to Start",
-                2: "Unable to Stop",
-                3: "Unable to Pause",
-                4: "Unable to Resume",
-            };
-            expect(errorStateMap[2]).to.equal("Unable to Stop");
-        });
-
-        it("maps error state 3 to 'Unable to Pause'", () => {
-            const errorStateMap: Record<number, string> = {
-                0: "No Error",
-                1: "Unable to Start",
-                2: "Unable to Stop",
-                3: "Unable to Pause",
-                4: "Unable to Resume",
-            };
-            expect(errorStateMap[3]).to.equal("Unable to Pause");
-        });
-
-        it("maps error state 4 to 'Unable to Resume'", () => {
-            const errorStateMap: Record<number, string> = {
-                0: "No Error",
-                1: "Unable to Start",
-                2: "Unable to Stop",
-                3: "Unable to Pause",
-                4: "Unable to Resume",
-            };
-            expect(errorStateMap[4]).to.equal("Unable to Resume");
+        it("labels unknown error ids", () => {
+            expect(errorStateLabel(200)).to.equal("Unknown (200)");
         });
     });
 
-    describe("Cluster Registration", () => {
-        it("registers RvcOperationalState cluster with ID 97", () => {
-            const CLUSTER_ID = 97;
-            const TAG_NAME = "rvc-operational-state-cluster-commands";
-
-            expect(CLUSTER_ID).to.equal(97);
-            expect(TAG_NAME).to.equal("rvc-operational-state-cluster-commands");
+    describe("decodeOperationalError", () => {
+        it("reads the ErrorStateStruct from its field-tag-keyed wire shape", () => {
+            const decoded = decodeOperationalError({ "0": ErrorState.Stuck, "2": "left wheel blocked" });
+            expect(decoded).to.not.be.null;
+            expect(decoded?.errorStateId).to.equal(ErrorState.Stuck);
+            expect(decoded?.isError).to.be.true;
+            expect(decoded?.label).to.equal("Stuck");
+            expect(decoded?.details).to.equal("left wheel blocked");
         });
 
-        it("has correct attribute IDs", () => {
-            const OPERATIONAL_STATE_ATTR = 4;
-            const OPERATIONAL_ERROR_ATTR = 5;
-
-            expect(OPERATIONAL_STATE_ATTR).to.equal(4);
-            expect(OPERATIONAL_ERROR_ATTR).to.equal(5);
-        });
-    });
-
-    describe("Commands", () => {
-        it("has Start command (ID 2)", () => {
-            const commands = {
-                Start: 2,
-                Pause: 0,
-                Stop: 1,
-                Resume: 3,
-                GoHome: 128,
-            };
-            expect(commands.Start).to.equal(2);
+        it("does not flag NoError as an error", () => {
+            const decoded = decodeOperationalError({ "0": ErrorState.NoError });
+            expect(decoded?.errorStateId).to.equal(0);
+            expect(decoded?.isError).to.be.false;
+            expect(decoded?.label).to.equal("No Error");
         });
 
-        it("has Pause command (ID 0)", () => {
-            const commands = {
-                Start: 2,
-                Pause: 0,
-                Stop: 1,
-                Resume: 3,
-                GoHome: 128,
-            };
-            expect(commands.Pause).to.equal(0);
-        });
-
-        it("has Stop command (ID 1)", () => {
-            const commands = {
-                Start: 2,
-                Pause: 0,
-                Stop: 1,
-                Resume: 3,
-                GoHome: 128,
-            };
-            expect(commands.Stop).to.equal(1);
-        });
-
-        it("has Resume command (ID 3)", () => {
-            const commands = {
-                Start: 2,
-                Pause: 0,
-                Stop: 1,
-                Resume: 3,
-                GoHome: 128,
-            };
-            expect(commands.Resume).to.equal(3);
-        });
-
-        it("has GoHome command (ID 128)", () => {
-            const commands = {
-                Start: 2,
-                Pause: 0,
-                Stop: 1,
-                Resume: 3,
-                GoHome: 128,
-            };
-            expect(commands.GoHome).to.equal(128);
+        it("returns null when the attribute is absent or malformed", () => {
+            expect(decodeOperationalError(undefined)).to.be.null;
+            expect(decodeOperationalError(null)).to.be.null;
+            expect(decodeOperationalError({})).to.be.null;
         });
     });
 
-    describe("Attribute Formatting", () => {
-        const formatOperationalState = (value: unknown): string | null => {
-            if (value === undefined || value === null) return null;
-
-            const stateMap: Record<number, string> = {
-                0: "Stopped",
-                1: "Running",
-                2: "Paused",
-                3: "Error",
-                4: "Remote Control",
-                5: "Charging",
-            };
-
-            if (typeof value === "number") {
-                return stateMap[value] ?? `Unknown (${value})`;
-            }
-            return null;
-        };
-
-        const formatOperationalError = (value: unknown): string | null => {
-            if (value === undefined || value === null) return null;
-
-            if (typeof value === "object" && value !== null) {
-                const errorObj = value as Record<string, unknown>;
-                const state = errorObj.state ?? errorObj.operationalError ?? 0;
-
-                const errorStateMap: Record<number, string> = {
-                    0: "No Error",
-                    1: "Unable to Start",
-                    2: "Unable to Stop",
-                    3: "Unable to Pause",
-                    4: "Unable to Resume",
-                };
-
-                return errorStateMap[state as number] ?? `Unknown (${state})`;
-            }
-            return null;
-        };
-
-        it("formats operational state value as string", () => {
-            expect(formatOperationalState(0)).to.equal("Stopped");
-            expect(formatOperationalState(1)).to.equal("Running");
-            expect(formatOperationalState(2)).to.equal("Paused");
+    describe("decodeOperationalCommandResponse", () => {
+        it("reports success when commandResponseState is NoError", () => {
+            const outcome = decodeOperationalCommandResponse({
+                commandResponseState: { errorStateId: ErrorState.NoError },
+            });
+            expect(outcome?.isError).to.be.false;
+            expect(outcome?.label).to.equal("No Error");
         });
 
-        it("returns null for undefined operational state", () => {
-            expect(formatOperationalState(undefined)).to.be.null;
+        it("surfaces a rejected command whose invoke otherwise succeeded", () => {
+            const outcome = decodeOperationalCommandResponse({
+                commandResponseState: {
+                    errorStateId: ErrorState.CommandInvalidInState,
+                    errorStateDetails: "already docked",
+                },
+            });
+            expect(outcome?.isError).to.be.true;
+            expect(outcome?.errorStateId).to.equal(ErrorState.CommandInvalidInState);
+            expect(outcome?.label).to.equal("Command Invalid in Current State");
+            expect(outcome?.details).to.equal("already docked");
         });
 
-        it("returns null for null operational state", () => {
-            expect(formatOperationalState(null)).to.be.null;
-        });
-
-        it("handles unknown operational state values", () => {
-            expect(formatOperationalState(99)).to.equal("Unknown (99)");
-        });
-
-        it("formats operational error object", () => {
-            expect(formatOperationalError({ state: 0 })).to.equal("No Error");
-            expect(formatOperationalError({ state: 1 })).to.equal("Unable to Start");
-            expect(formatOperationalError({ operationalError: 2 })).to.equal("Unable to Stop");
-        });
-
-        it("returns null for undefined operational error", () => {
-            expect(formatOperationalError(undefined)).to.be.null;
-        });
-
-        it("returns null for null operational error", () => {
-            expect(formatOperationalError(null)).to.be.null;
-        });
-
-        it("handles unknown operational error states", () => {
-            expect(formatOperationalError({ state: 99 })).to.equal("Unknown (99)");
+        it("returns null when the response carries no commandResponseState", () => {
+            expect(decodeOperationalCommandResponse(undefined)).to.be.null;
+            expect(decodeOperationalCommandResponse({})).to.be.null;
         });
     });
 });
