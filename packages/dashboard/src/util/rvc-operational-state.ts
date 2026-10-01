@@ -9,12 +9,20 @@ import { asObject, pickNumber, tagField, toNumber, toText } from "./attribute-sh
 /** RvcOperationalState cluster (Matter Application Clusters spec, § 7.4). */
 export const RVC_OPERATIONAL_STATE_CLUSTER_ID = 97; // 0x0061
 
+export const OPERATIONAL_STATE_LIST_ATTR = 3;
 export const OPERATIONAL_STATE_ATTR = 4;
 export const OPERATIONAL_ERROR_ATTR = 5;
+/** Global AcceptedCommandList attribute (spec § 7.13). */
+export const ACCEPTED_COMMAND_LIST_ATTR = 0xfff9; // 65529
 
 /** ErrorStateStruct field tags (spec § 1.14.4.4). */
 const ERROR_STATE_ID_FIELD = 0;
+const ERROR_STATE_LABEL_FIELD = 1;
 const ERROR_STATE_DETAILS_FIELD = 2;
+
+/** OperationalStateStruct field tags (spec § 1.14.4.3). */
+const OPERATIONAL_STATE_ID_FIELD = 0;
+const OPERATIONAL_STATE_LABEL_FIELD = 1;
 
 /** OperationalStateEnum, including the RVC-specific states (spec § 7.4.4.1). */
 export enum OperationalState {
@@ -90,12 +98,23 @@ const ERROR_STATE_NAMES: Record<number, string> = {
     [ErrorState.NavigationSensorObscured]: "Navigation Sensor Obscured",
 };
 
-export function operationalStateLabel(id: number): string {
-    return OPERATIONAL_STATE_NAMES[id] ?? `Unknown (${id})`;
+/** Command IDs for the RvcOperationalState cluster (spec § 7.4.6). */
+export enum RvcOperationalCommand {
+    Pause = 0,
+    Resume = 3,
+    GoHome = 128,
 }
 
-export function errorStateLabel(id: number): string {
-    return ERROR_STATE_NAMES[id] ?? `Unknown (${id})`;
+/**
+ * Manufacturer-specific states/errors (IDs 128-191) carry no base name, so the device supplies a
+ * display label alongside the id; it is used only when the enum does not recognise the id.
+ */
+export function operationalStateLabel(id: number, deviceLabel?: string): string {
+    return OPERATIONAL_STATE_NAMES[id] ?? deviceLabel ?? `Unknown (${id})`;
+}
+
+export function errorStateLabel(id: number, deviceLabel?: string): string {
+    return ERROR_STATE_NAMES[id] ?? deviceLabel ?? `Unknown (${id})`;
 }
 
 /** Decoded ErrorStateStruct, used for both the attribute and command responses. */
@@ -108,17 +127,34 @@ export interface ErrorStateInfo {
 }
 
 /**
- * OperationalState attribute is a plain enum. Returns null when the attribute is absent or
- * not a number, so the UI shows nothing rather than a fabricated state.
+ * OperationalStateList (attribute 3) is an array of OperationalStateStruct carrying the
+ * OperationalStateLabel for manufacturer-specific ids. Entries reach the dashboard field-tag keyed.
  */
-export function describeOperationalState(value: unknown): string | null {
+function operationalStateLabelFromList(stateList: unknown, id: number): string | undefined {
+    if (!Array.isArray(stateList)) return undefined;
+    for (const entry of stateList) {
+        const obj = asObject(entry);
+        if (obj !== null && toNumber(tagField(obj, OPERATIONAL_STATE_ID_FIELD)) === id) {
+            return toText(tagField(obj, OPERATIONAL_STATE_LABEL_FIELD));
+        }
+    }
+    return undefined;
+}
+
+/**
+ * OperationalState attribute is a plain enum. Returns null when the attribute is absent or
+ * not a number, so the UI shows nothing rather than a fabricated state. For manufacturer-specific
+ * ids it resolves the label from OperationalStateList when that attribute is supplied.
+ */
+export function describeOperationalState(value: unknown, stateList?: unknown): string | null {
     const id = toNumber(value);
-    return id === undefined ? null : operationalStateLabel(id);
+    if (id === undefined) return null;
+    return operationalStateLabel(id, operationalStateLabelFromList(stateList, id));
 }
 
 /**
  * OperationalError attribute is an ErrorStateStruct delivered field-tag keyed
- * (see {@link tagField}), so the id lives at tag 0 and the detail string at tag 2.
+ * (see {@link tagField}): the id lives at tag 0, the manufacturer label at tag 1, details at tag 2.
  */
 export function decodeOperationalError(value: unknown): ErrorStateInfo | null {
     const obj = asObject(value);
@@ -128,7 +164,7 @@ export function decodeOperationalError(value: unknown): ErrorStateInfo | null {
     return {
         errorStateId: id,
         isError: id !== ErrorState.NoError,
-        label: errorStateLabel(id),
+        label: errorStateLabel(id, toText(tagField(obj, ERROR_STATE_LABEL_FIELD))),
         details: toText(tagField(obj, ERROR_STATE_DETAILS_FIELD)),
     };
 }
@@ -146,7 +182,22 @@ export function decodeOperationalCommandResponse(response: unknown): ErrorStateI
     return {
         errorStateId: id,
         isError: id !== ErrorState.NoError,
-        label: errorStateLabel(id),
+        label: errorStateLabel(id, toText(state["errorStateLabel"])),
         details: toText(state["errorStateDetails"]),
     };
+}
+
+/**
+ * AcceptedCommandList (attribute 0xFFF9) lists the command ids this cluster instance accepts. Every
+ * RvcOperationalState command is optional, so an absent or malformed list means no command is
+ * supported rather than all of them; the empty set then gates every button off.
+ */
+export function decodeAcceptedCommands(value: unknown): ReadonlySet<number> {
+    const ids = new Set<number>();
+    if (!Array.isArray(value)) return ids;
+    for (const entry of value) {
+        const id = toNumber(entry);
+        if (id !== undefined) ids.add(id);
+    }
+    return ids;
 }

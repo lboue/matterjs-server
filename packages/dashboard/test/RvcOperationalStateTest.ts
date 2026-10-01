@@ -5,6 +5,7 @@
  */
 
 import {
+    decodeAcceptedCommands,
     decodeOperationalCommandResponse,
     decodeOperationalError,
     describeOperationalState,
@@ -12,6 +13,7 @@ import {
     errorStateLabel,
     OperationalState,
     operationalStateLabel,
+    RvcOperationalCommand,
 } from "../src/util/rvc-operational-state.js";
 
 describe("RVC Operational State", () => {
@@ -40,6 +42,16 @@ describe("RVC Operational State", () => {
         it("labels unknown numeric states instead of dropping them", () => {
             expect(describeOperationalState(99)).to.equal("Unknown (99)");
         });
+
+        it("uses the OperationalStateList label for a manufacturer-specific id", () => {
+            const stateList = [{ "0": 128, "1": "Sanitising" }];
+            expect(describeOperationalState(128, stateList)).to.equal("Sanitising");
+        });
+
+        it("prefers the enum name over a list entry for a known id", () => {
+            const stateList = [{ "0": OperationalState.Charging, "1": "Topping Up" }];
+            expect(describeOperationalState(OperationalState.Charging, stateList)).to.equal("Charging");
+        });
     });
 
     describe("errorStateLabel", () => {
@@ -54,6 +66,10 @@ describe("RVC Operational State", () => {
 
         it("labels unknown error ids", () => {
             expect(errorStateLabel(200)).to.equal("Unknown (200)");
+        });
+
+        it("uses the device-supplied label for a manufacturer-specific id", () => {
+            expect(errorStateLabel(130, "Side Brush Tangled")).to.equal("Side Brush Tangled");
         });
     });
 
@@ -72,6 +88,14 @@ describe("RVC Operational State", () => {
             expect(decoded?.errorStateId).to.equal(0);
             expect(decoded?.isError).to.be.false;
             expect(decoded?.label).to.equal("No Error");
+        });
+
+        it("reads the ErrorStateLabel (tag 1) for a manufacturer-specific id", () => {
+            const decoded = decodeOperationalError({ "0": 130, "1": "Side Brush Tangled", "2": "rear brush" });
+            expect(decoded?.errorStateId).to.equal(130);
+            expect(decoded?.isError).to.be.true;
+            expect(decoded?.label).to.equal("Side Brush Tangled");
+            expect(decoded?.details).to.equal("rear brush");
         });
 
         it("returns null when the attribute is absent or malformed", () => {
@@ -103,9 +127,33 @@ describe("RVC Operational State", () => {
             expect(outcome?.details).to.equal("already docked");
         });
 
+        it("keeps the errorStateLabel for a manufacturer-specific rejection", () => {
+            const outcome = decodeOperationalCommandResponse({
+                commandResponseState: { errorStateId: 131, errorStateLabel: "Bin Not Seated" },
+            });
+            expect(outcome?.isError).to.be.true;
+            expect(outcome?.errorStateId).to.equal(131);
+            expect(outcome?.label).to.equal("Bin Not Seated");
+        });
+
         it("returns null when the response carries no commandResponseState", () => {
             expect(decodeOperationalCommandResponse(undefined)).to.be.null;
             expect(decodeOperationalCommandResponse({})).to.be.null;
+        });
+    });
+
+    describe("decodeAcceptedCommands", () => {
+        it("collects the advertised command ids into a set", () => {
+            const ids = decodeAcceptedCommands([RvcOperationalCommand.Pause, RvcOperationalCommand.GoHome]);
+            expect(ids.has(RvcOperationalCommand.Pause)).to.be.true;
+            expect(ids.has(RvcOperationalCommand.GoHome)).to.be.true;
+            expect(ids.has(RvcOperationalCommand.Resume)).to.be.false;
+        });
+
+        it("yields an empty set when the attribute is absent or malformed, so no command is offered", () => {
+            expect(decodeAcceptedCommands(undefined).size).to.equal(0);
+            expect(decodeAcceptedCommands(null).size).to.equal(0);
+            expect(decodeAcceptedCommands("nope").size).to.equal(0);
         });
     });
 });

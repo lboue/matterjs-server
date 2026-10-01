@@ -10,24 +10,28 @@ import { customElement, state } from "lit/decorators.js";
 import { handleAsync } from "../../../util/async-handler.js";
 import { errorText } from "../../../util/error-text.js";
 import {
+    ACCEPTED_COMMAND_LIST_ATTR,
+    decodeAcceptedCommands,
     decodeOperationalCommandResponse,
     decodeOperationalError,
     describeOperationalState,
     OPERATIONAL_ERROR_ATTR,
     OPERATIONAL_STATE_ATTR,
+    OPERATIONAL_STATE_LIST_ATTR,
     RVC_OPERATIONAL_STATE_CLUSTER_ID,
+    RvcOperationalCommand,
 } from "../../../util/rvc-operational-state.js";
 import { BaseClusterCommands } from "../base-cluster-commands.js";
 import { registerClusterCommands } from "../registry.js";
 
 const CLUSTER_ID = RVC_OPERATIONAL_STATE_CLUSTER_ID;
 
-/**
- * Command panel for RvcOperationalState cluster (ID: 97).
- * Exposes the cluster's Pause, Resume, and GoHome commands (Start/Stop belong to the base
- * OperationalState cluster and are not part of the RVC derivation) and displays the current
- * operational state and error status.
- */
+const COMMANDS: ReadonlyArray<{ name: string; label: string; id: RvcOperationalCommand }> = [
+    { name: "Pause", label: "Pause", id: RvcOperationalCommand.Pause },
+    { name: "Resume", label: "Resume", id: RvcOperationalCommand.Resume },
+    { name: "GoHome", label: "Go Home", id: RvcOperationalCommand.GoHome },
+];
+
 @customElement("rvc-operational-state-cluster-commands")
 class RvcOperationalStateClusterCommands extends BaseClusterCommands {
     @state() private _busy = false;
@@ -52,10 +56,16 @@ class RvcOperationalStateClusterCommands extends BaseClusterCommands {
     override render() {
         const operationalState = describeOperationalState(
             this.node?.attributes[`${this.endpoint}/${CLUSTER_ID}/${OPERATIONAL_STATE_ATTR}`],
+            this.node?.attributes[`${this.endpoint}/${CLUSTER_ID}/${OPERATIONAL_STATE_LIST_ATTR}`],
         );
         const operationalError = decodeOperationalError(
             this.node?.attributes[`${this.endpoint}/${CLUSTER_ID}/${OPERATIONAL_ERROR_ATTR}`],
         );
+
+        const acceptedCommands = decodeAcceptedCommands(
+            this.node?.attributes[`${this.endpoint}/${CLUSTER_ID}/${ACCEPTED_COMMAND_LIST_ATTR}`],
+        );
+        const commands = COMMANDS.filter(command => acceptedCommands.has(command.id));
 
         const disabled = this._busy || !this.node?.available;
 
@@ -65,15 +75,15 @@ class RvcOperationalStateClusterCommands extends BaseClusterCommands {
                 <div class="command-content">
                     ${this._renderStateInfo(operationalState, operationalError)}
                     <div class="command-row">
-                        <md-outlined-button ?disabled=${disabled} @click=${handleAsync(() => this._invoke("Pause"))}>
-                            Pause
-                        </md-outlined-button>
-                        <md-outlined-button ?disabled=${disabled} @click=${handleAsync(() => this._invoke("Resume"))}>
-                            Resume
-                        </md-outlined-button>
-                        <md-outlined-button ?disabled=${disabled} @click=${handleAsync(() => this._invoke("GoHome"))}>
-                            Go Home
-                        </md-outlined-button>
+                        ${commands.map(
+                            command =>
+                                html`<md-outlined-button
+                                    ?disabled=${disabled}
+                                    @click=${handleAsync(() => this._invoke(command.name))}
+                                >
+                                    ${command.label}
+                                </md-outlined-button>`,
+                        )}
                     </div>
                     ${
                         this._result
