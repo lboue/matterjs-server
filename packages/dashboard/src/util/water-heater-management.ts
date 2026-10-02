@@ -53,21 +53,20 @@ export interface BoostInfoStruct {
     emergencyBoost?: boolean;
     temporarySetpoint?: number; // Celsius
     targetPercentage?: number; // 0-100%
-    targetReheat?: number; // 0-100%
 }
 
 export interface WaterHeaterManagementInfo {
     supported: boolean;
-    heaterTypes?: string[]; // Names of active heater types
+    heaterTypes?: string[]; // Heat sources the device has
     heaterTypesBitmap?: number;
     heatDemandTypes?: string[]; // Currently demanding heat
     heatDemandBitmap?: number;
     tankPercentage?: number; // 0-100
     boostState?: string; // "Inactive" or "Active"
     boostStateValue?: number;
-    boostActive?: boolean; // Convenience flag: boostStateValue === 1
+    boostActive?: boolean;
     tankVolumeL?: number; // Liters (if EM feature supported)
-    estimatedHeatRequiredMwh?: number; // if EM feature supported
+    estimatedHeatRequiredMilliWh?: number; // if EM feature supported
     supportsEnergyManagement?: boolean;
     supportsTankPercent?: boolean;
 }
@@ -96,13 +95,13 @@ export function waterHeaterManagementInfo(
     const tankVolume = toNumber(attr(attributes, endpoint, ATTR_TANK_VOLUME));
     if (tankVolume !== undefined) {
         hasAnyAttribute = true;
-        result.tankVolumeL = tankVolume; // Already in liters
+        result.tankVolumeL = tankVolume;
     }
 
     const estimatedHeatRequired = toNumber(attr(attributes, endpoint, ATTR_ESTIMATED_HEAT_REQUIRED));
     if (estimatedHeatRequired !== undefined) {
         hasAnyAttribute = true;
-        result.estimatedHeatRequiredMwh = estimatedHeatRequired;
+        result.estimatedHeatRequiredMilliWh = estimatedHeatRequired;
     }
 
     const tankPercentage = toNumber(attr(attributes, endpoint, ATTR_TANK_PERCENTAGE));
@@ -130,50 +129,83 @@ export function waterHeaterManagementInfo(
     return result;
 }
 
+/** Formats an `energy-mWh` value as kWh. */
+export function formatEnergyKwh(milliWattHours: number): string {
+    return `${(milliWattHours / 1_000_000).toFixed(2)} kWh`;
+}
+
+type CommandClient = Pick<MatterClient, "deviceCommand">;
+
+/** Raw text of the Boost form inputs. */
+export interface BoostForm {
+    duration: string;
+    oneShot: boolean;
+    emergencyBoost: boolean;
+    temporarySetpoint: string;
+    targetPercentage: string;
+}
+
+/**
+ * Validates the Boost form against the BoostInfoStruct constraints. Empty optional fields are left
+ * out; TargetPercentage is only sent with the TankPercent feature, which it requires.
+ */
+export function parseBoostForm(
+    form: BoostForm,
+    supportsTankPercent: boolean,
+): { params: BoostInfoStruct } | { error: string } {
+    const duration = Number(form.duration);
+    if (form.duration.trim() === "" || !Number.isInteger(duration) || duration < 1 || duration > 0xffffffff) {
+        return { error: "Duration must be a whole number of seconds, at least 1." };
+    }
+    const params: BoostInfoStruct = { duration };
+    if (form.oneShot) params.oneShot = true;
+    if (form.emergencyBoost) params.emergencyBoost = true;
+
+    if (form.temporarySetpoint.trim() !== "") {
+        const setpoint = Number(form.temporarySetpoint);
+        if (!Number.isFinite(setpoint) || setpoint < -273.15 || setpoint > 327.67) {
+            return { error: "Temporary setpoint must be a temperature in °C." };
+        }
+        params.temporarySetpoint = setpoint;
+    }
+
+    if (supportsTankPercent && form.targetPercentage.trim() !== "") {
+        const percentage = Number(form.targetPercentage);
+        if (!Number.isInteger(percentage) || percentage < 0 || percentage > 100) {
+            return { error: "Target tank level must be a whole number from 0 to 100." };
+        }
+        params.targetPercentage = percentage;
+    }
+    return { params };
+}
+
 export async function startBoost(
-    client: MatterClient,
+    client: CommandClient,
     nodeId: number | bigint,
     endpoint: number,
     params: BoostInfoStruct,
-): Promise<boolean> {
-    try {
-        const boostInfo: Record<string, unknown> = {
-            duration: params.duration,
-        };
+): Promise<void> {
+    const boostInfo: Record<string, unknown> = {
+        duration: params.duration,
+    };
 
-        if (params.oneShot !== undefined) {
-            boostInfo.oneShot = params.oneShot;
-        }
-        if (params.emergencyBoost !== undefined) {
-            boostInfo.emergencyBoost = params.emergencyBoost;
-        }
-        if (params.temporarySetpoint !== undefined) {
-            // Convert Celsius to Matter temperature (in 0.01°C units)
-            boostInfo.temporarySetpoint = Math.round(params.temporarySetpoint * 100);
-        }
-        if (params.targetPercentage !== undefined) {
-            boostInfo.targetPercentage = params.targetPercentage;
-        }
-        if (params.targetReheat !== undefined) {
-            boostInfo.targetReheat = params.targetReheat;
-        }
-
-        await client.deviceCommand(nodeId, endpoint, WATER_HEATER_MANAGEMENT_CLUSTER_ID, "Boost", {
-            boostInfo,
-        });
-        return true;
-    } catch (err) {
-        console.error("Failed to start boost:", err);
-        return false;
+    if (params.oneShot !== undefined) {
+        boostInfo.oneShot = params.oneShot;
     }
+    if (params.emergencyBoost !== undefined) {
+        boostInfo.emergencyBoost = params.emergencyBoost;
+    }
+    if (params.temporarySetpoint !== undefined) {
+        // Matter temperature is in 0.01 °C
+        boostInfo.temporarySetpoint = Math.round(params.temporarySetpoint * 100);
+    }
+    if (params.targetPercentage !== undefined) {
+        boostInfo.targetPercentage = params.targetPercentage;
+    }
+
+    await client.deviceCommand(nodeId, endpoint, WATER_HEATER_MANAGEMENT_CLUSTER_ID, "Boost", { boostInfo });
 }
 
-export async function cancelBoost(client: MatterClient, nodeId: number | bigint, endpoint: number): Promise<boolean> {
-    try {
-        await client.deviceCommand(nodeId, endpoint, WATER_HEATER_MANAGEMENT_CLUSTER_ID, "CancelBoost");
-        return true;
-    } catch (err) {
-        console.error("Failed to cancel boost:", err);
-        return false;
-    }
+export async function cancelBoost(client: CommandClient, nodeId: number | bigint, endpoint: number): Promise<void> {
+    await client.deviceCommand(nodeId, endpoint, WATER_HEATER_MANAGEMENT_CLUSTER_ID, "CancelBoost");
 }
