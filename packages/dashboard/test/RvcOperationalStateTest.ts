@@ -26,6 +26,10 @@ describe("RVC Operational State", () => {
             expect(describeOperationalState(OperationalState.SeekingCharger)).to.equal("Seeking Charger");
             expect(describeOperationalState(OperationalState.Charging)).to.equal("Charging");
             expect(describeOperationalState(OperationalState.Docked)).to.equal("Docked");
+            expect(describeOperationalState(OperationalState.EmptyingDustBin)).to.equal("Emptying Dust Bin");
+            expect(describeOperationalState(OperationalState.CleaningMop)).to.equal("Cleaning Mop");
+            expect(describeOperationalState(OperationalState.FillingWaterTank)).to.equal("Filling Water Tank");
+            expect(describeOperationalState(OperationalState.UpdatingMaps)).to.equal("Updating Maps");
         });
 
         it("uses the RVC enum values 64/65/66 for the charging states", () => {
@@ -108,52 +112,69 @@ describe("RVC Operational State", () => {
     describe("decodeOperationalCommandResponse", () => {
         it("reports success when commandResponseState is NoError", () => {
             const outcome = decodeOperationalCommandResponse({
-                commandResponseState: { errorStateId: ErrorState.NoError },
+                commandResponseState: { errorStateID: ErrorState.NoError },
             });
-            expect(outcome?.isError).to.be.false;
-            expect(outcome?.label).to.equal("No Error");
+            expect(outcome.isError).to.be.false;
+            expect(outcome.label).to.equal("No Error");
+        });
+
+        it("reads the wire key errorStateID and falls back to the legacy errorStateId", () => {
+            const both = decodeOperationalCommandResponse({
+                commandResponseState: {
+                    errorStateID: ErrorState.CommandInvalidInState,
+                    errorStateId: ErrorState.UnableToStartOrResume,
+                },
+            });
+            expect(both.errorStateId).to.equal(ErrorState.CommandInvalidInState);
+            const legacy = decodeOperationalCommandResponse({
+                commandResponseState: { errorStateId: ErrorState.CommandInvalidInState },
+            });
+            expect(legacy.errorStateId).to.equal(ErrorState.CommandInvalidInState);
         });
 
         it("surfaces a rejected command whose invoke otherwise succeeded", () => {
             const outcome = decodeOperationalCommandResponse({
                 commandResponseState: {
-                    errorStateId: ErrorState.CommandInvalidInState,
+                    errorStateID: ErrorState.CommandInvalidInState,
                     errorStateDetails: "already docked",
                 },
             });
-            expect(outcome?.isError).to.be.true;
-            expect(outcome?.errorStateId).to.equal(ErrorState.CommandInvalidInState);
-            expect(outcome?.label).to.equal("Command Invalid in Current State");
-            expect(outcome?.details).to.equal("already docked");
+            expect(outcome.isError).to.be.true;
+            expect(outcome.errorStateId).to.equal(ErrorState.CommandInvalidInState);
+            expect(outcome.label).to.equal("Command Invalid in Current State");
+            expect(outcome.details).to.equal("already docked");
         });
 
         it("keeps the errorStateLabel for a manufacturer-specific rejection", () => {
             const outcome = decodeOperationalCommandResponse({
-                commandResponseState: { errorStateId: 131, errorStateLabel: "Bin Not Seated" },
+                commandResponseState: { errorStateID: 131, errorStateLabel: "Bin Not Seated" },
             });
-            expect(outcome?.isError).to.be.true;
-            expect(outcome?.errorStateId).to.equal(131);
-            expect(outcome?.label).to.equal("Bin Not Seated");
+            expect(outcome.isError).to.be.true;
+            expect(outcome.errorStateId).to.equal(131);
+            expect(outcome.label).to.equal("Bin Not Seated");
         });
 
-        it("returns null when the response carries no commandResponseState", () => {
-            expect(decodeOperationalCommandResponse(undefined)).to.be.null;
-            expect(decodeOperationalCommandResponse({})).to.be.null;
+        it("throws when the response carries no command response state, instead of reading as success", () => {
+            expect(() => decodeOperationalCommandResponse(undefined)).to.throw("no command response state");
+            expect(() => decodeOperationalCommandResponse({})).to.throw("no command response state");
+            expect(() => decodeOperationalCommandResponse({ commandResponseState: {} })).to.throw(
+                "no command response state",
+            );
         });
     });
 
     describe("decodeAcceptedCommands", () => {
         it("collects the advertised command ids into a set", () => {
             const ids = decodeAcceptedCommands([RvcOperationalCommand.Pause, RvcOperationalCommand.GoHome]);
-            expect(ids.has(RvcOperationalCommand.Pause)).to.be.true;
-            expect(ids.has(RvcOperationalCommand.GoHome)).to.be.true;
-            expect(ids.has(RvcOperationalCommand.Resume)).to.be.false;
+            expect(ids?.has(RvcOperationalCommand.Pause)).to.be.true;
+            expect(ids?.has(RvcOperationalCommand.GoHome)).to.be.true;
+            expect(ids?.has(RvcOperationalCommand.Resume)).to.be.false;
         });
 
-        it("yields an empty set when the attribute is absent or malformed, so no command is offered", () => {
-            expect(decodeAcceptedCommands(undefined).size).to.equal(0);
-            expect(decodeAcceptedCommands(null).size).to.equal(0);
-            expect(decodeAcceptedCommands("nope").size).to.equal(0);
+        it("returns undefined while the attribute is not reported, so the panel does not hide every command", () => {
+            expect(decodeAcceptedCommands(undefined)).to.equal(undefined);
+            expect(decodeAcceptedCommands(null)).to.equal(undefined);
+            expect(decodeAcceptedCommands("nope")).to.equal(undefined);
         });
     });
 });

@@ -35,7 +35,7 @@ const COMMANDS: ReadonlyArray<{ name: string; label: string; id: RvcOperationalC
 @customElement("rvc-operational-state-cluster-commands")
 class RvcOperationalStateClusterCommands extends BaseClusterCommands {
     @state() private _busy = false;
-    @state() private _result?: { command: string; label: string; isError: boolean; details?: string };
+    @state() private _result?: { commandLabel: string; label: string; isError: boolean; details?: string };
     @state() private _error?: string;
     private _formContext?: string;
     private _invokeGeneration = 0;
@@ -65,7 +65,7 @@ class RvcOperationalStateClusterCommands extends BaseClusterCommands {
         const acceptedCommands = decodeAcceptedCommands(
             this.node?.attributes[`${this.endpoint}/${CLUSTER_ID}/${ACCEPTED_COMMAND_LIST_ATTR}`],
         );
-        const commands = COMMANDS.filter(command => acceptedCommands.has(command.id));
+        const commands = COMMANDS.filter(command => acceptedCommands?.has(command.id) ?? true);
 
         const disabled = this._busy || !this.node?.available;
 
@@ -79,7 +79,7 @@ class RvcOperationalStateClusterCommands extends BaseClusterCommands {
                             command =>
                                 html`<md-outlined-button
                                     ?disabled=${disabled}
-                                    @click=${handleAsync(() => this._invoke(command.name))}
+                                    @click=${handleAsync(() => this._invoke(command.name, command.label))}
                                 >
                                     ${command.label}
                                 </md-outlined-button>`,
@@ -91,7 +91,7 @@ class RvcOperationalStateClusterCommands extends BaseClusterCommands {
                                   class="result ${this._result.isError ? "result-error" : ""}"
                                   role=${this._result.isError ? "alert" : "status"}
                               >
-                                  ${this._result.command} →
+                                  ${this._result.commandLabel} →
                                   ${this._result.label}${
                                       this._result.details ? html`: ${this._result.details}` : nothing
                                   }
@@ -140,7 +140,7 @@ class RvcOperationalStateClusterCommands extends BaseClusterCommands {
         `;
     }
 
-    private async _invoke(command: string) {
+    private async _invoke(command: string, label: string) {
         const node = this.node;
         const endpoint = this.endpoint;
         const generation = ++this._invokeGeneration;
@@ -152,18 +152,21 @@ class RvcOperationalStateClusterCommands extends BaseClusterCommands {
             const response = await this.client.deviceCommand(node.node_id, endpoint, CLUSTER_ID, command, {});
             if (!isCurrent()) return;
             const outcome = decodeOperationalCommandResponse(response);
-            this._result = outcome
-                ? { command, label: outcome.label, isError: outcome.isError, details: outcome.details }
-                : { command, label: "Sent", isError: false };
+            this._result = {
+                commandLabel: label,
+                label: outcome.label,
+                isError: outcome.isError,
+                details: outcome.details,
+            };
         } catch (err) {
-            if (isCurrent()) this._error = `${command}: ${errorText(err)}`;
+            if (isCurrent()) this._error = `${label}: ${errorText(err)}`;
         } finally {
             if (isCurrent()) this._busy = false;
         }
     }
 
     static override styles: CSSResultGroup = [
-        ...(Array.isArray(BaseClusterCommands.styles) ? BaseClusterCommands.styles : [BaseClusterCommands.styles]),
+        BaseClusterCommands.styles,
         css`
             .state-info {
                 display: flex;

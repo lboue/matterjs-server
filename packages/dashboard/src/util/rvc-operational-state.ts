@@ -6,25 +6,22 @@
 
 import { asObject, pickNumber, tagField, toNumber, toText } from "./attribute-shapes.js";
 
-/** RvcOperationalState cluster (Matter Application Clusters spec, § 7.4). */
 export const RVC_OPERATIONAL_STATE_CLUSTER_ID = 97; // 0x0061
 
 export const OPERATIONAL_STATE_LIST_ATTR = 3;
 export const OPERATIONAL_STATE_ATTR = 4;
 export const OPERATIONAL_ERROR_ATTR = 5;
-/** Global AcceptedCommandList attribute (spec § 7.13). */
 export const ACCEPTED_COMMAND_LIST_ATTR = 0xfff9; // 65529
 
-/** ErrorStateStruct field tags (spec § 1.14.4.4). */
+/** ErrorStateStruct field tags. */
 const ERROR_STATE_ID_FIELD = 0;
 const ERROR_STATE_LABEL_FIELD = 1;
 const ERROR_STATE_DETAILS_FIELD = 2;
 
-/** OperationalStateStruct field tags (spec § 1.14.4.3). */
+/** OperationalStateStruct field tags. */
 const OPERATIONAL_STATE_ID_FIELD = 0;
 const OPERATIONAL_STATE_LABEL_FIELD = 1;
 
-/** OperationalStateEnum, including the RVC-specific states (spec § 7.4.4.1). */
 export enum OperationalState {
     Stopped = 0,
     Running = 1,
@@ -53,7 +50,6 @@ const OPERATIONAL_STATE_NAMES: Record<number, string> = {
     [OperationalState.UpdatingMaps]: "Updating Maps",
 };
 
-/** ErrorStateEnum, including the RVC-specific errors (spec § 7.4.4.2). */
 export enum ErrorState {
     NoError = 0,
     UnableToStartOrResume = 1,
@@ -98,7 +94,6 @@ const ERROR_STATE_NAMES: Record<number, string> = {
     [ErrorState.NavigationSensorObscured]: "Navigation Sensor Obscured",
 };
 
-/** Command IDs for the RvcOperationalState cluster (spec § 7.4.6). */
 export enum RvcOperationalCommand {
     Pause = 0,
     Resume = 3,
@@ -152,10 +147,7 @@ export function describeOperationalState(value: unknown, stateList?: unknown): s
     return operationalStateLabel(id, operationalStateLabelFromList(stateList, id));
 }
 
-/**
- * OperationalError attribute is an ErrorStateStruct delivered field-tag keyed
- * (see {@link tagField}): the id lives at tag 0, the manufacturer label at tag 1, details at tag 2.
- */
+/** OperationalError attribute: an ErrorStateStruct, delivered field-tag keyed. */
 export function decodeOperationalError(value: unknown): ErrorStateInfo | null {
     const obj = asObject(value);
     if (obj === null) return null;
@@ -172,13 +164,15 @@ export function decodeOperationalError(value: unknown): ErrorStateInfo | null {
 /**
  * OperationalCommandResponse carries a commandResponseState (ErrorStateStruct) whose errorStateId
  * reports rejection even when the invoke itself succeeds, so a successful transport does not mean the
- * device accepted the command. Unlike the attribute, the response reaches the client name keyed.
+ * device accepted the command. Unlike the attribute, the response reaches the client name keyed, with
+ * the wire spelling `errorStateID` (legacy `errorStateId` as fallback).
  */
-export function decodeOperationalCommandResponse(response: unknown): ErrorStateInfo | null {
+export function decodeOperationalCommandResponse(response: unknown): ErrorStateInfo {
     const state = asObject(asObject(response)?.["commandResponseState"]);
-    if (state === null) return null;
-    const id = pickNumber(state, "errorStateId");
-    if (id === null) return null;
+    const id = state === null ? null : pickNumber(state, "errorStateID", "errorStateId");
+    if (state === null || id === null) {
+        throw new Error("The device answer carries no command response state");
+    }
     return {
         errorStateId: id,
         isError: id !== ErrorState.NoError,
@@ -187,14 +181,10 @@ export function decodeOperationalCommandResponse(response: unknown): ErrorStateI
     };
 }
 
-/**
- * AcceptedCommandList (attribute 0xFFF9) lists the command ids this cluster instance accepts. Every
- * RvcOperationalState command is optional, so an absent or malformed list means no command is
- * supported rather than all of them; the empty set then gates every button off.
- */
-export function decodeAcceptedCommands(value: unknown): ReadonlySet<number> {
+/** The accepted command ids, or undefined while AcceptedCommandList has not been reported. */
+export function decodeAcceptedCommands(value: unknown): ReadonlySet<number> | undefined {
     const ids = new Set<number>();
-    if (!Array.isArray(value)) return ids;
+    if (!Array.isArray(value)) return undefined;
     for (const entry of value) {
         const id = toNumber(entry);
         if (id !== undefined) ids.add(id);
