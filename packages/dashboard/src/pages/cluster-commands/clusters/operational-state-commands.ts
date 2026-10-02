@@ -17,26 +17,17 @@ import {
     describeOperationalState,
     OPERATIONAL_ERROR_ATTR,
     OPERATIONAL_STATE_ATTR,
-    OPERATIONAL_STATE_CLUSTER_ID,
     OPERATIONAL_STATE_LIST_ATTR,
-    OperationalCommand,
+    OPERATIONAL_STATE_VARIANTS,
+    type OperationalStateVariant,
 } from "../../../util/operational-state.js";
 import { BaseClusterCommands } from "../base-cluster-commands.js";
 import { registerClusterCommands } from "../registry.js";
 
-const CLUSTER_ID = OPERATIONAL_STATE_CLUSTER_ID;
-
-const COMMANDS: ReadonlyArray<{ name: string; label: string; id: OperationalCommand }> = [
-    { name: "Start", label: "Start", id: OperationalCommand.Start },
-    { name: "Stop", label: "Stop", id: OperationalCommand.Stop },
-    { name: "Pause", label: "Pause", id: OperationalCommand.Pause },
-    { name: "Resume", label: "Resume", id: OperationalCommand.Resume },
-];
-
 @customElement("operational-state-cluster-commands")
 class OperationalStateClusterCommands extends BaseClusterCommands {
     @state() private _busy = false;
-    @state() private _result?: { command: string; label: string; isError: boolean; details?: string };
+    @state() private _result?: { commandLabel: string; label: string; isError: boolean; details?: string };
     @state() private _error?: string;
     private _formContext?: string;
     private _invokeGeneration = 0;
@@ -55,24 +46,26 @@ class OperationalStateClusterCommands extends BaseClusterCommands {
     }
 
     override render() {
+        const variant = OPERATIONAL_STATE_VARIANTS[this.cluster];
+        if (!this.node || variant === undefined) return nothing;
+        const attribute = (attributeId: number) =>
+            this.node.attributes[`${this.endpoint}/${variant.clusterId}/${attributeId}`];
+
         const operationalState = describeOperationalState(
-            this.node?.attributes[`${this.endpoint}/${CLUSTER_ID}/${OPERATIONAL_STATE_ATTR}`],
-            this.node?.attributes[`${this.endpoint}/${CLUSTER_ID}/${OPERATIONAL_STATE_LIST_ATTR}`],
+            variant,
+            attribute(OPERATIONAL_STATE_ATTR),
+            attribute(OPERATIONAL_STATE_LIST_ATTR),
         );
-        const operationalError = decodeOperationalError(
-            this.node?.attributes[`${this.endpoint}/${CLUSTER_ID}/${OPERATIONAL_ERROR_ATTR}`],
-        );
+        const operationalError = decodeOperationalError(variant, attribute(OPERATIONAL_ERROR_ATTR));
 
-        const acceptedCommands = decodeAcceptedCommands(
-            this.node?.attributes[`${this.endpoint}/${CLUSTER_ID}/${ACCEPTED_COMMAND_LIST_ATTR}`],
-        );
-        const commands = COMMANDS.filter(command => acceptedCommands.has(command.id));
+        const acceptedCommands = decodeAcceptedCommands(attribute(ACCEPTED_COMMAND_LIST_ATTR));
+        const commands = variant.commands.filter(command => acceptedCommands?.has(command.id) ?? true);
 
-        const disabled = this._busy || !this.node?.available;
+        const disabled = this._busy || !this.node.available;
 
         return html`
             <details class="command-panel">
-                <summary>OperationalState Commands</summary>
+                <summary>${variant.title} Commands</summary>
                 <div class="command-content">
                     ${this._renderStateInfo(operationalState, operationalError)}
                     <div class="command-row">
@@ -80,7 +73,7 @@ class OperationalStateClusterCommands extends BaseClusterCommands {
                             command =>
                                 html`<md-outlined-button
                                     ?disabled=${disabled}
-                                    @click=${handleAsync(() => this._invoke(command.name))}
+                                    @click=${handleAsync(() => this._invoke(variant, command.name, command.label))}
                                 >
                                     ${command.label}
                                 </md-outlined-button>`,
@@ -92,7 +85,7 @@ class OperationalStateClusterCommands extends BaseClusterCommands {
                                   class="result ${this._result.isError ? "result-error" : ""}"
                                   role=${this._result.isError ? "alert" : "status"}
                               >
-                                  ${this._result.command} →
+                                  ${this._result.commandLabel} →
                                   ${this._result.label}${
                                       this._result.details ? html`: ${this._result.details}` : nothing
                                   }
@@ -141,7 +134,7 @@ class OperationalStateClusterCommands extends BaseClusterCommands {
         `;
     }
 
-    private async _invoke(command: string) {
+    private async _invoke(variant: OperationalStateVariant, command: string, label: string) {
         const node = this.node;
         const endpoint = this.endpoint;
         const generation = ++this._invokeGeneration;
@@ -150,21 +143,24 @@ class OperationalStateClusterCommands extends BaseClusterCommands {
         this._error = undefined;
         this._result = undefined;
         try {
-            const response = await this.client.deviceCommand(node.node_id, endpoint, CLUSTER_ID, command, {});
+            const response = await this.client.deviceCommand(node.node_id, endpoint, variant.clusterId, command, {});
             if (!isCurrent()) return;
-            const outcome = decodeOperationalCommandResponse(response);
-            this._result = outcome
-                ? { command, label: outcome.label, isError: outcome.isError, details: outcome.details }
-                : { command, label: "Sent", isError: false };
+            const outcome = decodeOperationalCommandResponse(variant, response);
+            this._result = {
+                commandLabel: label,
+                label: outcome.label,
+                isError: outcome.isError,
+                details: outcome.details,
+            };
         } catch (err) {
-            if (isCurrent()) this._error = `${command}: ${errorText(err)}`;
+            if (isCurrent()) this._error = `${label}: ${errorText(err)}`;
         } finally {
             if (isCurrent()) this._busy = false;
         }
     }
 
     static override styles: CSSResultGroup = [
-        ...(Array.isArray(BaseClusterCommands.styles) ? BaseClusterCommands.styles : [BaseClusterCommands.styles]),
+        BaseClusterCommands.styles,
         css`
             .state-info {
                 display: flex;
@@ -227,7 +223,9 @@ class OperationalStateClusterCommands extends BaseClusterCommands {
     ];
 }
 
-registerClusterCommands(CLUSTER_ID, "operational-state-cluster-commands");
+for (const clusterId of Object.keys(OPERATIONAL_STATE_VARIANTS)) {
+    registerClusterCommands(Number(clusterId), "operational-state-cluster-commands");
+}
 
 declare global {
     interface HTMLElementTagNameMap {
