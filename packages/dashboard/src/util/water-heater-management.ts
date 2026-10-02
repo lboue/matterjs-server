@@ -129,6 +129,12 @@ export function waterHeaterManagementInfo(
     return result;
 }
 
+/** Heat sources as display text: "—" when not reported, "None" for an empty bitmap. */
+export function heatSourcesText(names: string[] | undefined): string {
+    if (names === undefined) return "—";
+    return names.length ? names.join(", ") : "None";
+}
+
 /** Formats an `energy-mWh` value as kWh. */
 export function formatEnergyKwh(milliWattHours: number): string {
     return `${(milliWattHours / 1_000_000).toFixed(2)} kWh`;

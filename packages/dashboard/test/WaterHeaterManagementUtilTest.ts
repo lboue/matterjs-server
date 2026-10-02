@@ -7,6 +7,7 @@
 import {
     cancelBoost,
     formatEnergyKwh,
+    heatSourcesText,
     parseBoostForm,
     startBoost,
     waterHeaterManagementInfo,
@@ -113,6 +114,14 @@ describe("water heater management util", () => {
         const info = waterHeaterManagementInfo(attrs2, 2);
         expect(info.heaterTypes).to.deep.equal(["Heat Pump"]);
         expect(info.boostActive).to.equal(true);
+    });
+
+    it("tells an unreported heat demand apart from an empty one", () => {
+        expect(heatSourcesText(waterHeaterManagementInfo({ "1/148/0": 0b0001 }, 1).heatDemandTypes)).to.equal("—");
+        expect(heatSourcesText(waterHeaterManagementInfo(BASE_ATTRS, 1).heatDemandTypes)).to.equal("None");
+        expect(
+            heatSourcesText(waterHeaterManagementInfo({ ...BASE_ATTRS, "1/148/1": 0b0100 }, 1).heatDemandTypes),
+        ).to.equal("Heat Pump");
     });
 
     it("reads EstimatedHeatRequired in mWh and formats it as kWh", () => {

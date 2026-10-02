@@ -14,6 +14,7 @@ import { errorText } from "../../../util/error-text.js";
 import {
     cancelBoost,
     formatEnergyKwh,
+    heatSourcesText,
     parseBoostForm,
     startBoost,
     waterHeaterManagementInfo,
@@ -79,9 +80,9 @@ export class WaterHeaterManagementClusterCommands extends BaseClusterCommands {
         return html`
             <dl>
                 <dt>Heater types</dt>
-                <dd>${info.heaterTypes?.length ? info.heaterTypes.join(", ") : "—"}</dd>
+                <dd>${heatSourcesText(info.heaterTypes)}</dd>
                 <dt>Heat demand</dt>
-                <dd>${info.heatDemandTypes?.length ? info.heatDemandTypes.join(", ") : "None"}</dd>
+                <dd>${heatSourcesText(info.heatDemandTypes)}</dd>
                 ${
                     info.supportsTankPercent
                         ? html`<dt>Tank level</dt>
